@@ -8,10 +8,11 @@ DG = $(PREFIX)gdb
 SIZE = $(PREFIX)size
 
 PORT = 3333
+TYPE = Release
 
 .PHONY: build
 build:
-	cmake -S ./ -B ./build/ -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP)
+	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP)
 	cmake --build ./build/ --target $(TARGET)
 
 .PHONY: ocd
@@ -24,7 +25,8 @@ ocd-run:
 
 .PHONY: gdb
 gdb:
-	$(DG) $(BINARY) --eval-command="target extended-remote localhost:$(PORT)" --eval-command="monitor reset"
+	$(DG) $(BINARY) --eval-command="target extended-remote localhost:$(PORT)"
+	# --eval-command="monitor reset"
 
 .PHONY: clean
 clean:

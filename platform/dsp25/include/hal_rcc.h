@@ -27,9 +27,9 @@ typedef enum {
   CLKSEL_PLL1 = (uint32_t)2
 } ClockSel_Opts;
 
-// TODO: This needs to be confirmed with the RTL.
 /**
  * \brief   Describes the memory map of the PRCI clock selector MMIO.
+ * \todo    This needs to be confirmed with the RTL.
  */
 typedef struct {
   __IO uint32_t UNCORE;                                 // 0x00

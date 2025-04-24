@@ -124,15 +124,6 @@ if (PROF_COV)
   add_link_options(-lgcov)
 endif()
 
-#################################
-# Build
-#################################
-
-add_executable(app
-  app/src/main.c
-)
-
-target_include_directories(app PUBLIC app/include)
 
 #################################
 # Dependencies
@@ -143,13 +134,15 @@ add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
 
-target_link_libraries(app PRIVATE 
-  -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
-)
 
-if (PROF_COV)
-  target_link_libraries(app PRIVATE gcov)
-endif()
+#################################
+# Build Target Directories
+#################################
+
+add_subdirectory(app)
+# Add your custom subdirectories here!
+
+
 
 #################################
 # Library Installation

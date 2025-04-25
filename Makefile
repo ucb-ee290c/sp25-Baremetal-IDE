@@ -43,3 +43,8 @@ checktsi:
 .PHONY: tsi-run
 tsi-run:
 	uart_tsi +tty=$(TTY) +baudrate=921600 $(BINARY)
+
+.PHONY: vcs-run
+vcs-run:
+	echo "Running VCS tests within $(CY_DIR)"
+	(cd $(CY_DIR)/sims/vcs && make run-binary CONFIG=$(CONFIG) BINARY=$(BINARY))

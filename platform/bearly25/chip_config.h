@@ -17,6 +17,7 @@ extern "C" {
 // ================================
 //  Platform Drivers
 // ================================
+#include "hal_mmio.h"
 #include "hal_rcc.h"
 
 

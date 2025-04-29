@@ -22,3 +22,4 @@ target_link_libraries(chip-config PUBLIC uart)
 target_link_libraries(chip-config PUBLIC spi)
 target_link_libraries(chip-config PUBLIC i2c)
 target_link_libraries(chip-config PUBLIC gpio)
+

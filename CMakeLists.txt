@@ -141,6 +141,7 @@ add_subdirectory(examples)
 
 add_subdirectory(app)
 # Add your custom subdirectories here!
+add_subdirectory(bearly25-2d-conv)
 
 
 

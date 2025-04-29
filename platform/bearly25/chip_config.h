@@ -19,6 +19,7 @@ extern "C" {
 // ================================
 #include "hal_mmio.h"
 #include "hal_rcc.h"
+#include "hal_2d_conv.h"
 
 
 // ================================
@@ -42,6 +43,11 @@ extern "C" {
 #define CLINT                      ((CLINT_Type *)CLINT_BASE)
 #define PLIC                       ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
+
+#define CONV2D_BASE                 0x08808000U
+
+#define CONV2D           ((Conv2D_Accel_Type *)CONV2D_BASE)
+
 
 
 #ifdef __cplusplus

@@ -1,4 +1,5 @@
 #include "hal_2d_conv.h"
+#include "chip_config.h"
 
 void reg_write8(uintptr_t addr, uint8_t data) {
 	volatile uint8_t *ptr = (volatile uint8_t *) addr;
@@ -187,4 +188,28 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv) {
         // That might be causing the relocation error
         reg_write8((uintptr_t)&conv->READY, 0x01); // Force the convolution engine to finish.
     }
+}
+
+/**
+ * Simplified wrapper function for performing 2D convolution
+ * This function combines all the necessary steps into a single call
+ */
+void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
+                        uint64_t height, uint64_t width,
+                        int8_t *kernel, uint8_t kernel_size,
+                        uint8_t use_relu, uint8_t stride) {
+    // Get accelerator pointer
+    Conv2D_Accel_Type *conv = CONV2D;
+    
+    // Initialize and configure
+    conv2d_init(conv);
+    conv2d_configure(conv, src_addr, dest_addr, height, width, 
+                    kernel_size, use_relu, stride);
+    
+    // Set kernel values
+    conv2d_set_kernel(conv, kernel, kernel_size);
+    
+    // Start and wait
+    conv2d_start(conv);
+    conv2d_wait_complete(conv);
 }

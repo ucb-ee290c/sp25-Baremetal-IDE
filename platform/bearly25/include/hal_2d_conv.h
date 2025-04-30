@@ -123,6 +123,22 @@ void conv2d_start(Conv2D_Accel_Type *conv);
  */
 void conv2d_wait_complete(Conv2D_Accel_Type *conv);
 
+/**
+ * \brief Simplified wrapper function for performing 2D convolution
+ * \param src_addr Source address of the input data
+ * \param dest_addr Destination address for the output data
+ * \param height Input height
+ * \param width Input width
+ * \param kernel Pointer to the kernel values
+ * \param kernel_size Size of the kernel (must be 3 or 5)
+ * \param use_relu Whether to use ReLU activation
+ * \param stride Stride value for the convolution
+ */
+void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
+                        uint64_t height, uint64_t width,
+                        int8_t *kernel, uint8_t kernel_size,
+                        uint8_t use_relu, uint8_t stride);
+
 #ifdef __cplusplus
 }
 #endif

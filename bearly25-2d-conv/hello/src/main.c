@@ -85,33 +85,36 @@ void app_init() {
 }
 
 void app_main() {
-    // Configure the 2D convolution engine
-    conv2d_configure(
-        CONV2D,
+    // Perform 2D convolution using the wrapper function
+    printf("Starting 2D convolution...\n");
+    perform_convolution(
         (uint64_t)input_image,   // Source address
         (uint64_t)output_image,  // Destination address
         IMG_HEIGHT,              // Input height
         IMG_WIDTH,               // Input width
+        example_kernel,          // Kernel values
         3,                       // Kernel size (3x3)
         1,                       // Use ReLU activation
         1                        // Stride
     );
     
-    // Set the convolution kernel
-    conv2d_set_kernel(CONV2D, example_kernel, 3);
+    // Save for later, in case we want to manually call functions
+
+    // // Set the convolution kernel
+    // conv2d_set_kernel(CONV2D, example_kernel, 3);
     
-    // Start the convolution operation
-    printf("Starting 2D convolution...\n");
-    conv2d_start(CONV2D);
+    // // Start the convolution operation
+    // printf("Starting 2D convolution...\n");
+    // conv2d_start(CONV2D);
     
-    // Wait for the operation to complete
-    conv2d_wait_complete(CONV2D);
+    // // Wait for the operation to complete
+    // conv2d_wait_complete(CONV2D);
     
-    // Check if operation completed successfully
-    if (conv2d_is_ready(CONV2D) == 0xFF) {
-        printf("ERROR: 2D convolution operation timed out!\n");
-        return;
-    }
+    // // Check if operation completed successfully
+    // if (conv2d_is_ready(CONV2D) == 0xFF) {
+    //     printf("ERROR: 2D convolution operation timed out!\n");
+    //     return;
+    // }
     
     printf("2D convolution complete!\n");
     
@@ -176,8 +179,8 @@ int main() {
  * 
  * Multi-threaded programs should provide their own implementation.
  */
-// void __attribute__((weak, noreturn)) __main(void) {
-//   while (1) {
-//    asm volatile ("wfi");
-//   }
-// }
+void __attribute__((weak, noreturn)) __main(void) {
+  while (1) {
+   asm volatile ("wfi");
+  }
+}

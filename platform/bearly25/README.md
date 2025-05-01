@@ -18,16 +18,23 @@ void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
     
     // Initialize and configure
     conv2d_init(conv);
+    /* It may be worthwhile to experiment calling the perform_convolution with/without the conv2d_init function. 
+    * This technically sends a write to the MMIO, which might slow things down. Try using the driver with it first, 
+    *then try it without to see if you get any performance improvements / maintain accuracy.
+    */
     conv2d_configure(conv, src_addr, dest_addr, height, width, 
                     kernel_size, use_relu, stride);
     
     // Set kernel values
     conv2d_set_kernel(conv, kernel, kernel_size);
     
-    // Start and wait
+    // Start and wait for completion
     conv2d_start(conv);
-    conv2d_wait_complete(conv);
+    while (!conv2d_is_ready(conv)) {
+        // Wait until convolution is complete
+    }
 }
+
 
 // Example usage:
 void example() {
@@ -97,12 +104,16 @@ void conv2d_configure(Conv2D_Accel_Type *conv,
 void conv2d_set_kernel(Conv2D_Accel_Type *conv, int8_t *kernel, uint8_t size);
 void conv2d_start(Conv2D_Accel_Type *conv);
 void conv2d_wait_complete(Conv2D_Accel_Type *conv);
+uint8_t conv2d_is_ready(Conv2D_Accel_Type *conv);  // Check if convolution is complete
 
 // High-level wrapper function
 void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
                         uint64_t height, uint64_t width,
                         int8_t *kernel, uint8_t kernel_size,
                         uint8_t use_relu, uint8_t stride);
+                        
+uint8_t conv2d_is_ready(Conv2D_Accel_Type *conv);  // Check if convolution is complete
+
 ```
 
 ## Notes
@@ -111,4 +122,4 @@ void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
 - Check the STATUS register for errors after operation completion
 - The READY bit indicates operation completion
 
-For more detailed documentation, see the source code comments in `hal_2d_conv.h` and `hal_2d_conv.c`. 
+For more detailed documentation, see the source code comments in `hal_2d_conv.h` and `hal_2d_conv.c`.

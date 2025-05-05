@@ -19,6 +19,7 @@ extern "C" {
 // ================================
 #include "hal_mmio.h"
 #include "hal_rcc.h"
+#include "hal_conv.h"
 
 
 // ================================
@@ -37,12 +38,13 @@ extern "C" {
 #define RCC_BASE                    0x00100000U
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
+#define CONV_BASE                   0x08800000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
 #define CLINT                      ((CLINT_Type *)CLINT_BASE)
 #define PLIC                       ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
-
+#define CONV2D                  ((ConvAccel_Type *)CONV_BASE)
 
 #ifdef __cplusplus
 }

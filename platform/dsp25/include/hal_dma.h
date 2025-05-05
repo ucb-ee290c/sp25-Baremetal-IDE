@@ -119,6 +119,21 @@
     uint8_t RESERVED[198];
   } DMA_Type;
 
+  typedef struct {
+    uint8_t core;
+    uint16_t transaction_id;
+    uint8_t transaction_priority;
+    uint8_t peripheral_id;
+    uint64_t addr_r;
+    uint64_t addr_w;
+    uint16_t inc_r;
+    uint16_t inc_w;
+    uint16_t len;
+    uint8_t logw;
+    bool do_interrupt;
+    bool do_address_gate;
+  } dma_transaction_t;
+
   //Default functions
   void reg_write8(uintptr_t addr, uint8_t data);
   uint8_t reg_read8(uintptr_t addr);

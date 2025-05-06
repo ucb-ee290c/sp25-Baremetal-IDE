@@ -103,7 +103,7 @@ int main() {
     app_main();
     
     // Add a small delay to ensure output is printed
-    for (volatile int i = 0; i < 1000; i++);
+    // for (volatile int i = 0; i < 1000; i++);
     
     return 0;
 }

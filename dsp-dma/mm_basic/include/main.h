@@ -65,7 +65,7 @@ extern "C" {
 #define TEST "MM_basic"
 
 // Configuration flags
-#define INTERRUPT true
+#define INTERRUPT false
 #define GATED false
 
 /* USER CODE END Private defines */

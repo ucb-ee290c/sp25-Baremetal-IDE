@@ -20,58 +20,55 @@
  #include <stdint.h>
  #include <riscv-pk/encoding.h>
  
-// // Base registers
-// #define DMA_MMIO_BASE 0x8812000
-// #define DMA_RESET DMA_MMIO_BASE
-// #define DMA_INFLIGHT_STATUS DMA_MMIO_BASE + 0x1
+// // Base registers - Use proper C syntax for constants with parentheses
+// #define DMA_MMIO_BASE (0x8812000UL)
+// #define DMA_RESET (DMA_MMIO_BASE)
+// #define DMA_INFLIGHT_STATUS (DMA_MMIO_BASE + 0x1UL)
 
-// // Helper constants 
-// #define CHANNEL_BASE DMA_MMIO_BASE + 0x100
-// #define CHANNEL_OFFSET 64
-// #define INTERRUPT_BASE DMA_MMIO_BASE + 16
-// #define INTERRUPT_OFFSET 16
+// // Helper constants - Add parentheses for all address calculations
+// #define CHANNEL_BASE (DMA_MMIO_BASE + 0x100UL)
+// #define CHANNEL_OFFSET (64UL)
+// #define INTERRUPT_BASE (DMA_MMIO_BASE + 16UL)
+// #define INTERRUPT_OFFSET (16UL)
+// #define DMA_INT_CORE_0_OFFSET (INTERRUPT_OFFSET * 0UL) // core 0
+// #define DMA_INT_CORE_1_OFFSET (INTERRUPT_OFFSET * 1UL) // core 1
 
-// #define DMA_INT_CORE_0_OFFSET INTERRUPT_OFFSET * 0 // core 0
-// #define DMA_INT_CORE_1_OFFSET INTERRUPT_OFFSET * 1 // core 1
+// // Per core registers - Add parentheses and UL suffix for all constants
+// #define DMA_INT_SERVICED (INTERRUPT_BASE + 0x00UL)
+// #define DMA_INT_VALID (INTERRUPT_BASE + 0x01UL)
+// #define DMA_INT_TRANSACTION_ID (INTERRUPT_BASE + 0x02UL)
+// #define DMA_INT_IS_ERROR (INTERRUPT_BASE + 0x04UL)
+// #define DMA_INT_ADDRESS (INTERRUPT_BASE + 0x08UL)
 
-// // Per core registers
-// #define DMA_INT_SERVICED INTERRUPT_BASE + 0x00
-// #define DMA_INT_VALID INTERRUPT_BASE + 0x01
-// #define DMA_INT_TRANSACTION_ID INTERRUPT_BASE + 0x02
-// #define DMA_INT_IS_ERROR INTERRUPT_BASE + 0x04
-// #define DMA_INT_ADDRESS INTERRUPT_BASE + 0x08
-
-// // Per channel registers
-// #define DMA_START CHANNEL_BASE
-// #define DMA_BUSY DMA_START + 0x28
-// #define DMA_READY DMA_START + 0x2
-// #define DMA_FIFO_LENGTH DMA_START + 0x3
-// #define DMA_CORE_ID DMA_START + 0x4
-// #define DMA_TRANSACTION_ID DMA_START + 0x8
-// #define DMA_PERIPHERAL_ID DMA_START + 0xA
-// #define DMA_TRANSACTION_PRIORITY DMA_START + 0xC
-// #define DMA_MODE DMA_START + 0xE
-// #define DMA_ADDR_R DMA_START + 0x10
-// #define DMA_ADDR_W DMA_START + 0x18
-// #define DMA_LEN DMA_START + 0x20
-// #define DMA_LOGW DMA_START + 0x22
-// #define DMA_INC_R DMA_START + 0x24
-// #define DMA_INC_W DMA_START + 0x26
+// // Per channel registers - Add parentheses for all address calculations
+// #define DMA_START (CHANNEL_BASE)
+// #define DMA_BUSY (DMA_START + 0x28UL)
+// #define DMA_READY (DMA_START + 0x2UL)
+// #define DMA_FIFO_LENGTH (DMA_START + 0x3UL)
+// #define DMA_CORE_ID (DMA_START + 0x4UL)
+// #define DMA_TRANSACTION_ID (DMA_START + 0x8UL)
+// #define DMA_PERIPHERAL_ID (DMA_START + 0xAUL)
+// #define DMA_TRANSACTION_PRIORITY (DMA_START + 0xCUL)
+// #define DMA_MODE (DMA_START + 0xEUL)
+// #define DMA_ADDR_R (DMA_START + 0x10UL)
+// #define DMA_ADDR_W (DMA_START + 0x18UL)
+// #define DMA_LEN (DMA_START + 0x20UL)
+// #define DMA_LOGW (DMA_START + 0x22UL)
+// #define DMA_INC_R (DMA_START + 0x24UL)
+// #define DMA_INC_W (DMA_START + 0x26UL)
 
 // // interrupt-specific constants
-// #define DMA_INTERRUPT_ID_CORE_0 4
-// #define DMA_INTERRUPT_ID_CORE_1 5
+// #define DMA_INTERRUPT_ID_CORE_0 (4)
+// #define DMA_INTERRUPT_ID_CORE_1 (5)
 
-// // PLIC MMIO
-// #define PLIC_BASE 0x0C000000
-// #define PLIC_ENABLE_CORE_0 PLIC_BASE + 0x2000
-// #define PLIC_ENABLE_CORE_1 PLIC_BASE + 0x2080
-
-// #define PLIC_PRIORITY_DMA_INT_SRC_1 PLIC_BASE + (4 * DMA_INTERRUPT_ID_CORE_0)
-// #define PLIC_PRIORITY_DMA_INT_SRC_2 PLIC_BASE + (4 * DMA_INTERRUPT_ID_CORE_1)
-
-// #define PLIC_CLAIM_CORE_0 PLIC_BASE + 0x200004 
-// #define PLIC_CLAIM_CORE_1 PLIC_BASE + 0x201004
+// // PLIC MMIO - Add UL suffix and parentheses
+// #define PLIC_BASE (0x0C000000UL)
+// #define PLIC_ENABLE_CORE_0 (PLIC_BASE + 0x2000UL)
+// #define PLIC_ENABLE_CORE_1 (PLIC_BASE + 0x2080UL)
+// #define PLIC_PRIORITY_DMA_INT_SRC_1 (PLIC_BASE + (4UL * DMA_INTERRUPT_ID_CORE_0))
+// #define PLIC_PRIORITY_DMA_INT_SRC_2 (PLIC_BASE + (4UL * DMA_INTERRUPT_ID_CORE_1))
+// #define PLIC_CLAIM_CORE_0 (PLIC_BASE + 0x200004UL) 
+// #define PLIC_CLAIM_CORE_1 (PLIC_BASE + 0x201004UL) 
 
   typedef struct {
     // ==========================================

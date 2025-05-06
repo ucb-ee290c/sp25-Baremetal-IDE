@@ -17,7 +17,6 @@
 #include "main.h"
 #include "hal_dma.h"
 #include "chip_config.h"
-#include <stdio.h>
 #include <stdlib.h>
 
 /* Private includes ----------------------------------------------------------*/

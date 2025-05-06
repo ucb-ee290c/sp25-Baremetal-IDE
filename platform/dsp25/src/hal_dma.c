@@ -1,46 +1,57 @@
 #include "hal_dma.h"
 #include "chip_config.h"
+#include <stdio.h>
+#include <stdlib.h>
 
-//From mmio.h, removed static keyword since tests may use these functions
-inline void reg_write8(uintptr_t addr, uint8_t data) {
-    volatile uint8_t *ptr = (volatile uint8_t *)addr;
-    *ptr = data;
-}
+// Base registers - Use proper C syntax for constants with parentheses
+#define DMA_MMIO_BASE (0x8812000UL)
+#define DMA_RESET (DMA_MMIO_BASE)
+#define DMA_INFLIGHT_STATUS (DMA_MMIO_BASE + 0x1UL)
 
-inline uint8_t reg_read8(uintptr_t addr) {
-    volatile uint8_t *ptr = (volatile uint8_t *)addr;
-    return *ptr;
-}
-  
-inline void reg_write16(uintptr_t addr, uint16_t data) {
-    volatile uint16_t *ptr = (volatile uint16_t *)addr;
-    *ptr = data;
-}
-  
-inline uint16_t reg_read16(uintptr_t addr) {
-    volatile uint16_t *ptr = (volatile uint16_t *)addr;
-    return *ptr;
-}
-  
-inline void reg_write32(uintptr_t addr, uint32_t data) {
-    volatile uint32_t *ptr = (volatile uint32_t *)addr;
-    *ptr = data;
-}
-  
-inline uint32_t reg_read32(uintptr_t addr) {
-    volatile uint32_t *ptr = (volatile uint32_t *)addr;
-    return *ptr;
-}
-  
-inline void reg_write64(unsigned long addr, uint64_t data) {
-    volatile uint64_t *ptr = (volatile uint64_t *)addr;
-    *ptr = data;
-}
-  
-inline uint64_t reg_read64(unsigned long addr) {
-    volatile uint64_t *ptr = (volatile uint64_t *)addr;
-    return *ptr;
-}
+// Helper constants - Add parentheses for all address calculations
+#define CHANNEL_BASE (DMA_MMIO_BASE + 0x100UL)
+#define CHANNEL_OFFSET (64UL)
+#define INTERRUPT_BASE (DMA_MMIO_BASE + 16UL)
+#define INTERRUPT_OFFSET (16UL)
+#define DMA_INT_CORE_0_OFFSET (INTERRUPT_OFFSET * 0UL) // core 0
+#define DMA_INT_CORE_1_OFFSET (INTERRUPT_OFFSET * 1UL) // core 1
+
+// Per core registers - Add parentheses and UL suffix for all constants
+#define DMA_INT_SERVICED (INTERRUPT_BASE + 0x00UL)
+#define DMA_INT_VALID (INTERRUPT_BASE + 0x01UL)
+#define DMA_INT_TRANSACTION_ID (INTERRUPT_BASE + 0x02UL)
+#define DMA_INT_IS_ERROR (INTERRUPT_BASE + 0x04UL)
+#define DMA_INT_ADDRESS (INTERRUPT_BASE + 0x08UL)
+
+// Per channel registers - Add parentheses for all address calculations
+#define DMA_START (CHANNEL_BASE)
+#define DMA_BUSY (DMA_START + 0x28UL)
+#define DMA_READY (DMA_START + 0x2UL)
+#define DMA_FIFO_LENGTH (DMA_START + 0x3UL)
+#define DMA_CORE_ID (DMA_START + 0x4UL)
+#define DMA_TRANSACTION_ID (DMA_START + 0x8UL)
+#define DMA_PERIPHERAL_ID (DMA_START + 0xAUL)
+#define DMA_TRANSACTION_PRIORITY (DMA_START + 0xCUL)
+#define DMA_MODE (DMA_START + 0xEUL)
+#define DMA_ADDR_R (DMA_START + 0x10UL)
+#define DMA_ADDR_W (DMA_START + 0x18UL)
+#define DMA_LEN (DMA_START + 0x20UL)
+#define DMA_LOGW (DMA_START + 0x22UL)
+#define DMA_INC_R (DMA_START + 0x24UL)
+#define DMA_INC_W (DMA_START + 0x26UL)
+
+// interrupt-specific constants
+#define DMA_INTERRUPT_ID_CORE_0 (4)
+#define DMA_INTERRUPT_ID_CORE_1 (5)
+
+// PLIC MMIO - Add UL suffix and parentheses
+#define PLIC_BASE (0x0C000000UL)
+#define PLIC_ENABLE_CORE_0 (PLIC_BASE + 0x2000UL)
+#define PLIC_ENABLE_CORE_1 (PLIC_BASE + 0x2080UL)
+#define PLIC_PRIORITY_DMA_INT_SRC_1 (PLIC_BASE + (4UL * DMA_INTERRUPT_ID_CORE_0))
+#define PLIC_PRIORITY_DMA_INT_SRC_2 (PLIC_BASE + (4UL * DMA_INTERRUPT_ID_CORE_1))
+#define PLIC_CLAIM_CORE_0 (PLIC_BASE + 0x200004UL) 
+#define PLIC_CLAIM_CORE_1 (PLIC_BASE + 0x201004UL) 
 
 // -------------- DMA specific functions ----------------------
 typedef struct Node {
@@ -117,12 +128,12 @@ Node* complete_tracker_list = NULL;
 
 void enable_interrupts() {
     // Enable interrupts on the PLIC for specific core
-    reg_write32(PLIC_ENABLE_REG(0), (1 << DMA_INT_ID_CORE_0));
-    reg_write32(PLIC_ENABLE_REG(1), (1 << DMA_INT_ID_CORE_1));
+    reg_write32(PLIC_ENABLE_CORE_0, (1 << DMA_INTERRUPT_ID_CORE_0));
+    reg_write32(PLIC_ENABLE_CORE_1, (1 << DMA_INTERRUPT_ID_CORE_1));
 
     // Set priority for DMA interrupts --  [1,7]) 1 - Low; 7 - High
-    reg_write32(PLIC_PRIORITY_REG(DMA_INT_ID_CORE_0), 5);
-    reg_write32(PLIC_PRIORITY_REG(DMA_INT_ID_CORE_1), 5);
+    reg_write32(PLIC_PRIORITY_DMA_INT_SRC_1, 5);
+    reg_write32(PLIC_PRIORITY_DMA_INT_SRC_2, 5);
 
     set_csr(mie, MIP_MEIP); // Enables external machine interrupts
     set_csr(mstatus, MSTATUS_MIE); // Enables machine interrupts
@@ -133,28 +144,39 @@ void enable_interrupts() {
     You can add more cases depending on the interrupt ID (external device) 
     read from the claim register in the PLIC.
 */
-void machine_ext_interrupt_handler() {
 
-    uint32_t core_id = read_csr(mhartid);
+void machine_ext_interrupt_handler() {
+    /*
+        Code here will likely break if you are using more than 2 cores.
+        This stuff could use refactoring to use for N cores, but DSP'25 uses
+        2 cores so this works :)    
+    */
+
+    bool is_core_0 = read_csr(mhartid) == 0;
  
     // Read the interrupt source from PLIC
-    uint32_t interrupt_id = reg_read32(PLIC_CLAIM_REG(core_id));
+    uint32_t interrupt_id_core_0 = reg_read32(PLIC_CLAIM_CORE_0);
+    uint32_t interrupt_id_core_1 = reg_read32(PLIC_CLAIM_CORE_1);
 
-    if ((interrupt_id == DMA_INT_ID_CORE_0) ||
-        (interrupt_id == DMA_INT_ID_CORE_1)) {  
+    if ((interrupt_id_core_0 == DMA_INTERRUPT_ID_CORE_0) ||
+        (interrupt_id_core_1 == DMA_INTERRUPT_ID_CORE_1)) {  
+
+        uint32_t CORE_OFFSET = is_core_0 ? DMA_INT_CORE_0_OFFSET : DMA_INT_CORE_1_OFFSET;
+        uint32_t interrupt_id = is_core_0 ? interrupt_id_core_0 : interrupt_id_core_1;
+        uint32_t PLIC_CLAIM_ADDRESS = is_core_0 ? PLIC_CLAIM_CORE_0 : PLIC_CLAIM_CORE_1;
         
         // Acknowledge interrupt
-        uint16_t t_id = reg_read16(DMA_INT_TRANSACTION_ID(core_id));
+        uint16_t t_id = reg_read16(DMA_INT_TRANSACTION_ID + CORE_OFFSET);
         // TODO: some way to acknowledge this if it's an error?
-        // uint64_t mem_address = reg_read64(DMA_INT_ADDRESS(core_id));
-        // uint8_t is_error = reg_read8(DMA_INT_IS_ERROR(core_id));
+        // uint64_t mem_address = reg_read64(DMA_INT_ADDRESS + CORE_OFFSET);
+        // uint8_t is_error = reg_read8(DMA_INT_IS_ERROR + CORE_OFFSET);
 
         // Write back to PLIC to complete interrupt handling
         //  - If the completion ID does not match an interrupt source that is currently 
         //    enabled for the target, the completion is silently ignored
         
-        reg_write32(PLIC_CLAIM_REG(core_id), interrupt_id);
-        reg_write8(DMA_INT_SERVICED(core_id), 1); // Notify DMA that interrupt has been serviced
+        reg_write32(PLIC_CLAIM_ADDRESS, interrupt_id);
+        reg_write8(DMA_INT_SERVICED + CORE_OFFSET, 1); // Notify DMA that interrupt has been serviced
 
         set_complete(&complete_tracker_list, t_id);
     }
@@ -182,7 +204,7 @@ __attribute__((aligned(4))) void* trap_handler(uintptr_t epc, uintptr_t cause, u
         exit(code);
         // printf("[WARNING] Didn't service the trap.\n");
     }
-    return epc;
+    return (void*)epc;
     // asm volatile ("mret");
 }
 
@@ -208,8 +230,8 @@ bool set_DMA_common(uint32_t channel, dma_transaction_t transaction, bool retry)
 
     // spin while another core is writing
     uint32_t res = reg_amo_swap32(DMA_BUSY + channel_offset, 1);
-    if (!res && !retry) return false;
-    while (!res && retry && reg_amo_swap32(DMA_BUSY + channel_offset, 1)) ;
+    if (res && !retry) return false;
+    while (res && retry && reg_amo_swap32(DMA_BUSY + channel_offset, 1)) ;
 
     reg_write8(DMA_CORE_ID + channel_offset, transaction.core);
     reg_write16(DMA_TRANSACTION_ID + channel_offset, transaction.transaction_id);
@@ -258,11 +280,11 @@ bool set_DMA_P(uint32_t channel, dma_transaction_t transaction, bool retry) {
 void start_DMA(uint32_t channel, uint16_t transaction_id, bool* finished) {
     uintptr_t channel_offset = channel * CHANNEL_OFFSET;
 
-    // Start DMA transaction
-    reg_write8(DMA_START + channel_offset, 1);
-
     // Add to linked list
     if (finished) add_tail(&complete_tracker_list, transaction_id, finished);
+
+    // Start DMA transaction
+    reg_write8(DMA_START + channel_offset, 1);
 }
 
 void end_dma() {
@@ -317,7 +339,7 @@ void dma_reset() {
 }
 void dma_wait_till_inactive(int cycle_no_inflight) {
     while (1) {
-        int t = 0;
+        volatile int t = 0;
         while (t < cycle_no_inflight && dma_status() == 0) t++;
         if (t == cycle_no_inflight) break;
     }
@@ -325,4 +347,15 @@ void dma_wait_till_inactive(int cycle_no_inflight) {
 void dma_wait_till_interrupt(bool* finished) {
     volatile int k = 0;
     while (!*finished) { k = k + 1; }
+}
+
+void dma_wait_till_done(size_t mhartid, bool* finished) {
+    int core_offset = INTERRUPT_OFFSET * mhartid;
+    while (!(*finished)) {
+        volatile uint8_t int_done = reg_read8(DMA_INT_VALID + core_offset);
+        if (int_done) {
+            uint16_t t_id = reg_read16(DMA_INT_TRANSACTION_ID + core_offset);
+            set_complete(&complete_tracker_list, t_id);
+        }
+    }
 }

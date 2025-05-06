@@ -18,60 +18,60 @@
  #include "metal.h"
  #include <stdbool.h>
  #include <stdint.h>
-//  #include <riscv-pk/encoding.h>
+ #include <riscv-pk/encoding.h>
  
-  // Register Offset Definitions
-  #define DMA_MMIO_BASE 0x08812000
-  #define DMA_RESET (DMA_MMIO_BASE)
-  #define DMA_INFLIGHT_STATUS (DMA_MMIO_BASE + 0x1)
+// // Base registers
+// #define DMA_MMIO_BASE 0x8812000
+// #define DMA_RESET DMA_MMIO_BASE
+// #define DMA_INFLIGHT_STATUS DMA_MMIO_BASE + 0x1
 
-  // Helper constants 
-  #define CHANNEL_BASE (DMA_MMIO_BASE + 0x100)
-  #define CHANNEL_OFFSET 64
-  #define INTERRUPT_BASE (DMA_MMIO_BASE + 16)
-  #define INTERRUPT_OFFSET 16
+// // Helper constants 
+// #define CHANNEL_BASE DMA_MMIO_BASE + 0x100
+// #define CHANNEL_OFFSET 64
+// #define INTERRUPT_BASE DMA_MMIO_BASE + 16
+// #define INTERRUPT_OFFSET 16
 
-  // Per core registers
-  #define DMA_INT_SERVICED(CORE_ID) (INTERRUPT_BASE + 0x00 + (INTERRUPT_OFFSET * CORE_ID))
-  #define DMA_INT_VALID(CORE_ID) (INTERRUPT_BASE + 0x01 + (INTERRUPT_OFFSET * CORE_ID))
-  #define DMA_INT_TRANSACTION_ID(CORE_ID) (INTERRUPT_BASE + 0x02 + (INTERRUPT_OFFSET * CORE_ID))
-  #define DMA_INT_IS_ERROR(CORE_ID) (INTERRUPT_BASE + 0x04 + (INTERRUPT_OFFSET * CORE_ID))
-  #define DMA_INT_ADDRESS(CORE_ID) (INTERRUPT_BASE + 0x08 + (INTERRUPT_OFFSET * CORE_ID))
+// #define DMA_INT_CORE_0_OFFSET INTERRUPT_OFFSET * 0 // core 0
+// #define DMA_INT_CORE_1_OFFSET INTERRUPT_OFFSET * 1 // core 1
 
-  // Per channel registers
-  #define DMA_START CHANNEL_BASE
-  #define DMA_BUSY DMA_START + 0x28
-  #define DMA_READY DMA_START + 0x2
-  #define DMA_FIFO_LENGTH DMA_START + 0x3
-  #define DMA_CORE_ID DMA_START + 0x4
-  #define DMA_TRANSACTION_ID DMA_START + 0x8
-  #define DMA_PERIPHERAL_ID DMA_START + 0xA
-  #define DMA_TRANSACTION_PRIORITY DMA_START + 0xC
-  #define DMA_MODE DMA_START + 0xE
-  #define DMA_ADDR_R DMA_START + 0x10
-  #define DMA_ADDR_W DMA_START + 0x18
-  #define DMA_LEN DMA_START + 0x20
-  #define DMA_LOGW DMA_START + 0x22
-  #define DMA_INC_R DMA_START + 0x24
-  #define DMA_INC_W DMA_START + 0x26
+// // Per core registers
+// #define DMA_INT_SERVICED INTERRUPT_BASE + 0x00
+// #define DMA_INT_VALID INTERRUPT_BASE + 0x01
+// #define DMA_INT_TRANSACTION_ID INTERRUPT_BASE + 0x02
+// #define DMA_INT_IS_ERROR INTERRUPT_BASE + 0x04
+// #define DMA_INT_ADDRESS INTERRUPT_BASE + 0x08
 
-  // interrupt-specific constants
-  #define DMA_INT_ID_CORE_0 4
-  #define DMA_INT_ID_CORE_1 5
+// // Per channel registers
+// #define DMA_START CHANNEL_BASE
+// #define DMA_BUSY DMA_START + 0x28
+// #define DMA_READY DMA_START + 0x2
+// #define DMA_FIFO_LENGTH DMA_START + 0x3
+// #define DMA_CORE_ID DMA_START + 0x4
+// #define DMA_TRANSACTION_ID DMA_START + 0x8
+// #define DMA_PERIPHERAL_ID DMA_START + 0xA
+// #define DMA_TRANSACTION_PRIORITY DMA_START + 0xC
+// #define DMA_MODE DMA_START + 0xE
+// #define DMA_ADDR_R DMA_START + 0x10
+// #define DMA_ADDR_W DMA_START + 0x18
+// #define DMA_LEN DMA_START + 0x20
+// #define DMA_LOGW DMA_START + 0x22
+// #define DMA_INC_R DMA_START + 0x24
+// #define DMA_INC_W DMA_START + 0x26
 
-  // PLIC MMIO
-  #define PLIC_BASE 0x0C000000
-  #define PLIC_ENABLE_REG(CORE_ID) (PLIC_BASE + 0x2000 + (CORE_ID * 0x80))
-  #define PLIC_CLAIM_REG(CORE_ID) (PLIC_BASE + 0x200004 + (CORE_ID * 0x1000))
-  #define PLIC_PRIORITY_REG(DMA_INT_ID) (PLIC_BASE + (4 * DMA_INT_ID))
-  
-  #ifdef __cplusplus
-  #define   __I     volatile             /** Defines "read only" permissions */
-#else
-  #define   __I     volatile const       /** Defines "read only" permissions */
-#endif
-#define     __O     volatile             /** Defines "write only" permissions */
-#define     __IO    volatile             /** Defines "read / write" permissions */
+// // interrupt-specific constants
+// #define DMA_INTERRUPT_ID_CORE_0 4
+// #define DMA_INTERRUPT_ID_CORE_1 5
+
+// // PLIC MMIO
+// #define PLIC_BASE 0x0C000000
+// #define PLIC_ENABLE_CORE_0 PLIC_BASE + 0x2000
+// #define PLIC_ENABLE_CORE_1 PLIC_BASE + 0x2080
+
+// #define PLIC_PRIORITY_DMA_INT_SRC_1 PLIC_BASE + (4 * DMA_INTERRUPT_ID_CORE_0)
+// #define PLIC_PRIORITY_DMA_INT_SRC_2 PLIC_BASE + (4 * DMA_INTERRUPT_ID_CORE_1)
+
+// #define PLIC_CLAIM_CORE_0 PLIC_BASE + 0x200004 
+// #define PLIC_CLAIM_CORE_1 PLIC_BASE + 0x201004
 
   typedef struct {
     // ==========================================
@@ -150,26 +150,27 @@
 
   bool set_DMA_C(uint32_t channel, dma_transaction_t transaction, bool retry);
   bool set_DMA_P(uint32_t channel, dma_transaction_t transaction, bool retry);
-
+  
   void start_DMA(uint32_t channel, uint16_t transaction_id, bool* finished);
-
+  
   #define ALWAYS_PRINT 0
   #define PRINT_ON_ERROR 1
   #define NEVER_PRINT 2
-
+  
   bool check_val8(int i, unsigned int ref, long unsigned int addr, int print);
   bool check_val16(int i, unsigned int ref, long unsigned int addr, int print);
   bool check_val32(int i, unsigned int ref, long unsigned int addr, int print);
   bool check_val64(int i, long unsigned int ref, long unsigned int addr, int print);
-
+  
   int dma_status();
   void dma_reset();
-
+  
   void dma_wait_till_inactive(int cycle_no_inflight);
   void dma_wait_till_interrupt(bool* finished);
-
+  void dma_wait_till_done(size_t mhartid, bool* finished);
+  
   size_t ticks();
-
+  
   void end_dma();
 
   #ifdef __cplusplus

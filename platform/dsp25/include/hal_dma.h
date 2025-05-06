@@ -16,18 +16,19 @@
  
  // Baremetal IDE Definitions //
  #include "metal.h"
- 
+ #include <stdbool.h>
  #include <stdint.h>
+//  #include <riscv-pk/encoding.h>
  
- // Register Offset Definitions
-  #define DMA_MMIO_BASE 0x8810000
-  #define DMA_RESET DMA_MMIO_BASE
-  #define DMA_INFLIGHT_STATUS DMA_MMIO_BASE + 0x1
+  // Register Offset Definitions
+  #define DMA_MMIO_BASE 0x08812000
+  #define DMA_RESET (DMA_MMIO_BASE)
+  #define DMA_INFLIGHT_STATUS (DMA_MMIO_BASE + 0x1)
 
   // Helper constants 
-  #define CHANNEL_BASE DMA_MMIO_BASE + 0x100
+  #define CHANNEL_BASE (DMA_MMIO_BASE + 0x100)
   #define CHANNEL_OFFSET 64
-  #define INTERRUPT_BASE DMA_MMIO_BASE + 16
+  #define INTERRUPT_BASE (DMA_MMIO_BASE + 16)
   #define INTERRUPT_OFFSET 16
 
   // Per core registers
@@ -92,7 +93,7 @@
     __I  uint64_t INTERRUPT_ADDRESS;          // 0x08: Interrupting transaction errored while reading/writing to this address. R
 
     //8 + 8 + 16 + 8 + 64 = 104 bits per core. Max 9 - 1 cores. 104 * (9 - 1) / 8 = 104.
-    uint8_t RESERVED[104];
+    uint8_t CORE_RESERVED[104];
 
     // ==========================================
     // Per-Channel MMIO Registers
@@ -116,7 +117,7 @@
     __IO uint8_t  BUSY;                     // 0x28: If high, another core is writing to this channel. RW
 
     //264 bits per channel, max 7 channel. 264 * (7 - 1) / 8 = 198
-    uint8_t RESERVED[198];
+    uint8_t CHANNEL_RESERVED[198];
   } DMA_Type;
 
   typedef struct {

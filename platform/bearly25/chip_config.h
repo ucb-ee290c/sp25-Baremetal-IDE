@@ -13,6 +13,7 @@ extern "C" {
 #include "i2c.h"
 #include "uart.h"
 #include "gpio.h"
+#include "pll.h"
 
 // ================================
 //  Platform Drivers

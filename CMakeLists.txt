@@ -37,6 +37,7 @@ option(USE_PGO                      "Build with profile guided optimization"  OF
 option(OPT_INFO                     "Build with optimization information"      OFF )
 
 option(USE_FREERTOS                 "Build with FreeRTOS"                     OFF )
+option(ENABLE_RVV                   "Build for RVV targets"                     OFF)
 option(BUILD_VECNN                  "Build vec-nn library"                     OFF)
 
 # Define the variable with a default empty value
@@ -53,7 +54,11 @@ set(CMAKE_EXECUTABLE_SUFFIX            ".elf")
 #################################
 
 # CPU architecture
-set(ARCH                "rv64gcv_zfh")
+if (ENABLE_RVV)
+  set(ARCH                "rv64gcv_zfh")
+else()
+  set(ARCH                "rv64imafd")
+endif()
 set(ABI                 "lp64d")
 set(CMODEL              "medany")
 set(ARCH_FLAGS          -march=${ARCH} -mabi=${ABI} -mcmodel=${CMODEL})

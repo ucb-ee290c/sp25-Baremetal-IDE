@@ -53,7 +53,7 @@ set(CMAKE_EXECUTABLE_SUFFIX            ".elf")
 #################################
 
 # CPU architecture
-set(ARCH                "rv64imafd")
+set(ARCH                "rv64gcv_zfh")
 set(ABI                 "lp64d")
 set(CMODEL              "medany")
 set(ARCH_FLAGS          -march=${ARCH} -mabi=${ABI} -mcmodel=${CMODEL})
@@ -147,9 +147,7 @@ endif()
 
 add_subdirectory(app)
 # Add your custom subdirectories here!
-if(BUILD_VECNN)
-  target_link_libraries(my_app PRIVATE vecnn)
-endif()
+add_subdirectory(bearly25-tests)
 
 
 

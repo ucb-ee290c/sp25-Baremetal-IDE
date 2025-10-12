@@ -12,7 +12,7 @@ TYPE = Release
 
 .PHONY: build
 build:
-	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP)
+	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP) $(if $(VECNN), -D BUILD_VECNN=$(VECNN), )
 	cmake --build ./build/ --target $(TARGET)
 
 .PHONY: ocd

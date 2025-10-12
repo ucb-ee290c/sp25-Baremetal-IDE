@@ -37,6 +37,8 @@ option(USE_PGO                      "Build with profile guided optimization"  OF
 option(OPT_INFO                     "Build with optimization information"      OFF )
 
 option(USE_FREERTOS                 "Build with FreeRTOS"                     OFF )
+option(BUILD_VECNN                  "Build vec-nn library"                     OFF)
+
 # Define the variable with a default empty value
 set(AFDO_PATH "" CACHE STRING "Path to autofdo profile data")
 #################################
@@ -134,6 +136,10 @@ add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
 
+if(BUILD_VECNN)
+  add_subdirectory(vec-nn)
+endif()
+
 
 #################################
 # Build Target Directories
@@ -141,6 +147,9 @@ add_subdirectory(examples)
 
 add_subdirectory(app)
 # Add your custom subdirectories here!
+if(BUILD_VECNN)
+  target_link_libraries(my_app PRIVATE vecnn)
+endif()
 
 
 

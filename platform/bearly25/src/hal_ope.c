@@ -69,6 +69,7 @@ void ope_extract(uint64_t mem_base_phys, uint16_t stride_elems,
     REG_VAR(rs1, ROCC_RS1_REG_N) = (uint64_t)stride_elems;
     if (transpose) { _OP_EXT_S_T(rs1, rs2);  }
     else           { _OP_EXT_S_NT(rs1, rs2); }
+    _fence_wr();
   }
 }
 
@@ -164,43 +165,36 @@ void ope_tile_outer_product(uint64_t a_tile_phys,
 // Precondition: M, N, K are multiples of 8
 void ope_matmul_i8i8_i32_AT(const int8_t* AT_phys, int ldAT,
                             const int8_t* B_phys,  int ldb,
-                            int32_t*      C_phys,  int ldc,
+                            int32_t* C_phys,       int ldc,
                             int M, int N, int K,
-                            bool load_existing)
-{
-  const uint16_t c_stride = (uint16_t)ldc;
-  const uint8_t  use_stride_c = 1;
-  const uint8_t  transpose_c  = 0;
-
-  for (int i0 = 0; i0 < M; i0 += 8) {
-    for (int j0 = 0; j0 < N; j0 += 8) {
-
-      // Base pointers for the (i0, j0) 8×8 tile
-      const uint64_t c_tile = (uint64_t)(C_phys  + i0 + (size_t)j0 * ldc);
-      const uint64_t a_tile = (uint64_t)(AT_phys + i0 * (size_t)ldAT);
-      const uint64_t b_tile = (uint64_t)(B_phys  + j0);
-
-      // Bring C tile into accumulators (or zero them)
-      if (load_existing) {
-        ope_load(c_tile, c_stride, transpose_c, use_stride_c);
-      } else {
-        ope_zero();
+                            bool load_existing) {
+   for (int i0 = 0; i0 < M; i0 += 8) {
+     for (int j0 = 0; j0 < N; j0 += 8) {
+      int8_t  A_T_panel[K * 8];
+      int8_t  B_panel [K * 8];
+      for (int k = 0; k < K; ++k) {
+        const int8_t* AT_row = &AT_phys[k * ldAT];
+        for (int r = 0; r < 8; ++r) {
+          A_T_panel[k*8 + r] = AT_row[i0 + r];
+        }
+        const int8_t* B_row = &B_phys[k * ldb + j0];
+        for (int c = 0; c < 8; ++c) {
+          B_panel[k*8 + c] = B_row[c];
+        }
       }
-
-      // Accumulate over K using as large an L as possible (<= 32)
-      int remaining_k8 = K / 8;
-      uint64_t a_step  = a_tile;
-      uint64_t b_step  = b_tile;
-
-      while (remaining_k8 > 0) {
-        uint8_t L = (remaining_k8 > 32) ? 32 : (uint8_t)remaining_k8;
-        ope_acc(a_step, b_step, L);
-
-        a_step += (uint64_t)8 * L;          // advance A^T by L lanes
-        b_step += (uint64_t)ldb * 8 * L;    // advance B by L rows (each 8-wide)
-        remaining_k8 -= L;
+      const uint64_t c_tile    = (uint64_t)&C_phys[i0 * ldc + j0];
+      const uint32_t c_stride  = (uint32_t)ldc;
+      const bool     transpose_c = false;
+      const bool     use_stride_c = true;
+      if (load_existing) ope_load(c_tile, c_stride, transpose_c, use_stride_c);
+      else               ope_zero();
+      for (int k0 = 0; k0 < K; k0 += 32) {
+        const uint8_t L = (K - k0 > 32) ? 32 : (uint8_t)(K - k0);
+        const uint64_t a_chunk = (uint64_t)(A_T_panel + k0*8);
+        const uint64_t b_chunk = (uint64_t)(B_panel   + k0*8);
+        ope_acc(a_chunk, b_chunk, L);
       }
       ope_extract(c_tile, c_stride, transpose_c, use_stride_c);
-    }
-  }
-}
+     }
+   }
+ }

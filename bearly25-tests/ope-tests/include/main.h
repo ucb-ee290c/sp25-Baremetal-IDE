@@ -10,6 +10,14 @@
 
 #include "hal_ope.h"
 
+#ifndef PRINT_INPUT_MATRICES
+#define PRINT_INPUT_MATRICES 0  // Set to 1 to print input A and B matrices
+#endif
+
+#ifndef PRINT_SUCCESS_MATRICES
+#define PRINT_SUCCESS_MATRICES 0  // Set to 1 to print output matrices
+#endif
+
 void app_init(void);
 void app_main(void);
 

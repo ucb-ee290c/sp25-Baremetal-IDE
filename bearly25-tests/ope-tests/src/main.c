@@ -56,17 +56,85 @@ static void pad_i32_bottom_right(const int32_t* C, size_t M, size_t N,
   }
 }
 
+static void print_matrix_i32(const char* name, const int32_t* matrix, 
+                             int rows, int cols, int stride) {
+  printf("\n%s (%dx%d):\n", name, rows, cols);
+  for (int i = 0; i < rows; ++i) {
+    printf("  [");
+    for (int j = 0; j < cols; ++j) {
+      printf("%6d", matrix[i * stride + j]);
+      if (j < cols - 1) printf(", ");
+    }
+    printf("]\n");
+  }
+  printf("\n");
+}
+
+static void print_matrix_i8(const char* name, const int8_t* matrix, 
+                            int rows, int cols, int stride) {
+  printf("\n%s (%dx%d):\n", name, rows, cols);
+  for (int i = 0; i < rows; ++i) {
+    printf("  [");
+    for (int j = 0; j < cols; ++j) {
+      printf("%4d", matrix[i * stride + j]);
+      if (j < cols - 1) printf(", ");
+    }
+    printf("]\n");
+  }
+  printf("\n");
+}
+
+static void print_diff_matrix(const int32_t* actual, const int32_t* expected,
+                             int rows, int cols, int stride_actual, int stride_expected) {
+  printf("\nDifference Matrix (Actual - Expected) (%dx%d):\n", rows, cols);
+  for (int i = 0; i < rows; ++i) {
+    printf("  [");
+    for (int j = 0; j < cols; ++j) {
+      int32_t diff = actual[i * stride_actual + j] - expected[i * stride_expected + j];
+      printf("%6d", diff);
+      if (j < cols - 1) printf(", ");
+    }
+    printf("]\n");
+  }
+  printf("\n");
+}
+
 static int compare_C_top_left(const int32_t* C, int ldc,
                               const int32_t* Cref, int ldcref,
                               int M, int N) {
+  int error_count = 0;
+  int first_error_i = -1, first_error_j = -1;
+  
   for (int i=0;i<M;++i){
     for (int j=0;j<N;++j){
       if (C[i*ldc + j] != Cref[i*ldcref + j]) {
-        printf("Mismatch at (%d,%d): got %d, exp %d\n",
-               i, j, C[i*ldc+j], Cref[i*ldcref+j]);
-        return -1;
+        if (first_error_i == -1) {
+          first_error_i = i;
+          first_error_j = j;
+        }
+        error_count++;
       }
     }
+  }
+  
+  if (error_count > 0) {
+    printf("\nMATRIX COMPARISON FAILED\n");
+    printf("Total errors: %d out of %d elements\n", error_count, M*N);
+    printf("First error at (%d,%d): got %d, expected %d\n",
+           first_error_i, first_error_j, 
+           C[first_error_i*ldc + first_error_j], 
+           Cref[first_error_i*ldcref + first_error_j]);
+    
+    print_matrix_i32("Actual Output (OPE)", C, M, N, ldc);
+    print_matrix_i32("Expected Output (Reference)", Cref, M, N, ldcref);
+    // print_diff_matrix(C, Cref, M, N, ldc, ldcref);
+    return -1;
+  } else {
+    #if PRINT_SUCCESS_MATRICES
+    printf("\nMATRIX COMPARISON PASSED\n");
+    print_matrix_i32("Actual Output (OPE)", C, M, N, ldc);
+    print_matrix_i32("Expected Output (Reference)", Cref, M, N, ldcref);
+    #endif
   }
   return 0;
 }
@@ -77,7 +145,7 @@ static int compare_C_top_left(const int32_t* C, int ldc,
 static int8_t  AT8_buf[MAX_K8 * MAX_M8];
 static int8_t  B8_buf [MAX_K8 * MAX_N8];
 static int32_t C8_buf [MAX_M8 * MAX_N8];
-static int32_t Cref_buf[8*8];
+static int32_t Cref_buf[MAX_M8*MAX_M8];
 
 static int run_case(const OpeInputCase *tc, int load_existing) {
   const int M=tc->M, N=tc->N, K=tc->K;
@@ -89,6 +157,16 @@ static int run_case(const OpeInputCase *tc, int load_existing) {
     return -1;
   }
 
+  printf("\n--- Running test case: %s ---\n", tc->name);
+  printf("Matrix dimensions: A(%dx%d), B(%dx%d), C(%dx%d)\n", M, K, K, N, M, N);
+  printf("Padded dimensions: M8=%u, N8=%u, K8=%u\n", (unsigned)M8, (unsigned)N8, (unsigned)K8);
+  printf("Load existing: %s\n", load_existing ? "true" : "false");
+
+  #if PRINT_INPUT_MATRICES
+  print_matrix_i8("Input Matrix A", tc->A, M, K, K);
+  print_matrix_i8("Input Matrix B", tc->B, K, N, N);
+  #endif
+
   for (int i=0;i<M*N;++i) Cref_buf[i]=0;
   ref_gemm_AT_i8i8_i32(tc->A, tc->B, Cref_buf, M,N,K, K, N, N);
 
@@ -97,7 +175,7 @@ static int run_case(const OpeInputCase *tc, int load_existing) {
   pad_i8_bottom_right(tc->B, K, N, B8_buf, K8, N8);
   if (load_existing) {
     static int32_t C0[8*8];
-    for (int i=0;i<M*N;++i) C0[i] = (i%13) - 6;
+    for (int i=0;i<M*N;++i) C0[i] += (i%13) - 6;
     pad_i32_bottom_right(C0, M, N, C8_buf, M8, N8);
   } else {
     for (size_t i=0;i<M8*N8;++i) C8_buf[i]=0;
@@ -110,9 +188,8 @@ static int run_case(const OpeInputCase *tc, int load_existing) {
   uint64_t t1 = rdcycle64();
 
   int ok = compare_C_top_left(C8_buf, (int)N8, Cref_buf, N, M, N);
-  printf("  %-18s (M=%d N=%d K=%d, load=%d)  cycles=%llu  -> %s\n",
-         tc->name, M,N,K, load_existing,
-         (unsigned long long)(t1 - t0), ok==0 ? "PASS" : "FAIL");
+  printf("Execution time: %llu cycles\n", (unsigned long long)(t1 - t0));
+  printf("Result: %s\n", ok==0 ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -120,21 +197,44 @@ void app_init(void) {}
 
 void app_main(void) {
   printf("=== OPE matmul tests (static inputs, no malloc) ===\n");
+  printf("Debug settings: PRINT_INPUT_MATRICES=%d, PRINT_SUCCESS_MATRICES=%d\n", 
+         PRINT_INPUT_MATRICES, PRINT_SUCCESS_MATRICES);
 
   int any_fail = 0;
+  int total_tests = 0;
+  int failed_tests = 0;
 
+  printf("\n=== ALIGNED TEST CASES ===\n");
   // 1) aligned cases
   for (int i=0;i<NUM_ALIGNED_CASES;++i) {
-    any_fail |= (run_case(&OPE_CASES_ALIGNED[i], 0) != 0);
+    total_tests++;
+    if (run_case(&OPE_CASES_ALIGNED[i], 0) != 0) {
+      any_fail = 1;
+      failed_tests++;
+    }
   }
 
+  printf("\n=== UNALIGNED TEST CASES ===\n");
   // 2) unaligned cases (manually padded by the runner)
   for (int i=0;i<NUM_UNALIGNED_CASES;++i) {
-    any_fail |= (run_case(&OPE_CASES_UNALIGNED[i], 0) != 0);
-    any_fail |= (run_case(&OPE_CASES_UNALIGNED[i], 1) != 0);
+    total_tests++;
+    if (run_case(&OPE_CASES_UNALIGNED[i], 0) != 0) {
+      any_fail = 1;
+      failed_tests++;
+    }
+    
+    total_tests++;
+    if (run_case(&OPE_CASES_UNALIGNED[i], 1) != 0) {
+      any_fail = 1;
+      failed_tests++;
+    }
   }
 
-  printf("\nRESULT: %s\n", any_fail ? "FAIL" : "PASS");
+  printf("\n=== FINAL SUMMARY ===\n");
+  printf("Total tests run: %d\n", total_tests);
+  printf("Tests passed: %d\n", total_tests - failed_tests);
+  printf("Tests failed: %d\n", failed_tests);
+  printf("OVERALL RESULT: %s\n", any_fail ? "FAIL" : "PASS");
 }
 
 int main(void) { app_init(); app_main(); return 0; }

@@ -170,12 +170,18 @@ static int run_case(const OpeInputCase *tc, int load_existing) {
   for (int i=0;i<M*N;++i) Cref_buf[i]=0;
   ref_gemm_AT_i8i8_i32(tc->A, tc->B, Cref_buf, M,N,K, K, N, N);
 
+  if (load_existing) {
+    for (int i=0; i<M*N; ++i) {
+      Cref_buf[i] += (i % 13) - 6;
+    }
+  }
+
   // Preprocess for OPE
   transpose_pad_i8_to_AT_padded(tc->A, M, K, AT8_buf, M8, K8);
   pad_i8_bottom_right(tc->B, K, N, B8_buf, K8, N8);
   if (load_existing) {
-    static int32_t C0[8*8];
-    for (int i=0;i<M*N;++i) C0[i] += (i%13) - 6;
+    int32_t C0[M * N];
+    for (int i=0;i<M*N;++i) C0[i] = (i % 13) - 6;
     pad_i32_bottom_right(C0, M, N, C8_buf, M8, N8);
   } else {
     for (size_t i=0;i<M8*N8;++i) C8_buf[i]=0;

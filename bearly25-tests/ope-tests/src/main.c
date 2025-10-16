@@ -157,9 +157,9 @@ static int compare_C_top_left(const int32_t* C, int ldc,
   return 0;
 }
 
-#define MAX_M8  16
-#define MAX_N8  16
-#define MAX_K8  32
+#define MAX_M8  128
+#define MAX_N8  128
+#define MAX_K8  128
 
 static int8_t  AT8_buf[MAX_K8 * MAX_M8];
 static int8_t  B8_buf[MAX_K8 * MAX_N8];

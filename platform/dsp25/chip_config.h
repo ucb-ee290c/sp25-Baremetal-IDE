@@ -44,7 +44,9 @@ extern "C" {
 #define CLINT                      ((CLINT_Type *)CLINT_BASE)
 #define PLIC                       ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
-#define CONV2D                  ((ConvAccel_Type *)CONV_BASE)
+// #define CONV2D                  ((ConvAccel_Type *)CONV_BASE)
+#define CONV1D                  ((ConvAccel_Type *)CONV_BASE)
+
 
 #ifdef __cplusplus
 }

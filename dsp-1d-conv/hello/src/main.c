@@ -239,12 +239,6 @@
     be zero extended by 0 to be of size 8.
 */
 
-// #include "../../../tests/mmio.h"
-// #include <stdio.h>
-// #include <string.h>
-// #include <stdint.h>
-// #include <inttypes.h>
-
 // # include "main.h"
 
 // #define BASE_ADDR 0x08800000
@@ -398,18 +392,25 @@ void test_simple(){
     uint32_t u;
   };
 
-  uint32_t in_arr[16] = {
-    0x3F99999A, 0x40266666, 0xC0580000, 0x3F33CCCC, 
-    0x40A00000, 0xC01D3333, 0x40B33333, 0xBFC66666, 
-    0x40A19999, 0x40D99999, 0xC0A00000, 0x3F8CCCCD, 
-    0x40C00000, 0xBFC00000, 0x40019999, 0x40466666
-  };
-  uint32_t in_len = 16;
-  uint16_t in_dilation = 1;
-  uint32_t in_kernel[8] = {
-    0xC0800000, 0x40800000, 0x3F800000, 0xC0800000, 
-    0x40800000, 0xC0800000, 0x40800000, 0x40000000
-  };
+  // uint32_t in_arr[16] = {
+  //   0x3F99999A, 0x40266666, 0xC0580000, 0x3F33CCCC, 
+  //   0x40A00000, 0xC01D3333, 0x40B33333, 0xBFC66666, 
+  //   0x40A19999, 0x40D99999, 0xC0A00000, 0x3F8CCCCD, 
+  //   0x40C00000, 0xBFC00000, 0x40019999, 0x40466666
+  // };
+  // uint32_t in_len = 16;
+  // uint16_t in_dilation = 1;
+  // uint32_t in_kernel[8] = {
+  //   0xC0800000, 0x40800000, 0x3F800000, 0xC0800000, 
+  //   0x40800000, 0xC0800000, 0x40800000, 0x40000000
+  // };
+  // uint8_t kernel_len = 8;
+
+  
+  uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
+  uint32_t in_len[1] = {8};
+  uint16_t in_dilation[1] = {1};
+  uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
   uint8_t kernel_len = 8;
   
   // Define the convolution accelerator structure

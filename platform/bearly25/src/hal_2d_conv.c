@@ -190,26 +190,73 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv) {
     }
 }
 
-/**
- * Simplified wrapper function for performing 2D convolution
- * This function combines all the necessary steps into a single call
- */
-void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
-                        uint64_t height, uint64_t width,
-                        int8_t *kernel, uint8_t kernel_size,
-                        uint8_t use_relu, uint8_t stride) {
-    // Get accelerator pointer
-    Conv2D_Accel_Type *conv = CONV2D;
+// /**
+//  * Simplified wrapper function for performing 2D convolution
+//  * This function combines all the necessary steps into a single call
+//  */
+// void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
+//                         uint64_t height, uint64_t width,
+//                         int8_t *kernel, uint8_t kernel_size,
+//                         uint8_t use_relu, uint8_t stride) {
+//     // Get accelerator pointer
+//     Conv2D_Accel_Type *conv = CONV2D;
     
-    // Initialize and configure
-    conv2d_init(conv);
-    conv2d_configure(conv, src_addr, dest_addr, height, width, 
-                    kernel_size, use_relu, stride);
+//     // Initialize and configure
+//     conv2d_init(conv);
+//     conv2d_configure(conv, src_addr, dest_addr, height, width, 
+//                     kernel_size, use_relu, stride);
     
-    // Set kernel values
-    conv2d_set_kernel(conv, kernel, kernel_size);
+//     // Set kernel values
+//     conv2d_set_kernel(conv, kernel, kernel_size);
     
-    // Start and wait
-    conv2d_start(conv);
-    conv2d_wait_complete(conv);
+//     // Start and wait
+//     conv2d_start(conv);
+//     conv2d_wait_complete(conv);
+// }
+
+
+
+
+/* USE THIS VERSION*/
+
+uint8_t perform_convolution(uint64_t srcAddrValue,     uint64_t destAddrValue, 
+                         uint16_t inputHeightValue, uint16_t inputWidthValue, 
+                         uint8_t* kernel,           uint8_t kernelSizeValue, 
+                         uint8_t useReLU,           uint8_t strideValue) {
+
+
+    // Hardware/MMIO registers
+    volatile uint64_t* statusPtr = (volatile uint64_t*)(MMIO_BASE + 0x0);
+    volatile uint8_t*  readyPtr = (volatile uint8_t*) (MMIO_BASE + 0x08);
+    volatile uint64_t* srcAddrPtr = (volatile uint64_t*)(MMIO_BASE + 0x10);
+    volatile uint64_t* destAddrPtr = (volatile uint64_t*)(MMIO_BASE + 0x20);
+    volatile uint64_t* inputHeightPtr = (volatile uint64_t*)(MMIO_BASE + 0x40);
+    volatile uint64_t* inputWidthPtr = (volatile uint64_t*)(MMIO_BASE + 0x60);
+    volatile uint64_t* kernelRegPtr = (volatile uint64_t*)(MMIO_BASE + 0x70);
+    volatile uint8_t*  kernelRegSize = (volatile uint8_t*) (MMIO_BASE + 0x90);
+    volatile uint8_t*  useReLUPtr = (volatile uint8_t*) (MMIO_BASE + 0x98);
+    volatile uint8_t*  stridePtr = (volatile uint8_t*) (MMIO_BASE + 0xA0);
+    //uint8_t  statusValue;                        
+    uint8_t  readyValue = 0;
+
+    // Connect Hardware Regs with args
+    *srcAddrPtr     = srcAddrValue;
+    *destAddrPtr    = destAddrValue;
+    // kernel is a pointer; copy kernelSizeValue*kernelSizeValue bytes
+    memcpy((void*)kernelRegPtr, kernel, (size_t)(kernelSizeValue * kernelSizeValue));
+
+    *inputHeightPtr = inputHeightValue;
+    *inputWidthPtr  = inputWidthValue;
+    *kernelRegSize  = kernelSizeValue;
+    *useReLUPtr     = useReLU;
+    *stridePtr      = strideValue;
+
+    // THIS STARTS THE CONVO
+    *readyPtr = readyValue;
+
+    // while (*readyPtr == 0);
+
+
+                            
+    return *statusPtr;
 }

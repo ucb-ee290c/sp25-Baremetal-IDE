@@ -133,8 +133,20 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv);
  * \param kernel_size Size of the kernel (must be 3 or 5)
  * \param use_relu Whether to use ReLU activation
  * \param stride Stride value for the convolution
+ * This Function returns a uint8_t, which is a status flag (i.e. error flags)
+ * 
+ * Here's an example of how to call it:
+ * 
+  uint8_t status = perform_convolution((uint64_t)&testImage, (uint64_t)&outputImage, HEIGHT, WIDTH, (uint8_t*)kernel, 3, (uint8_t)0, 1);
+  
+  if (status != 0x0) {
+    printf("Error Status: %p\n", status);
+  }
+ * 
+ * If the status is 0x0, That means it was successful.
  */
-void perform_convolution(uint64_t src_addr, uint64_t dest_addr,
+ 
+uint8_t perform_convolution(uint64_t src_addr, uint64_t dest_addr,
                         uint64_t height, uint64_t width,
                         int8_t *kernel, uint8_t kernel_size,
                         uint8_t use_relu, uint8_t stride);

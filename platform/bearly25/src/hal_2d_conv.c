@@ -1,5 +1,6 @@
 #include "hal_2d_conv.h"
 #include "chip_config.h"
+#include <string.h>
 
 void reg_write8(uintptr_t addr, uint8_t data) {
 	volatile uint8_t *ptr = (volatile uint8_t *) addr;
@@ -132,7 +133,7 @@ void conv2d_set_kernel(Conv2D_Accel_Type *conv, int8_t *kernel, uint8_t size) {
         reg_write8((uintptr_t)&conv->KERNEL_REG4, 0);
     } else { //IF KERNEL SIZE IS 5
 
-        // For 5x5 kernel, place all values
+        // For 5x5 kernel, place all alues
         // First 8 bytes (KERNEL_REG0)
         uint64_t kernel_reg_value = 0;
         for (int i = 0; i < 8; i++) {
@@ -220,9 +221,9 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv) {
 /* USE THIS VERSION*/
 
 uint8_t perform_convolution(uint64_t srcAddrValue,     uint64_t destAddrValue, 
-                         uint16_t inputHeightValue, uint16_t inputWidthValue, 
-                         uint8_t* kernel,           uint8_t kernelSizeValue, 
-                         uint8_t useReLU,           uint8_t strideValue) {
+                            uint16_t inputHeightValue, uint16_t inputWidthValue, 
+                            uint8_t* kernel,           uint8_t kernelSizeValue, 
+                            uint8_t useReLU,           uint8_t strideValue) {
 
 
     // Hardware/MMIO registers

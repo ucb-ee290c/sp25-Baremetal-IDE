@@ -36,6 +36,8 @@ extern "C" {
 #define CONV2D_USE_RELU_OFFSET        0x98
 #define CONV2D_STRIDE_OFFSET          0xA0
 
+#define MMIO_BASE        0x08808000
+
 /**
  * \brief   Memory map of the 2D Convolution accelerator.
  */
@@ -125,14 +127,14 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv);
 
 /**
  * \brief Simplified wrapper function for performing 2D convolution
- * \param src_addr Source address of the input data
- * \param dest_addr Destination address for the output data
- * \param height Input height
- * \param width Input width
+ * \param srcAddrValue Source address of the input data
+ * \param destAddrValue Destination address for the output data
+ * \param inputHeightValue Input height
+ * \param inputWidthValue Input width
  * \param kernel Pointer to the kernel values
- * \param kernel_size Size of the kernel (must be 3 or 5)
- * \param use_relu Whether to use ReLU activation
- * \param stride Stride value for the convolution
+ * \param kernelSizeValue Size of the kernel (must be 3 or 5)
+ * \param useReLU Whether to use ReLU activation
+ * \param strideValue Stride value for the convolution
  * This Function returns a uint8_t, which is a status flag (i.e. error flags)
  * 
  * Here's an example of how to call it:
@@ -146,10 +148,11 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv);
  * If the status is 0x0, That means it was successful.
  */
  
-uint8_t perform_convolution(uint64_t src_addr, uint64_t dest_addr,
-                        uint64_t height, uint64_t width,
-                        int8_t *kernel, uint8_t kernel_size,
-                        uint8_t use_relu, uint8_t stride);
+uint8_t perform_convolution(uint64_t srcAddrValue,     uint64_t destAddrValue, 
+                         uint16_t inputHeightValue, uint16_t inputWidthValue, 
+                         uint8_t* kernel,           uint8_t kernelSizeValue, 
+                         uint8_t useReLU,           uint8_t strideValue); 
+
 
 #ifdef __cplusplus
 }

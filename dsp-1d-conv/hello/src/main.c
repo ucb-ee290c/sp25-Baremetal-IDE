@@ -130,13 +130,13 @@ void test_simple(){
   uint8_t kernel_len = 8;
   
   printf("Setting values of MMIO registers\n");
-  printf("CONV2D address: 0x%x\n", CONV2D);
+  printf("CONV1D address: 0x%x\n", CONV1D);
   
   // Initialize the accelerator
-  conv_init(CONV2D);
+  conv_init(CONV1D);
   
   // Set parameters for the convolution operation
-  int result = conv_set_params(CONV2D, in_arr, in_len, in_dilation, in_kernel, kernel_len);
+  int result = conv_set_params(CONV1D, in_arr, in_len, in_dilation, in_kernel, kernel_len);
   if (result != 0) {
     printf("Error setting parameters\n");
     return;
@@ -144,7 +144,7 @@ void test_simple(){
   
   puts("Starting Convolution");
   // Start the convolution operation
-  start_conv(CONV2D);
+  start_conv(CONV1D);
   
   puts("Waiting for convolution to complete");
   
@@ -160,7 +160,7 @@ void test_simple(){
   printf("\nTest Output (FP32 binary): ");
   
   // Read the output using our function
-  conv_read_output(CONV2D, test_out, 23, &status, in_arr);
+  conv_read_output(CONV1D, test_out, 23, &status, in_arr);
   
   // Print the results
   for (int i = 0; i < 23; i++) {
@@ -180,7 +180,7 @@ void test_simple(){
     case 0x80: printf("INEXACT"); break;
     default: printf("UNKNOWN STATUS"); break;
   }
-  printf("\nOutput count: %d\n", get_register_out_count(CONV2D));
+  printf("\nOutput count: %d\n", get_register_out_count(CONV1D));
 
   float ref_out[32];
   convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);

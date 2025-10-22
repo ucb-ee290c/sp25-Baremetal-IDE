@@ -42,21 +42,25 @@ uint64_t reg_read64(unsigned long addr) {
 }
 
 void conv_init(ConvAccel_Type *conv) {
-    reg_write64((uintptr_t)&conv->INPUT, 0);  
-    reg_write64((uintptr_t)&conv->OUTPUT, 0);        
-    reg_write64((uintptr_t)&conv->KERNEL, 0);        
+    // reg_write64((uintptr_t)&conv->INPUT, 0);  
+    // reg_write64((uintptr_t)&conv->OUTPUT, 0);        
+    // reg_write64((uintptr_t)&conv->KERNEL, 0);        
 
-    reg_write8((uintptr_t)&conv->START, 0);          
-    reg_write32((uintptr_t)&conv->OUT_COUNT, 0);     
-    reg_write32((uintptr_t)&conv->LENGTH, 0);        
-    reg_write16((uintptr_t)&conv->DILATION, 0);      
+    reg_write8((uintptr_t)&conv->START, 0);    
+    reg_write8((uintptr_t)&conv->CLEAR, 1);          
+    // reg_write32((uintptr_t)&conv->OUT_COUNT, 0);     
+    // reg_write32((uintptr_t)&conv->LENGTH, 0);        
+    // reg_write16((uintptr_t)&conv->DILATION, 0);      
 
-    reg_write8((uintptr_t)&conv->KERNEL_LEN, 0);     
+    // reg_write8((uintptr_t)&conv->KERNEL_LEN, 0);     
     reg_write8((uintptr_t)&conv->MMIO_RESET, 1);
 }
 
 int conv_set_params(ConvAccel_Type *conv, uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length){
     reg_write8((uintptr_t)&conv->MMIO_RESET, 0);
+    reg_write8((uintptr_t)&conv->CLEAR, 0); 
+    reg_write8((uintptr_t)&conv->START, 0);    
+
 
     for (int i = 0; i < input_length; i += 2) {
         reg_write64((uintptr_t)&conv->INPUT, *((uint64_t*) (input + i)));
@@ -85,16 +89,16 @@ int conv_set_params(ConvAccel_Type *conv, uint32_t* input, uint32_t input_length
 
 void conv_read_output(ConvAccel_Type *conv, uint32_t *output, int output_len, int *status, uint32_t* input) {
     int i = 0;
-
+    // puts("Here");
     // Read pairs of FP32s (2 per 64-bit read)
-    for (; i < output_len/2 ; i += 2) {
+
+    for (; i < (output_len-1)/2 ; i += 1) {
         uint64_t current_out = reg_read64((uintptr_t)&conv->OUTPUT);
         uint32_t *unpacked = (uint32_t *) &current_out;
 
-        if (i < 4) {
-            reg_write64((uintptr_t)&conv->INPUT, *((uint64_t*) (input + (6 + 2*(i+1)))));
-        }
-
+        // if (i < 4) {
+        //     reg_write64((uintptr_t)&conv->INPUT, *((uint64_t*) (input + (6 + 2*(i+1)))));
+        // }
         output[i]     = unpacked[0];
         output[i + 1] = unpacked[1];
     }

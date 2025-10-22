@@ -25,9 +25,17 @@
  #define CONV_KERNEL_ADDR        0x40
  #define CONV_STATUS_ADDR        0x6A
  #define CONV_START_ADDR         0x6C
+ #define CONV_CLEAR_ADDR         0x6D
+
+//  Clear 0x6D 1 W Set to 1 to flush Datapath
+
  #define CONV_COUNT_ADDR         0x70
  #define CONV_LENGTH_ADDR        0x78
  #define CONV_DILATION_ADDR      0x7C
+
+// Req Enqueue 0x8C 1 R Set to 1 by accelerator logic when the input queue is low on data (DMA only)
+
+// Deq Output Valid 0x8D 1 R DMA polls this bit to check if data in the output queue is valid
  #define READ_CHECK_ADDR         0x8D
  #define CONV_KERNEL_LEN_ADDR    0x8E
  #define CONV_MMIO_RESET         0x8F

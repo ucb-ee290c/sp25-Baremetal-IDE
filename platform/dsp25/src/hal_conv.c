@@ -83,7 +83,7 @@ int conv_set_params(ConvAccel_Type *conv, uint32_t* input, uint32_t input_length
 
 }
 
-void conv_read_output(ConvAccel_Type *conv, uint32_t *output, int output_len, int status, uint32_t* input) {
+void conv_read_output(ConvAccel_Type *conv, uint32_t *output, int output_len, int *status, uint32_t* input) {
     int i = 0;
 
     // Read pairs of FP32s (2 per 64-bit read)
@@ -104,7 +104,7 @@ void conv_read_output(ConvAccel_Type *conv, uint32_t *output, int output_len, in
     uint32_t* unpacked_out = (uint32_t*) &last_out;
     output[output_len - 1] = unpacked_out[0];
     
-    status = reg_read8((uintptr_t)&conv->STATUS);
+    *status = reg_read8((uintptr_t)&conv->STATUS);
 }
 
 void start_conv(ConvAccel_Type *conv) {

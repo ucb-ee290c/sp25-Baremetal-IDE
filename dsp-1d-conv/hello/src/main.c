@@ -57,6 +57,58 @@ void app_init() {
   // torch::executor::runtime_init();
 }
 
+union Converter {
+    float f;
+    uint32_t u;
+};
+
+void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
+  
+  /* 
+  Computes the convolution of arr with the given kernel and dilation factor and stores the result in output, specifically 
+  based on the implementation of the convolution block. The first value in the output array is computed with the kernel's 
+  left element aligned with the array's left element.
+
+  arr:        pointer to input array      FP16 array
+  arr_len:    length of input array       
+  kernel:     pointer to kernel array     FP16 array (represented as uint16_t)
+  kernel_len: length of kernel array 
+  dilation:   dilation factor
+  output:     pointer to output array     FP16 array (represented as uint16_t) 
+
+  Example input and output: 
+
+  arr:        {1, 2, 3, 4}
+  arr_len:    4
+  kernel:     {-1, 1, -1}
+  kernel_len: 3
+  dilation:   1
+
+  output: {-2, -3, -1, -4} ({-1*1 + 1*2 + -1*3, -1*2 + 1*3 + -1*4, -1*3 + 1*4 + -1*0, -1*4 + 1*0 + -1*0})
+
+  For border values (at the end), we assume the array is zero-extended to fit the length of the kernel (including dilation).
+  */
+
+  size_t output_len = arr_len + (kernel_len - 1) * dilation;
+
+    for (int i = 0; i < output_len; i++) {
+        output[i] = 0.0f;
+
+        for (int j = 0; j < kernel_len; j++) {
+            int arr_index = i + j * dilation - (kernel_len - 1) * dilation;
+
+            uint32_t item = 0;
+            if (arr_index >= 0 && arr_index < arr_len) {
+                item = arr[arr_index];
+            }
+
+            float float_input = *(float*)&item;
+            float float_kernel = *(float*)&kernel[j]; 
+            output[i] += float_input * float_kernel;
+        }
+    }
+}
+
 void test_simple(){
   union Converter {
     float f;
@@ -77,16 +129,14 @@ void test_simple(){
   };
   uint8_t kernel_len = 8;
   
-  // Define the convolution accelerator structure
-  ConvAccel_Type conv;
-  
   printf("Setting values of MMIO registers\n");
+  printf("CONV2D address: 0x%x\n", CONV2D);
   
   // Initialize the accelerator
-  conv_init(&conv);
+  conv_init(CONV2D);
   
   // Set parameters for the convolution operation
-  int result = conv_set_params(&conv, in_arr, in_len, in_dilation, in_kernel, kernel_len);
+  int result = conv_set_params(CONV2D, in_arr, in_len, in_dilation, in_kernel, kernel_len);
   if (result != 0) {
     printf("Error setting parameters\n");
     return;
@@ -94,7 +144,7 @@ void test_simple(){
   
   puts("Starting Convolution");
   // Start the convolution operation
-  start_conv(&conv);
+  start_conv(CONV2D);
   
   puts("Waiting for convolution to complete");
   
@@ -110,7 +160,7 @@ void test_simple(){
   printf("\nTest Output (FP32 binary): ");
   
   // Read the output using our function
-  conv_read_output(&conv, test_out, 23, status, in_arr);
+  conv_read_output(CONV2D, test_out, 23, &status, in_arr);
   
   // Print the results
   for (int i = 0; i < 23; i++) {
@@ -118,8 +168,29 @@ void test_simple(){
   }
   
   // Print final status
-  printf("\nFinal status: %d\n", status);
-  printf("Output count: %d\n", get_register_out_count(&conv));
+  printf("\nFinal status: ");
+  switch (status) {
+    case 0x01: printf("BUSY"); break;
+    case 0x02: printf("COMPL"); break;
+    case 0x04: printf("ERROR"); break;
+    case 0x08: printf("INVALID"); break;
+    case 0x10: printf("INFINITE"); break;
+    case 0x20: printf("OVERFLOW"); break;
+    case 0x40: printf("UNDERFLOW"); break;
+    case 0x80: printf("INEXACT"); break;
+    default: printf("UNKNOWN STATUS"); break;
+  }
+  printf("\nOutput count: %d\n", get_register_out_count(CONV2D));
+
+  float ref_out[32];
+  convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
+  printf("\nReference Output (FP32 binary): ");
+  union Converter converter;
+  for (int i = 0; i < 23; i++) {
+      converter.f = ref_out[i];
+      printf("0x%08X ", converter.u);
+  }
+  printf("\n");
 }
 
 void app_main() {

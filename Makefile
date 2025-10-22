@@ -48,3 +48,9 @@ tsi-run:
 vcs-run:
 	echo "Running VCS tests within $(CY_DIR)"
 	(cd $(CY_DIR)/sims/vcs && make run-binary CONFIG=$(CONFIG) BINARY=$(BINARY))
+
+BINARY_REL := $(patsubst $(realpath ../../sims/vcs)/%,%,$(abspath $(BINARY)))
+
+.PHONY: run
+run:
+	srun -p ee194 --pty make -C ../../sims/vcs run-binary LOADMEM=1 CONFIG=$(CONFIG) BINARY=$(BINARY_REL)

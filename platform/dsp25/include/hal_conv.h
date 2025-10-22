@@ -32,19 +32,26 @@
  #define CONV_KERNEL_LEN_ADDR    0x8E
  #define CONV_MMIO_RESET         0x8F
  
- typedef struct {
-   __IO uint64_t INPUT;         // 0x00: Input address/config
-   __IO uint64_t OUTPUT;        // 0x20: Output address/config
-   __IO uint64_t KERNEL;        // 0x40: Kernel address/config
-   __I  uint8_t  STATUS;        // 0x6A: Status register
-   __IO uint8_t  START;         // 0x6C: Start command
-   __IO uint32_t OUT_COUNT;     // 0x70: Number of output elements ready
-   __IO uint32_t LENGTH;        // 0x78: Input length
-   __IO uint16_t DILATION;      // 0x7C: Dilation factor
-   __I  uint8_t  READ_CHECK;    // 0x8D: DMA Read check status
-   __IO uint8_t  KERNEL_LEN;    // 0x8E: Kernel length 16 (1) or 8 (0)?
-   __IO uint8_t  MMIO_RESET;    // 0x8F: Reset MMIO 
- } ConvAccel_Type;
+typedef struct {
+    __IO uint64_t INPUT;       // 0x00
+    uint8_t pad0[0x20 - 0x08];  // padding to 0x20
+    __IO uint64_t OUTPUT;      // 0x20
+    uint8_t pad1[0x40 - 0x28];  // padding to 0x40
+    __IO uint64_t KERNEL;      // 0x40
+    uint8_t pad2[0x6A - 0x48]; // padding to 0x6A
+    __I  uint8_t STATUS;       // 0x6A
+    uint8_t pad3[0x6C - 0x6B]; // padding to 0x6C
+    __IO uint8_t START;        // 0x6C
+    uint8_t pad4[0x70 - 0x6D]; // padding to 0x70
+    __IO uint32_t OUT_COUNT;   // 0x70
+    uint8_t pad5[0x78 - 0x74]; // padding to 0x78
+    __IO uint32_t LENGTH;      // 0x78
+    __IO uint16_t DILATION;    // 0x7C
+    uint8_t pad6[0x8D - 0x7E]; // padding to 0x8D
+    __I  uint8_t READ_CHECK;   // 0x8D
+    __IO uint8_t KERNEL_LEN;   // 0x8E
+    __IO uint8_t MMIO_RESET;   // 0x8F
+} ConvAccel_Type;
  
  void reg_write8(uintptr_t addr, uint8_t data);
  uint8_t reg_read8(uintptr_t addr);
@@ -59,7 +66,7 @@
  
  int conv_set_params(ConvAccel_Type *conv, uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length);
  
- void conv_read_output(ConvAccel_Type *conv, uint32_t *output, int output_len, int status, uint32_t* input);
+ void conv_read_output(ConvAccel_Type *conv, uint32_t *output, int output_len, int *status, uint32_t* input);
  
  void start_conv(ConvAccel_Type *conv);
  

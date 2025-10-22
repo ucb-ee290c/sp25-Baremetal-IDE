@@ -47,6 +47,6 @@ tsi-run:
 .PHONY: vcs-run
 vcs-run:
 	echo "Running VCS tests within $(CY_DIR)"
-	(cd $(CY_DIR)/sims/vcs && make run-binary-debug-hex CONFIG=$(CONFIG)  BINARY=$(BINARY))
+	(cd $(CY_DIR)/sims/vcs && make run-binary-debug-hex CONFIG=$(CONFIG) LOADMEM=1 BINARY=$(BINARY))
 # 	(cd $(CY_DIR)/sims/vcs && make run-binary CONFIG=$(CONFIG) LOADMEM=1 BINARY=$(BINARY))
 

@@ -245,19 +245,20 @@ uint8_t perform_convolution(uint64_t srcAddrValue,     uint64_t destAddrValue,
     *destAddrPtr    = destAddrValue;
     // kernel is a pointer; copy kernelSizeValue*kernelSizeValue bytes
     memcpy((void*)kernelRegPtr, kernel, (size_t)(kernelSizeValue * kernelSizeValue));
-
+    asm volatile("fence");
     *inputHeightPtr = inputHeightValue;
     *inputWidthPtr  = inputWidthValue;
     *kernelRegSize  = kernelSizeValue;
     *useReLUPtr     = useReLU;
     *stridePtr      = strideValue;
 
+    asm volatile("fence iorw, iorw" ::: "memory");
     // THIS STARTS THE CONVO
     *readyPtr = readyValue;
 
-    // while (*readyPtr == 0);
+    while (*readyPtr == 0);
 
-
+    asm volatile("fence iorw, iorw" ::: "memory");                          
                             
     return *statusPtr;
 }

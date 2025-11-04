@@ -20,6 +20,7 @@ extern "C" {
 // ================================
 #include "hal_mmio.h"
 #include "hal_rcc.h"
+#include "hal_i2s.h"
 
 
 // ================================
@@ -38,6 +39,8 @@ extern "C" {
 #define RCC_BASE                    0x00100000U
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
+
+#define I2S_BASE                    0x10042000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
 #define CLINT                      ((CLINT_Type *)CLINT_BASE)

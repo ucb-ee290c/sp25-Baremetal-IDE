@@ -15,6 +15,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "math.h"
 #include <layers.h>
 #include "hal_2d_conv.h"
 #include "chip_config.h"
@@ -96,6 +97,9 @@ void requantize_2D1(
     } while (size != 0);
 }
 
+static inline size_t round_up_32(size_t x) {
+    return (x + 31u) & ~31u;   // next multiple of 64 (stays same if already multiple)
+}
 
 void dwconv_3x3_int8_VCO_acc(
     size_t rows, size_t cols,
@@ -113,36 +117,36 @@ void dwconv_3x3_int8_VCO_acc(
     size_t b_channel_size = rows * b_stride;
     const int8_t* w = (const int8_t*) ((const int32_t*) weights + channels);
 
-    __attribute__((aligned(CACHELINE))) int16_t out_conv[rows][cols];
+    __attribute__((aligned(CACHELINE))) int16_t out_conv[channels][round_up_32(rows * cols)];
     __attribute__((aligned(CACHELINE))) int8_t in_conv[rows+2][cols+2];
 
-    printf("in_conv is at address: %d\n", &in_conv);
+    // printf("in_conv is at address: %d\n", &in_conv);
 
     for (size_t ch = 0; ch < channels; ch++) {
         // The bias for this channel is stored at weights[ch].
         // float bias = weights[ch];
         // The 3x3 kernel for this channel is stored starting at weights[channels] with 9 floats per channel.
         const int8_t *k_ch = w + ch * 9;
-        printf("kernel (channel %zu) @ %p: ", ch, (void*)k_ch);
-        for (int i = 0; i < 9; i++) {
-            printf("%d ", k_ch[i]);
-            }
-        printf("\n");
+        // printf("kernel (channel %zu) @ %p: ", ch, (void*)k_ch);
+        // for (int i = 0; i < 3; i++) {
+        //     printf("%d ", k_ch[i]);
+        //     }
+        // printf("\n");
         //printf("kernel == %p\n", *k_ch);
-        printf("ch = : %d\n", ch);
+        // printf("ch = : %d\n", ch);
         int8_t *a_ch = input + ch * a_channel_size;
         int8_t *b_ch = output + ch * b_channel_size;
 
         memcpy(in_conv, a_ch, (rows + 2) * (cols + 2));
-        printf("in_conv is at address: %d\n", &in_conv);
-        printf("in_conv is: %d\n", in_conv);
+        // printf("in_conv is at address: %d\n", &in_conv);
+        // printf("in_conv is: %d\n", in_conv);
 
-        printf("out_conv is at address: %d\n", &out_conv);
-        printf("out_conv is: %d\n", out_conv);
+        // printf("out_conv is at address: %d\n", &out_conv);
+        // printf("out_conv is: %d\n", out_conv);
         
         uint8_t status = perform_convolution(
-          (uint64_t)&in_conv,   // Source address
-          (uint64_t)&out_conv,  // Destination address
+          (uint64_t)in_conv,   // Source address
+          (uint64_t)out_conv[ch],  // Destination address
           rows + 2,              // Input height
           cols + 2 ,               // Input width
           (uint8_t*)k_ch,          // Kernel values
@@ -155,10 +159,10 @@ void dwconv_3x3_int8_VCO_acc(
             // printf("Error Status: %p\n", status);
         }
 
-        printf("this is convoluted\n");
+        // printf("this is convoluted\n");
 
 
-        requantize_2D1((rows)*(cols), ((const int32_t*) weights)[ch], (int16_t*) out_conv, b_ch, requant_params.scale[ch], requant_params.zero_point);
+        requantize_2D1((rows)*(cols), ((const int32_t*) weights)[ch], (int16_t*) out_conv[ch], b_ch, requant_params.scale[ch], requant_params.zero_point);
     }
 }
 
@@ -228,7 +232,7 @@ void app_main() {
     static float   probs      [BATCHES * 10];
 
 
-  int i = 0;
+  int i = 4;
     while (i < 20) {
         /* cycle counter ------------------------------------------------ */
         unsigned long cyc0, cyc1, ins0, ins1;
@@ -372,8 +376,6 @@ void app_main() {
             printf("\n");
         }
 
-
-        printf("this was from convolution number: %d", i);
         i++;
     }
     //printf("DJ KHALED WE THE BEST\nIM. SO. HOOOOOOOOOOD.\n");

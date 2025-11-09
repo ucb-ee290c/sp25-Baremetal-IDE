@@ -2,26 +2,30 @@
 #include <stddef.h>
 #include "rocc.h"
 
-#define REG_STR_HELPER(x) #x
-#define REG_STR(x)        REG_STR_HELPER(x)
-#define REG_VAR(name, reg_num) register uint64_t name asm("x" REG_STR(reg_num))
-
-#define ROCC_RS1_REG_N 11
-#define ROCC_RS2_REG_N 12
-
-// funct7 tags
-// funct[1:0] selects op-class, funct[6:2] carries parameters
-#define FCTN7_ACC     0b00
-#define FCTN7_EXTRACT 0b01
-#define FCTN7_ZERO    0b10
-#define FCTN7_LOAD    0b11
-
 // ===== Fences =====
 static inline void _fence_all(void){ asm volatile("fence iorw, iorw" ::: "memory"); }
 static inline void _fence_wr(void) { asm volatile("fence w, r"      ::: "memory"); }
 static inline void _fence_rw(void) { asm volatile("fence r, w"      ::: "memory"); }
 
 void ope_fence(void) { _fence_all(); }
+
+// ===== Functional Operations =====
+
+// funct7 tags (see BearlyML’25 OPE ISA)
+#define FCTN7_ACC     0b00
+#define FCTN7_EXTRACT 0b01
+#define FCTN7_ZERO    0b10
+#define FCTN7_LOAD    0b11
+
+// Rocket source register numbers for RoCC interface
+#define ROCC_RS1_REG_N 11
+#define ROCC_RS2_REG_N 12
+
+#define REG_STR_HELPER(x) #x
+#define REG_STR(x)        REG_STR_HELPER(x)
+#define REG_VAR(name, reg_num) register uint64_t name asm("x" REG_STR(reg_num))
+
+// ===== Low-Level Driver Functions =====
 
 /* -------------------------- ZERO ---------------------------- */
 void ope_zero(void) {
@@ -140,61 +144,181 @@ void ope_acc(uint64_t a_base_phys, uint64_t b_base_phys, uint8_t L_elems)
   }
 }
 
-/* --------------------- Tile + Matmul helpers ---------------- */
+// ===== Matmul Driver Helpers=====
 
-// One 8x8 tile step
-void ope_tile_outer_product(uint64_t a_tile_phys,
-                            uint64_t b_tile_phys,
-                            uint64_t c_tile_phys,
-                            uint8_t  L_iters8,
-                            uint16_t stride_elems,
-                            uint8_t  transpose,
-                            uint8_t  use_stride,
-                            bool     load_existing)
+#define OP_ZERO()            ROCC_INSTRUCTION(OPE_CUSTOM, FCTN7_ZERO)
+#define OP_ACC(a, b)         ROCC_INSTRUCTION_SS(OPE_CUSTOM, a, b, FCTN7_ACC)
+#define OP_EXTRACT_DIRECT(r) ROCC_INSTRUCTION_SS(OPE_CUSTOM, r, 0, FCTN7_EXTRACT)
+
+__attribute__((noinline))
+void ope_tile(const int8_t* A, const int8_t* B, int32_t* C,
+              int i0, int j0, int K, int lda, int ldb, int ldc)
 {
-  if (load_existing) {
-    ope_load(c_tile_phys, stride_elems, transpose, use_stride);
-  } else {
-    ope_zero();
+  // 1) Prepack K×8 panels (contiguous, no branching in the ACC loop)
+  int8_t  A_panel[K * 8];
+  int8_t  B_panel[K * 8];
+  for (int k = 0; k < K; ++k) {
+    // Pack 8 rows from column k of A (A is MxK, op computes A^T * B)
+    for (int r = 0; r < 8; ++r)
+      A_panel[k*8 + r] = A[(i0 + r) * lda + k];
+    // Pack 8 cols from row k of B
+    for (int c = 0; c < 8; ++c)
+      B_panel[k*8 + c] = B[k * ldb + (j0 + c)];
   }
-  ope_acc(a_tile_phys, b_tile_phys, L_iters8);
-  ope_extract(c_tile_phys, stride_elems, transpose, use_stride);
+  // 2) Fresh tile
+  ope_zero();
+  // 3) Stream K in chunks of up to 32 using address-based ACC
+  for (int k0 = 0; k0 < K; k0 += 32) {
+    const uint8_t L = (uint8_t)((K - k0) > 32 ? 32 : (K - k0));
+    const uint64_t a_chunk = (uint64_t)(A_panel + k0*8);
+    const uint64_t b_chunk = (uint64_t)(B_panel + k0*8);
+    ope_acc(a_chunk, b_chunk, L);
+  }
+  // 4) Extract the 8×8 tile directly into C with stride (elements)
+  const uint64_t c_tile_base   = (uint64_t)&C[(size_t)i0 * ldc + j0];
+  const uint16_t c_stride_elem = (uint16_t)ldc;
+  const uint8_t  transpose_c   = 0;
+  const uint8_t  use_stride    = 1;
+
+  ope_extract(c_tile_base, c_stride_elem, transpose_c, use_stride);
 }
 
-// Multiply an M×K matrix A^T by a K×N matrix B, accumulate into an M×N C
-// Precondition: M, N, K are multiples of 8
-void ope_matmul_i8i8_i32_AT(const int8_t* AT_phys, int ldAT,
-                            const int8_t* B_phys,  int ldb,
-                            int32_t* C_phys,       int ldc,
-                            int M, int N, int K,
-                            bool load_existing) {
-   for (int i0 = 0; i0 < M; i0 += 8) {
-     for (int j0 = 0; j0 < N; j0 += 8) {
-      int8_t  A_T_panel[K * 8];
-      int8_t  B_panel [K * 8];
-      for (int k = 0; k < K; ++k) {
-        const int8_t* AT_row = &AT_phys[k * ldAT];
-        for (int r = 0; r < 8; ++r) {
-          A_T_panel[k*8 + r] = AT_row[i0 + r];
-        }
-        const int8_t* B_row = &B_phys[k * ldb + j0];
-        for (int c = 0; c < 8; ++c) {
-          B_panel[k*8 + c] = B_row[c];
-        }
-      }
-      const uint64_t c_tile    = (uint64_t)&C_phys[i0 * ldc + j0];
-      const uint32_t c_stride  = (uint32_t)ldc;
-      const bool     transpose_c = false;
-      const bool     use_stride_c = true;
-      if (load_existing) ope_load(c_tile, c_stride, transpose_c, use_stride_c);
-      else               ope_zero();
-      for (int k0 = 0; k0 < K; k0 += 32) {
-        const uint8_t L = (K - k0 > 32) ? 32 : (uint8_t)(K - k0);
-        const uint64_t a_chunk = (uint64_t)(A_T_panel + k0*8);
-        const uint64_t b_chunk = (uint64_t)(B_panel   + k0*8);
-        ope_acc(a_chunk, b_chunk, L);
-      }
-      ope_extract(c_tile, c_stride, transpose_c, use_stride_c);
-     }
-   }
- }
+__attribute__((noinline))
+void ope_tile_buffer(const int8_t* A, const int8_t* B, int32_t* C,
+              int i0, int j0, int K, int lda, int ldb, int ldc)
+{
+  // 1) Prepack K×8 panels (contiguous) and ensure 8-byte alignment
+  __attribute__((aligned(8))) int8_t  A_panel_stack[K*8];
+  __attribute__((aligned(8))) int8_t  B_panel_stack[K*8];
+  int8_t* A_panel = A_panel_stack;
+  int8_t* B_panel = B_panel_stack;
+
+  for (int k = 0; k < K; ++k) {
+    // Pack 8 rows of A at column k
+    for (int r = 0; r < 8; ++r)
+      A_panel[k*8 + r] = A[(i0 + r) * lda + k];
+    // Pack 8 cols of B at row k
+    for (int c = 0; c < 8; ++c)
+      B_panel[k*8 + c] = B[k * ldb + (j0 + c)];
+  }
+
+  // 2) Fresh tile
+  ope_zero();
+
+  // 3) ACC in L<=32 chunks
+  for (int k0 = 0; k0 < K; k0 += 32) {
+    const uint8_t L = (uint8_t)((K - k0) > 32 ? 32 : (K - k0));
+    const uint64_t a_chunk = (uint64_t)(A_panel + k0*8);
+    const uint64_t b_chunk = (uint64_t)(B_panel + k0*8);
+    ope_acc(a_chunk, b_chunk, L);
+  }
+
+  // 4) Extract to a local 8×8 with stride 8 (safe layout), then copy to C
+  __attribute__((aligned(8))) int32_t out_tile[8 * 8];
+  const uint64_t tmp_base      = (uint64_t)&out_tile[0];
+  const uint16_t tmp_stride_el = 8;
+  const uint8_t  transpose_c   = 0, use_stride = 1;
+  ope_extract(tmp_base, tmp_stride_el, transpose_c, use_stride);
+
+  // Copy 8×8 block into C (row-major)
+  for (int r = 0; r < 8; ++r) {
+    int32_t* dst = &C[(size_t)(i0 + r) * ldc + j0];
+    const int32_t* src = &out_tile[r * 8];
+    dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+    dst[4] = src[4]; dst[5] = src[5]; dst[6] = src[6]; dst[7] = src[7];
+  }
+}
+
+
+__attribute__((noinline))
+void ope_tile_partial(const int8_t* A, const int8_t* B, int32_t* C,
+                      int i0, int j0, int i_size, int j_size,
+                      int K, int lda, int ldb, int ldc)
+{
+  // 1) Prepack K×8 panels with zero-padding beyond valid rows/cols
+  int8_t  A_panel[K * 8];
+  int8_t  B_panel[K * 8];
+  for (int k = 0; k < K; ++k) {
+    // Rows of A
+    int r = 0;
+    for (; r < i_size; ++r) A_panel[k*8 + r] = A[(i0 + r) * lda + k];
+    for (; r < 8;      ++r) A_panel[k*8 + r] = 0;
+    // Cols of B
+    int c = 0;
+    for (; c < j_size; ++c) B_panel[k*8 + c] = B[k * ldb + (j0 + c)];
+    for (; c < 8;      ++c) B_panel[k*8 + c] = 0;
+  }
+  // 2) Fresh tile
+  ope_zero();
+  // 3) ACC in L<=32 chunks
+  for (int k0 = 0; k0 < K; k0 += 32) {
+    const uint8_t L = (uint8_t)((K - k0) > 32 ? 32 : (K - k0));
+    const uint64_t a_chunk = (uint64_t)(A_panel + k0*8);
+    const uint64_t b_chunk = (uint64_t)(B_panel + k0*8);
+    ope_acc(a_chunk, b_chunk, L);
+  }
+  // 4) Extract to a local 8×8 buffer (stride 8), then copy only i_size×j_size
+  int32_t out_tile[8 * 8];
+  const uint64_t tmp_base      = (uint64_t)&out_tile[0];
+  const uint16_t tmp_stride_el = 8;
+  const uint8_t  transpose_c   = 0;
+  const uint8_t  use_stride    = 1;
+  ope_extract(tmp_base, tmp_stride_el, transpose_c, use_stride);
+  // Scatter valid region into C
+  for (int r = 0; r < i_size; ++r) {
+    const int32_t* src = &out_tile[r * 8];
+    int32_t*       dst = &C[(size_t)(i0 + r) * ldc + j0];
+    for (int c = 0; c < j_size; ++c) {
+      dst[c] = src[c];
+    }
+  }
+}
+
+// ===== Matmul Driver Functions =====
+
+__attribute__((noinline))
+void ope_matmul_m8m8(const int8_t* A, const int8_t* B, int32_t* C,
+                int M, int N, int K, int lda, int ldb, int ldc)
+{
+  const int rem_M = M & 7;
+  const int rem_N = N & 7;
+
+  for (int i = 0; i < M; i += 8) {
+    for (int j = 0; j < N; j += 8) {
+      ope_tile(A, B, C, i, j, K, lda, ldb, ldc);
+    }
+  }
+}
+
+__attribute__((noinline))
+void ope_matmul(const int8_t* A, const int8_t* B, int32_t* C,
+                int M, int N, int K, int lda, int ldb, int ldc)
+{
+  const int full_M = M & ~7;
+  const int full_N = N & ~7;
+  const int rem_M  = M & 7;
+  const int rem_N  = N & 7;
+
+  // Core 8×8 blocks
+  for (int i = 0; i < full_M; i += 8) {
+    for (int j = 0; j < full_N; j += 8) {
+      ope_tile_buffer(A, B, C, i, j, K, lda, ldb, ldc);
+    }
+  }
+  // Right edge (width = rem_N)
+  if (rem_N) {
+    for (int i = 0; i < full_M; i += 8) {
+      ope_tile_partial(A, B, C, i, full_N, 8, rem_N, K, lda, ldb, ldc);
+    }
+  }
+  // Bottom edge (height = rem_M)
+  if (rem_M) {
+    for (int j = 0; j < full_N; j += 8) {
+      ope_tile_partial(A, B, C, full_M, j, rem_M, 8, K, lda, ldb, ldc);
+    }
+  }
+  // Bottom-right corner (rem_M × rem_N)
+  if (rem_M && rem_N) {
+    ope_tile_partial(A, B, C, full_M, full_N, rem_M, rem_N, K, lda, ldb, ldc);
+  }
+}

@@ -46,7 +46,7 @@ void ope_tile_partial(const int8_t* A, const int8_t* B, int32_t* C,
                       int i0, int j0, int i_size, int j_size,
                       int K, int lda, int ldb, int ldc);
 
-// Top-level tiled multiply using fast OPE RoCC path
+// Top-level tiled multiply using OPE RoCC Accelerator
 void ope_matmul_m8m8(const int8_t* A, const int8_t* B, int32_t* C,
                      int M, int N, int K, int lda, int ldb, int ldc);
 

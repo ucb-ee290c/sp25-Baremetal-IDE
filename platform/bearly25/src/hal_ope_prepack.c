@@ -26,6 +26,22 @@ static inline void pack_B_block_Kx8(int8_t *dst, const int8_t *B, int ldb,
   }
 }
 
+inline void ope_pack_all_A(const int8_t* A, int lda, const ope_pack_plan* p)
+{
+  for (int it = 0, i0 = 0; it < p->itiles; ++it, i0 += 8) {
+    int8_t* dst = p->A_pack + (size_t)it * p->K * 8;
+    pack_A_block_i8x8(dst, A, lda, p->M, i0, 0, p->K);
+  }
+}
+
+inline void ope_pack_all_B(const int8_t* B, int ldb, const ope_pack_plan* p)
+{
+  for (int jt = 0, j0 = 0; jt < p->jtiles; ++jt, j0 += 8) {
+    int8_t* dst = p->B_pack + (size_t)jt * p->K * 8;
+    pack_B_block_Kx8(dst, B, ldb, p->N, j0, 0, p->K);
+  }
+}
+
 static inline void extract_full_buffered_to_C(int32_t* C, int ldc)
 {
   int32_t tile[8*8];
@@ -100,16 +116,8 @@ void ope_matmul_prepacked(const int8_t* A, const int8_t* B, int32_t* C,
     return ope_matmul(A, B, C, M, N, K, lda, ldb, ldc);
   }
 
-  // Pack all of A
-  for (int it = 0, i0 = 0; it < plan.itiles; ++it, i0 += 8) {
-    int8_t* dst = plan.A_pack + (size_t)it * plan.K * 8;
-    pack_A_block_i8x8(dst, A, lda, plan.M, i0, 0, plan.K);
-  }
-  // Pack all of B
-  for (int jt = 0, j0 = 0; jt < plan.jtiles; ++jt, j0 += 8) {
-    int8_t* dst = plan.B_pack + (size_t)jt * plan.K * 8;
-    pack_B_block_Kx8(dst, B, ldb, plan.N, j0, 0, plan.K);
-  }
+  ope_pack_all_A(A, lda, &plan);
+  ope_pack_all_B(B, ldb, &plan);
 
   const int rem_M = M & 7, rem_N = N & 7;
 

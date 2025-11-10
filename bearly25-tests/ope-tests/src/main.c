@@ -171,9 +171,7 @@ static int run_unaligned_case(const OpeInputCase *tc) {
   // Run OPE Accelerator
   printf("Running OPE Accelerator...\n");
   uint64_t t0 = rdcycle64();
-  ope_matmul(tc->A, tc->B, C_ope,
-                                      M, N, K,
-                                      K, N, N);
+  ope_matmul(tc->A, tc->B, C_ope, M, N, K, K, N, N);
   uint64_t t1 = rdcycle64();
   printf("Unaligned Execution time: %ld cycles\n", (unsigned long long)(t1 - t0));
 

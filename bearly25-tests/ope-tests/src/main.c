@@ -183,10 +183,52 @@ static int run_unaligned_case(const OpeInputCase *tc) {
   return ok;
 }
 
+static int run_case_prepacked(const OpeInputCase *tc)
+{
+  const int M = tc->M;
+  const int N = tc->N;
+  const int K = tc->K;
+
+  printf("\n=== Running test case: %s ===\n", tc->name);
+  printf("Matrix dims: A(%dx%d), B(%dx%d), C(%dx%d)\n", M, K, K, N, M, N);
+
+  // Buffers
+  int32_t C_ope[M * N];
+  int32_t C_ref[M * N];
+  memset(C_ope, 0, sizeof(C_ope));
+  memset(C_ref, 0, sizeof(C_ref));
+
+  // CPU reference
+  ref_gemm_AT_i8i8_i32(tc->A, tc->B, C_ref, M, N, K, K, N, N);
+
+  const size_t need = ope_pack_workspace_size(M, N, K);
+  static uint8_t ws[OPE_PACK_WS_MAX_BYTES];
+
+  printf("Running OPE Accelerator...\n");
+  uint64_t t0 = rdcycle64();
+  if (need <= sizeof(ws)) {
+    ope_matmul_prepacked(tc->A, tc->B, C_ope,
+                         M, N, K, K, N, N,
+                         ws, sizeof(ws),
+                        true);
+  } else {
+    printf("Falling Back to default OPE");
+    ope_matmul(tc->A, tc->B, C_ope,
+              M, N, K, K, N, N);
+  }
+  uint64_t t1 = rdcycle64();
+  printf("Prepacked Execution time: %llu cycles\n", (unsigned long long)(t1 - t0));
+
+  // Compare
+  int ok = compare_results(C_ope, N, C_ref, N, M, N);
+  printf("Result: %s\n", ok == 0 ? "PASS" : "FAIL");
+  return ok;
+}
+
 void app_init(void) {}
 
 void app_main(void) {
-  printf("=== OPE FAST MATMUL TESTS ===\n");
+  printf("=== OPE MATMUL TESTS ===\n");
   printf("Debug settings: PRINT_INPUT_MATRICES=%d, PRINT_SUCCESS_MATRICES=%d\n",
           PRINT_INPUT_MATRICES, PRINT_SUCCESS_MATRICES);
 
@@ -201,6 +243,9 @@ void app_main(void) {
     if (run_aligned_case(&OPE_CASES_ALIGNED[i]) != 0){
       failed++;
     }
+    if (run_case_prepacked(&OPE_CASES_ALIGNED[i]) != 0){
+      failed++;
+    }
   }
 
   printf("\n--- UNALIGNED TEST CASES ---\n");
@@ -209,6 +254,9 @@ void app_main(void) {
     if (run_unaligned_case(&OPE_CASES_UNALIGNED[i]) != 0){
       failed++;
     } 
+    if (run_case_prepacked(&OPE_CASES_UNALIGNED[i]) != 0){
+      failed++;
+    }
   }
 
   printf("\n=== FINAL SUMMARY ===\n");

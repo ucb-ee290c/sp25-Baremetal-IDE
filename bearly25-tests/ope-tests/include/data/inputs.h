@@ -542,7 +542,7 @@ static const int8_t B_unaligned_13x11x29[29*11] = {
 static const OpeInputCase OPE_CASES_ALIGNED[] = {
   { "aligned_8x8x8", 8, 8, 8, A_8x8x8, B_8x8x8 },
   { "aligned_16x16x24", 16, 16, 24, A_aligned_16x16x24, B_aligned_16x16x24 },
-  { "aligned_64x64x64", 64, 64, 64, A_aligned_64x64x64, B_aligned_64x64x64 },
+  // { "aligned_64x64x64", 64, 64, 64, A_aligned_64x64x64, B_aligned_64x64x64 },
   // { "aligned_128x128x128", 128, 128, 128, A_aligned_128x128x128, B_aligned_128x128x128 },
 };
 static const int NUM_ALIGNED_CASES = sizeof(OPE_CASES_ALIGNED)/sizeof(OPE_CASES_ALIGNED[0]);

@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include "chip_config.h"
 
@@ -43,14 +44,14 @@ void ope_tile_buffer(const int8_t* A, const int8_t* B, int32_t* C,
 // Compute a partial tile (for edges, when M/N not multiple of 8)
 void ope_tile_partial(const int8_t* A, const int8_t* B, int32_t* C,
                       int i0, int j0, int i_size, int j_size,
-                           int K, int lda, int ldb, int ldc);
+                      int K, int lda, int ldb, int ldc);
 
 // Top-level tiled multiply using fast OPE RoCC path
 void ope_matmul_m8m8(const int8_t* A, const int8_t* B, int32_t* C,
                      int M, int N, int K, int lda, int ldb, int ldc);
 
 void ope_matmul(const int8_t* A, const int8_t* B, int32_t* C,
-                     int M, int N, int K, int lda, int ldb, int ldc);
+                int M, int N, int K, int lda, int ldb, int ldc);                 
 
 #ifdef __cplusplus
 }

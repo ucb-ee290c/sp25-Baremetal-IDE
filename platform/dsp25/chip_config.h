@@ -40,7 +40,9 @@ extern "C" {
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
 
+#define UART0_BASE                  0x10020000U
 #define I2S_BASE                    0x10042000U
+#define PLL_BASE                    0x00140000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
 #define CLINT                      ((CLINT_Type *)CLINT_BASE)

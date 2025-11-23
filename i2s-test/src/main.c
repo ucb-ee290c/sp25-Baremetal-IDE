@@ -82,6 +82,32 @@ void i2s_square_wave_test(void) {
 }
 
 
+// NOTE: This is from DSP24 Audio
+// https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/audio/app/src/main.c
+void i2s_playback_test(void) {
+  uint64_t counter = 0;
+  uint64_t playback = 0;
+  uint64_t recording_length = 5; //In Seconds
+  uint64_t recording_cycle_length = (recording_length * 44100 / 4);
+  uint64_t recorded_audio[recording_cycle_length];
+
+  // For reference: uint64_t target_frequency = 500000000l;
+  while (1) {
+    printf("Recording!\r\n");
+    while (counter < recording_cycle_length) {
+      recorded_audio[counter] = read_I2S_rx(CHANNEL, I2S_LEFT);
+      counter++;
+    }
+    printf("Playing!\r\n");
+    while (playback < counter) {
+      write_I2S_tx(CHANNEL, I2S_LEFT, recorded_audio[playback]);
+      playback += 2; // Not sure why we increment by 2 here
+    }
+	}
+
+}
+
+
 /**
   * @brief  The application entry point.
   * @retval int

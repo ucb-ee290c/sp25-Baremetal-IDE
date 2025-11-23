@@ -21,20 +21,19 @@
 #include <stdbool.h>
 
 // I2S at 44kHz -> ~440hz square wave
-#define PULSE_WIDTH_SAMPLES (50)
-#define PULSE_PERIOD_SAMPLES (100)
+#define PULSE_PERIOD_SAMPLES (100) // 44kHz -> 100 samples per 440Hz period
+#define PULSE_WIDTH_SAMPLES (50) // 50% duty cycle
 #define AMPLITUDE (0x7FFFFF) // Sample amplitude for 32 bit depth
 
 #define CHANNEL 0
 
-I2S_PARAMS I2S_DEFAULT = {
-    .channel     = 0,
+i2s_params_t i2s_params_default = {
     .tx_en       = 1,
     .rx_en       = 1,
     .bitdepth_tx = 3, // 32 bits
     .bitdepth_rx = 3,
     .clkgen      = 1,
-    .dacen       = 0,
+    .dacen       = 1,
     .ws_len      = 3,
     .clkdiv      = 176,
     .tx_fp       = 0,
@@ -56,7 +55,7 @@ void app_init() {
 
   printf("I2S params initializing");
 
-  set_I2S_params(&I2S_DEFAULT);
+  config_I2S(CHANNEL, &i2s_params_default);
 
   printf("Init done");
 }
@@ -66,10 +65,9 @@ void i2s_square_wave_test(void) {
   uint32_t counter = 0;
   uint32_t sample[2] = {AMPLITUDE, AMPLITUDE};
   while (1) {
-    // Divide by 4 because 4 samples fit in one 64 bit transaction
+    // Divide by 2 because 2 samples fit in one 64 bit transaction
     uint64_t data;
-    if (counter < PULSE_WIDTH_SAMPLES / 4) {
-      // TODO: Need to verify sample order here
+    if (counter < PULSE_WIDTH_SAMPLES / 2) {
       data = ((uint64_t)sample[0] << 32) | (uint64_t)sample[1];
     } else {
       data = 0;
@@ -78,7 +76,7 @@ void i2s_square_wave_test(void) {
     write_I2S_tx(CHANNEL, true, data);
     write_I2S_tx(CHANNEL, false, data);
 
-    counter = (counter + 1) % (PULSE_PERIOD_SAMPLES / 4);
+    counter = (counter + 1) % (PULSE_PERIOD_SAMPLES / 2);
 	}
 
 }

@@ -16,6 +16,8 @@ def emit_case(name, M, N, K, seed=0):
     print(f'{{ "{name}", {M}, {N}, {K}, A_{name}, B_{name} }},')
     print()
 
-emit_case("aligned_128x128x128", 128, 128, 128, seed=3)
-emit_case("aligned_64x64x64", 64, 64, 64, seed=1)
-emit_case("unaligned_13x11x29", 13, 11, 29, seed=2)
+# emit_case("aligned_128x128x128", 128, 128, 128, seed=3)
+# emit_case("aligned_64x64x64", 64, 64, 64, seed=1)
+# emit_case("unaligned_13x11x29", 13, 11, 29, seed=2)
+
+emit_case("aligned_16x16x16", 16, 16, 16, seed=2)

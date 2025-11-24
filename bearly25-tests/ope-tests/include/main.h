@@ -9,7 +9,6 @@
 #include <string.h>
 
 #include "hal_ope.h"
-#include "hal_ope_prepack.h"
 
 #ifndef PRINT_INPUT_MATRICES
 #define PRINT_INPUT_MATRICES 0  // Set to 1 to print input A and B matrices
@@ -19,7 +18,7 @@
 #define PRINT_SUCCESS_MATRICES 0  // Set to 1 to print output matrices
 #endif
 
-#define OPE_PACK_WS_MAX_BYTES   (512 * 1024)
+#define OPE_PACK_WS_MAX_BYTES   (8 * 1024)
 
 void app_init(void);
 void app_main(void);

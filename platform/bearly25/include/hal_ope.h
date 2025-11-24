@@ -8,50 +8,69 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "chip_config.h"
 
 #ifndef OPE_CUSTOM
 #define OPE_CUSTOM 0
 #endif
 
-// Orders all CPU memory and I/O operations
-void ope_fence(void);
+// When set to 1, the hardware writes out tiles in transposed form
+#ifndef OPE_EXT_FLIP
+#define OPE_EXT_FLIP 1
+#endif
 
-// Clears the accelerator’s internal accumulators to zero.
-void ope_zero(void);
+// If set to 1, the driver will issue per-tile fences in OP_EXT_STRIDE
+#ifndef OPE_TILE_FENCE
+#define OPE_TILE_FENCE 0
+#endif
 
-// Load an 8x8 int32 tile from memory into the accelerator
-void ope_load(uint64_t mem_base_phys, uint16_t stride_elems,
-              uint8_t transpose, uint8_t use_stride);
+#ifndef MIN
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#endif
 
-// Store the current 8x8 int32 accumulator tile to memory
-void ope_extract(uint64_t mem_base_phys, uint16_t stride_elems,
-                 uint8_t transpose, uint8_t use_stride);
+typedef struct {
+  int rows;
+  int cols;
+  int rowsU;
+  int colsU;
+  int8_t data[];
+} ope_mat8_t;
 
-// Outer-product accumulate of length L_elems in [1..32] using int8* A and B
-void ope_acc(uint64_t a_base_phys, uint64_t b_base_phys, uint8_t L_elems);
+typedef struct {
+  int rows;
+  int cols;
+  int rowsU;
+  int colsU;
+  int32_t data[];
+} ope_mat32_t;
 
-// One 8x8 tile step of GEMM/conv
+typedef enum {
+  OPE_MAT_NONE = 0,
+  OPE_MAT_ZERO
+} ope_mat_init_t;
 
-// Compute one full 8x8 tile of C = A^T * B (no partial tiles)
-void ope_tile(const int8_t* A, const int8_t* B, int32_t* C,
-              int i0, int j0, int K, int lda, int ldb, int ldc);
+// Pre-allocate workspace for remap buffers
+void ope_init_workspace(int max_M, int max_N, int max_K);
 
-// Compute one full 8x8 tile of C = A^T * B but with a temporary buffer for unaligned matrices
-void ope_tile_buffer(const int8_t* A, const int8_t* B, int32_t* C,
-                     int i0, int j0, int K, int lda, int ldb, int ldc);
+// Free workspace if previously allocated
+void ope_free_workspace(void);
 
-// Compute a partial tile (for edges, when M/N not multiple of 8)
-void ope_tile_partial(const int8_t* A, const int8_t* B, int32_t* C,
-                      int i0, int j0, int i_size, int j_size,
-                      int K, int lda, int ldb, int ldc);
+// Utility Functions
+ope_mat8_t* ope_mat8_init (int rows, int cols, ope_mat_init_t init_method);
+ope_mat32_t* ope_mat32_init(int rows, int cols, ope_mat_init_t init_method);
+void ope_mat8_free (ope_mat8_t*  mat);
+void ope_mat32_free(ope_mat32_t* mat);
+void ope_mat32_transpose_inplace(ope_mat32_t* mat);
 
-// Top-level tiled multiply using OPE RoCC Accelerator
-void ope_matmul_m8m8(const int8_t* A, const int8_t* B, int32_t* C,
-                     int M, int N, int K, int lda, int ldb, int ldc);
+long ope_matmul_8x8 (ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out);
+long ope_matmul_16x16(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out);
+long ope_matmul_32x32(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out);
+long ope_matmul_64x64(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out);
 
-void ope_matmul(const int8_t* A, const int8_t* B, int32_t* C,
-                int M, int N, int K, int lda, int ldb, int ldc);                 
+long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out);
+long ope_matmul_arb (ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out);
+
+void ope_remap_matrix_A(const ope_mat8_t* restrict A, int8_t* restrict A_T);
+void ope_remap_matrix_B(const ope_mat8_t* restrict B, int8_t* restrict B_remap);
 
 #ifdef __cplusplus
 }

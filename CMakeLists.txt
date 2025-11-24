@@ -151,8 +151,8 @@ endif()
 #################################
 
 add_subdirectory(app)
-# Add your custom subdirectories here!
 add_subdirectory(bearly25-tests)
+add_subdirectory(bearly25-bmarks)
 
 
 

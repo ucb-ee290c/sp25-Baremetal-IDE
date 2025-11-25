@@ -233,7 +233,7 @@ void app_main() {
 
 
   int i = 4;
-    while (i < 20) {
+    while (i < 5) {
         /* cycle counter ------------------------------------------------ */
         unsigned long cyc0, cyc1, ins0, ins1;
         asm volatile("rdcycle %0"   : "=r"(cyc0));

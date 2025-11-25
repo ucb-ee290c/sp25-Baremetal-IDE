@@ -3,6 +3,7 @@
  * ========================================================================= */
 
 #include "main.h"
+#include "chip_config.h"
 #include <data/inputs.h>
 
 static inline size_t ru8(size_t x) {
@@ -256,6 +257,13 @@ static int run_unaligned_case(const OpeInputCase *tc) {
 void app_init(void) {}
 
 void app_main(void) {
+
+  UART_InitType UART_init_config;
+  UART_init_config.baudrate = 115200;
+  UART_init_config.mode = UART_MODE_TX_RX;
+  UART_init_config.stopbits = UART_STOPBITS_2;
+  uart_init(UART0, &UART_init_config);
+
   printf("=== OPE MATMUL TESTS ===\n");
   printf("Debug settings: PRINT_INPUT_MATRICES=%d, PRINT_SUCCESS_MATRICES=%d\n", PRINT_INPUT_MATRICES, PRINT_SUCCESS_MATRICES);
 

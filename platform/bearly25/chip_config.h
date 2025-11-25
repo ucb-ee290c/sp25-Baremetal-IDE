@@ -27,7 +27,7 @@ extern "C" {
 //  System Clock
 // ================================
 // system clock frequency in Hz
-#define SYS_CLK_FREQ   100000000
+#define SYS_CLK_FREQ   10000000
 
 // CLINT time base frequency in Hz
 #define MTIME_FREQ     10000
@@ -36,10 +36,17 @@ extern "C" {
 // ================================
 //  MMIO devices
 // ================================
-#define UART_BASE               0x10013000U
 #define RCC_BASE                    0x00100000U
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
+
+#define DEBUG_CONTROLLER_BASE   0x00000000U
+#define BOOTROM_BASE            0x00010000U
+#define CACHE_CONTROLLER_BASE   0x02010000U
+#define UART_BASE               0x10020000U
+#define QSPI_FLASH_BASE         0x20000000U
+#define DRAM_BASE               0x80000000U
+
 #define UART0_BASE              (UART_BASE)
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))

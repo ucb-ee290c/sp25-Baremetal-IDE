@@ -1,8 +1,5 @@
 #include "hal_i2s.h"
 #include  "hal_mmio.h"
-// #include "hal_dma.h"
-
-//TODO: Add set_freq, read_n, write_mono, read_mono
 
 void config_I2S(int channel, i2s_params_t* params) {
     // Define the I2S configuration structure
@@ -150,9 +147,16 @@ void set_I2S_force_left(int channel, int tx_force_left, int rx_force_left) {
 
 
 void set_I2S_sample_freq(int channel, uint64_t sys_clk_freq, uint64_t sample_freq) {
-    // uint64_t clk_freq = sys_clk_freq;
-    // uint32_t clkdiv = clk_freq / (sample_freq);
-    // set_I2S_clkdiv(channel, clkdiv);
+    // Master Clock (256LRCLK) should be 256 times the sample frequency
+    uint64_t mclk_freq = sample_freq * 256;
+    uint32_t clkdiv = (uint32_t) (mclk_freq / sample_freq);
+    set_I2S_clkdiv(channel, clkdiv);
+}
+
+void read_I2S_to_buffer(int channel, i2s_channel_side_t left_right, uint64_t* buffer, int num_blocks) {
+    for (int i = 0; i < num_blocks; i++) {
+        buffer[i] = read_I2S_rx(channel, left_right);
+    }
 }
 
 

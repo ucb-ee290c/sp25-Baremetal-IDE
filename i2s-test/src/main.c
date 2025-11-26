@@ -27,11 +27,13 @@
 
 #define CHANNEL 0
 
+// TODO: Verify clocks and clockdiv. Stolen from dsp-24 bmarks
+// https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/dsp24-bmarks/i2s-test/src/main.c
 i2s_params_t i2s_params_default = {
     .tx_en       = 1,
     .rx_en       = 1,
-    .bitdepth_tx = 3, // 32 bits
-    .bitdepth_rx = 3,
+    .bitdepth_tx = I2S_BITDEPTH_32,
+    .bitdepth_rx = I2S_BITDEPTH_32,
     .clkgen      = 1,
     .dacen       = 1,
     .ws_len      = 3,
@@ -42,11 +44,12 @@ i2s_params_t i2s_params_default = {
     .rx_force_left = 0
 };
 
+// PLL target frequency = 500 MHz; different than system clock of 50 MHz
 uint64_t target_frequency = 500000000l;
 
 
 void app_init() {
-  configure_pll(PLL_BASE, target_frequency/50000000, 0);
+  configure_pll(PLL, target_frequency/50000000, 0);
   set_all_clocks(RCC_CLOCK_SELECTOR, 1);
 
   uint64_t mhartid = READ_CSR("mhartid");
@@ -123,7 +126,7 @@ int main(int argc, char **argv) {
   UART_init_config.baudrate = 115200;
   UART_init_config.mode = UART_MODE_TX_RX;
   UART_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0_BASE, &UART_init_config);
+  uart_init(UART0, &UART_init_config);
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */  

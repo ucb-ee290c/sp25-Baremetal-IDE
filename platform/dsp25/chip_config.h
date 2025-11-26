@@ -45,9 +45,11 @@ extern "C" {
 #define PLL_BASE                    0x00140000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
-#define CLINT                      ((CLINT_Type *)CLINT_BASE)
-#define PLIC                       ((PLIC_Type *)PLIC_BASE)
-#define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
+#define CLINT                       ((CLINT_Type *)CLINT_BASE)
+#define PLIC                        ((PLIC_Type *)PLIC_BASE)
+#define PLIC_CC                     ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
+#define PLL                         ((PLL_Type *)PLL_BASE)
+#define UART0                       ((UART_Type *)UART0_BASE)
 
 
 #ifdef __cplusplus

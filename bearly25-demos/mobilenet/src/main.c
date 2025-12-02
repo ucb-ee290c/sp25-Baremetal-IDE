@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "model_params_self.h"
+#include <model_params_self.h>
 #include <layers.h>
 #include <data/inputs.h>
 #include <data/model_params.h>

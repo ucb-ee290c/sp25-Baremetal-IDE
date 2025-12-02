@@ -36,20 +36,24 @@ extern "C" {
 // ================================
 //  MMIO devices
 // ================================
-#define UART_BASE               0x10013000U
-#define RCC_BASE                    0x00100000U
-#define CLINT_BASE                  0x02000000U
-#define PLIC_BASE                   0x0C000000U
-#define UART0_BASE              (UART_BASE)
+#define UART_BASE                0x10013000U
+#define RCC_BASE                 0x00100000U
+#define CLINT_BASE               0x02000000U
+#define PLIC_BASE                0x0C000000U
+#define TCM_BASE                 0x78000000U
+#define SCRATCHPAD_BASE          0x08000000U
+#define DRAM_BASE                0x80000000U
 
-#define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
-#define CLINT                      ((CLINT_Type *)CLINT_BASE)
-#define PLIC                       ((PLIC_Type *)PLIC_BASE)
-#define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
-#define UART0                   ((UART_Type *)UART0_BASE)
+#define RCC_CLOCK_SELECTOR       ((ClockSel_Type*)(RCC_BASE + 0x30000))
+#define CLINT                    ((CLINT_Type *)CLINT_BASE)
+#define PLIC                     ((PLIC_Type *)PLIC_BASE)
+#define PLIC_CC                  ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
 
-#define CONV2D_BASE                 0x08808000U
-#define CONV2D           ((Conv2D_Accel_Type *)CONV2D_BASE)
+#define UART0_BASE               (UART_BASE)
+#define UART0                    ((UART_Type *)UART0_BASE)
+
+#define CONV2D_BASE              0x08808000U
+#define CONV2D                   ((Conv2D_Accel_Type *)CONV2D_BASE)
 
 
 #ifdef __cplusplus

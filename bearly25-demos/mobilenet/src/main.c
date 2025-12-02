@@ -3,8 +3,6 @@
 
 #include <model_params_self.h>
 #include <layers.h>
-#include <data/inputs.h>
-#include <data/model_params.h>
 
 /* Placeholders for ops that are missing in vec-nn currently */
 void conv3x3_int8_same_stride(

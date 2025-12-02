@@ -4,14 +4,6 @@
 #include "memlat_addrs.h"
 #include "memlat_config.h"
 
-/*
- * This file covers:
- *   - L1 hit latency (using a DRAM-backed line that we warm)
- *   - DRAM cold-miss latency (by thrashing a big DRAM region)
- *   - Stubs for L2 local / remote tests (we'll fill in once
- *     we decide how to steer addresses to specific banks).
- */
-
 // Buffer that lives in DRAM
 static volatile uint32_t dram_region[MEMLAT_DRAM_REGION_BYTES / sizeof(uint32_t)]
     __attribute__((aligned(64)));

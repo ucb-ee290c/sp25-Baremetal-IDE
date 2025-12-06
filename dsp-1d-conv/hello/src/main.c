@@ -29,6 +29,10 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+// Constants
+#define CACHELINE        64
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,15 +57,12 @@ uint8_t counter = 0;
 /* USER CODE BEGIN PUC */
 
 
+
 void app_init() {
-  // torch::executor::runtime_init();
 }
 
-union Converter {
-    float f;
-    uint32_t u;
-};
 
+// This is our golden model that we will compare the test output to
 void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
   
   /* 
@@ -109,94 +110,121 @@ void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kern
     }
 }
 
-void test_simple(){
+// Perform 1D convolution using the wrapper function
+void app_main() {
   union Converter {
     float f;
     uint32_t u;
   };
+  
+  // Inputs and outputs
 
-  uint32_t in_arr[16] = {
-    0x3F99999A, 0x40266666, 0xC0580000, 0x3F33CCCC, 
-    0x40A00000, 0xC01D3333, 0x40B33333, 0xBFC66666, 
-    0x40A19999, 0x40D99999, 0xC0A00000, 0x3F8CCCCD, 
-    0x40C00000, 0xBFC00000, 0x40019999, 0x40466666
-  };
-  uint32_t in_len = 16;
-  uint16_t in_dilation = 1;
-  uint32_t in_kernel[8] = {
-    0xC0800000, 0x40800000, 0x3F800000, 0xC0800000, 
-    0x40800000, 0xC0800000, 0x40800000, 0x40000000
-  };
-  uint8_t kernel_len = 8;
+  __attribute__((aligned(CACHELINE))) uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
+  __attribute__((aligned(CACHELINE))) uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
   
-  printf("Setting values of MMIO registers\n");
-  printf("CONV1D address: 0x%x\n", CONV1D);
-  
-  // Initialize the accelerator
-  conv_init(CONV1D);
-  
-  // Set parameters for the convolution operation
-  int result = conv_set_params(CONV1D, in_arr, in_len, in_dilation, in_kernel, kernel_len);
-  if (result != 0) {
-    printf("Error setting parameters\n");
-    return;
-  }
-  
-  puts("Starting Convolution");
+  uint32_t in_len[1] = {8};
+  uint16_t in_dilation[1] = {1};
+
+  uint32_t test_out[23];
+
   // Start the convolution operation
-  start_conv(CONV1D);
+  printf("Starting Convolution");
+
+  uint8_t status = perform_convolution((uint64_t) &in_arr,     
+                                       (uint64_t) &test_out, 
+                                       (uint16_t) &in_kernel, 
+                                       (uint32_t) &in_len, 
+                                       (uint16_t) &in_dilation);
   
-  puts("Waiting for convolution to complete");
+  if (status != 0x0) {
+      printf("Convolution Failed");
+      printf("Error Status: %p\n", status);
+      switch (status) {
+        case 0x01: printf("BUSY"); break;
+        case 0x02: printf("COMPL"); break;
+        case 0x04: printf("ERROR"); break;
+        case 0x08: printf("INVALID"); break;
+        case 0x10: printf("INFINITE"); break;
+        case 0x20: printf("OVERFLOW"); break;
+        case 0x40: printf("UNDERFLOW"); break;
+        case 0x80: printf("INEXACT"); break;
+        default: printf("UNKNOWN STATUS"); break;
+      }
+    }
+
+  printf("Convolution Finished!");
+  printf("Check status: %p\n", status);
+
+  // Compare hardware output to software output
   
   printf("Input (FP32): ");
   for (int i = 0; i < 16; i++) {
     printf("%#x ", in_arr[i]);
   }
   
-  // Create array for output
-  uint32_t test_out[23];
-  int status = 0;
-  
   printf("\nTest Output (FP32 binary): ");
-  
-  // Read the output using our function
-  conv_read_output(CONV1D, test_out, 23, &status, in_arr);
   
   // Print the results
   for (int i = 0; i < 23; i++) {
     printf("0x%08x ", test_out[i]);
   }
-  
-  // Print final status
-  printf("\nFinal status: ");
-  switch (status) {
-    case 0x01: printf("BUSY"); break;
-    case 0x02: printf("COMPL"); break;
-    case 0x04: printf("ERROR"); break;
-    case 0x08: printf("INVALID"); break;
-    case 0x10: printf("INFINITE"); break;
-    case 0x20: printf("OVERFLOW"); break;
-    case 0x40: printf("UNDERFLOW"); break;
-    case 0x80: printf("INEXACT"); break;
-    default: printf("UNKNOWN STATUS"); break;
-  }
-  printf("\nOutput count: %d\n", get_register_out_count(CONV1D));
 
-  float ref_out[32];
-  convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
-  printf("\nReference Output (FP32 binary): ");
+  // // Print out the reference golden model
+  
+  // float ref_out[32];
+
+
+  // convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
+  // printf("\nReference Output (FP32 binary): ");
+  // union Converter converter;
+  // for (int i = 0; i < 23; i++) {
+  //     converter.f = ref_out[i];
+  //     printf("0x%08X ", converter.u);
+  // }
+  // printf("\n");
+
+    // Print out the correct reference output
+
+
+  // uint32_t ref_out[8] = {0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000, 0x00000000}; // {2, 3, 4, 5, 6, 7, 8, 0} in FP16
+  float ref_out[15] = {0, 0, 0 ,0 , 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0};
   union Converter converter;
-  for (int i = 0; i < 23; i++) {
+  printf("\nReference Output (FP16 binary): ");
+  for (int i = 0; i < 15; i++) {
       converter.f = ref_out[i];
+      // printf("%f", (ref_out[i]));
       printf("0x%08X ", converter.u);
+      // printf("%#x ", (ref_out[i]));
   }
   printf("\n");
+
+
+  
+  if (memcmp(test_out, ref_out, 60) == 0) {
+      printf("[TEST PASSED]: Test Output matches Reference Output.");
+  } else {
+      printf("[TEST FAILED]: Test Output does not match Reference Output.");
+  }
+  printf("\n\n");
 }
 
-void app_main() {
-  uint64_t mhartid = READ_CSR("mhartid");
-
-  printf("Hello world from hart %d: %d\n", mhartid, counter);
+// Simple main function that just runs once
+int main() {
+    // Make sure we're on hart 0
+    uint64_t mhartid;
+    asm volatile ("csrr %0, mhartid" : "=r" (mhartid));
+    if (mhartid != 0) {
+        // If not on hart 0, just return
+        return 0;
+    }
+    
+    app_init();
+    app_main();
+    
+    // Add a small delay to ensure output is printed
+    for (volatile int i = 0; i < 1000; i++);
+    
+    return 0;
 }
 /* USER CODE END PUC */
 
@@ -204,10 +232,27 @@ void app_main() {
   * @brief  The application entry point.
   * @retval int
   */
-int main(int argc, char **argv) {
-  test_simple();
-  return 0;
-}
+// int main(int argc, char **argv) {
+//   /* MCU Configuration--------------------------------------------------------*/
+
+//   /* Configure the system clock */
+//   /* USER CODE BEGIN SysInit */
+
+//   /* USER CODE END SysInit */
+
+//   /* Initialize all configured peripherals */  
+//   /* USER CODE BEGIN Init */
+//   app_init();
+//   /* USER CODE END Init */
+
+//   /* Infinite loop */
+//   /* USER CODE BEGIN WHILE */
+//   while (1) {
+//     app_main();
+//     return 0;
+//   }
+//   /* USER CODE END WHILE */
+// }
 
 /*
  * Main function for secondary harts

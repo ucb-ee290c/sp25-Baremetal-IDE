@@ -29,10 +29,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-// Constants
-#define CACHELINE        64
-
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,11 +54,172 @@ uint8_t counter = 0;
 
 
 
-void app_init() {
+// ##################################################################
+// ############## Manually writing drivers inside test ##############
+// ##################################################################
+#include "chip_config.h"
+
+// Baremetal IDE Definitions //
+#include "metal.h"
+
+#include <stdint.h>
+#include <stddef.h> // For uintptr_t
+
+#define __IO volatile
+#define __I  volatile const
+
+#define MMIO_BASE   0x08800000
+
+// Register Offset Definitions
+#define CONV_INPUT_ADDR   0x00
+#define CONV_OUTPUT_ADDR  0x20
+#define CONV_KERNEL_ADDR  0x40
+#define CONV_STATUS_ADDR  0x6A
+#define CONV_START_ADDR   0x6C
+#define CONV_CLEAR_ADDR   0x6D // Set to 1 to flush Datapath
+
+#define CONV_COUNT_ADDR   0x70
+#define CONV_LENGTH_ADDR  0x78
+#define CONV_DILATION_ADDR 0x7C
+
+#define READ_CHECK_ADDR   0x8D
+#define CONV_KERNEL_LEN_ADDR  0x8E
+#define CONV_MMIO_RESET   0x8F
+
+
+// --- MMIO Register Access Functions (Unchanged) ---
+
+void reg_write8(uintptr_t addr, uint8_t data) {
+volatile uint8_t *ptr = (volatile uint8_t *) addr;
+*ptr = data;
+}
+
+uint8_t reg_read8(uintptr_t addr) {
+volatile uint8_t *ptr = (volatile uint8_t *) addr;
+return *ptr & 0xFF;
+}
+
+void reg_write16(uintptr_t addr, uint16_t data) {
+volatile uint16_t *ptr = (volatile uint16_t *) addr;
+*ptr = data;
+}
+
+uint16_t reg_read16(uintptr_t addr) {
+volatile uint16_t *ptr = (volatile uint16_t *) addr;
+return *ptr & 0xFFFF;
+}
+
+void reg_write32(uintptr_t addr, uint32_t data) {
+volatile uint32_t *ptr = (volatile uint32_t *) addr;
+*ptr = data;
+}
+
+uint32_t reg_read32(uintptr_t addr) {
+volatile uint32_t *ptr = (volatile uint32_t *) addr;
+return *ptr & 0xFFFFFFFF;
+}
+
+void reg_write64(unsigned long addr, uint64_t data) {
+volatile uint64_t *ptr = (volatile uint64_t *) addr;
+*ptr = data;
+}
+
+uint64_t reg_read64(unsigned long addr) {
+volatile uint64_t *ptr = (volatile uint64_t *) addr;
+return *ptr;
+}
+
+// =================================================================
+// --- Refactored Driver Implementation ---
+// Replaced &conv->MEMBER with (MMIO_BASE + MEMBER_ADDR)
+// =================================================================
+
+
+void conv_init() {
+  // All accesses now use MMIO_BASE + OFFSET
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
+}
+
+int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length){
+  // Clear MMIO Reset, Clear Datapath, Stop
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 0);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0); 
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
+
+  // Write input data (Streaming 64-bit writes)
+  for (int i = 0; i < input_length; i += 2) {
+  reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + i)));
+  }
+
+  // Write parameters
+  reg_write32((uintptr_t)(MMIO_BASE + CONV_LENGTH_ADDR), input_length);
+  reg_write16((uintptr_t)(MMIO_BASE + CONV_DILATION_ADDR), dilation);
+
+  // Write kernel data and kernel length encoding
+  if (kernel_length == 8) {
+  for (int i = 0; i < 8; i += 2) {
+  reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+  }
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
+  } else if (kernel_length == 16) {
+  for (int i = 0; i < 16; i += 2) {
+  reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+  }
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);   } else {
+  return -1;  }
+
+  return 0;
+
+}
+
+void conv_read_output(uint32_t *output, int output_len, int *status, uint32_t* input) {
+  // Read pairs of FP32s (2 per 64-bit read)
+  int j; // Index for 32-bit output elements
+  for (j = 0; j < output_len - 1; j += 2) {
+  uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+  uint32_t *unpacked = (uint32_t *) &current_out;
+
+  output[j]   = unpacked[0];
+  output[j + 1] = unpacked[1];
+  }
+    
+  // Handle the final odd element if output_len is odd
+  if (output_len % 2 != 0) {
+     uint64_t last_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+     uint32_t* unpacked_out = (uint32_t*) &last_out;
+     output[output_len - 1] = unpacked_out[0];
+  }
+
+  // Read Status
+  *status = reg_read8((uintptr_t)(MMIO_BASE + CONV_STATUS_ADDR));
+}
+
+void start_conv() {
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 1);
+}
+
+uint8_t get_register_status() {
+  return reg_read8((uintptr_t)(MMIO_BASE + CONV_STATUS_ADDR));
+}
+
+uint32_t get_register_out_count() {
+  return reg_read32((uintptr_t)(MMIO_BASE + CONV_COUNT_ADDR));
+}
+
+uint8_t get_register_read_check() {
+  return reg_read8((uintptr_t)(MMIO_BASE + READ_CHECK_ADDR));
 }
 
 
-// This is our golden model that we will compare the test output to
+void app_init() {
+  // torch::executor::runtime_init();
+}
+
+union Converter {
+    float f;
+    uint32_t u;
+};
+
 void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
   
   /* 
@@ -110,139 +267,91 @@ void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kern
     }
 }
 
-// Perform 1D convolution using the wrapper function
-void app_main() {
-  printf("In app_main\n");
-
+void test_simple(){
   union Converter {
     float f;
     uint32_t u;
   };
-  
-  // Inputs and outputs
 
-  // __attribute__((aligned(CACHELINE))) uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
-  // __attribute__((aligned(CACHELINE))) uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
 
   uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
   uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
 
+  uint32_t in_len = 8;
+  uint16_t in_dilation = 1;
+  uint8_t kernel_len = 8;
+
+  // TODO: make this variable a function based on the input parameters eventually
+  uint32_t output_len = 15;
+
   
-  uint32_t in_len[1] = {8};
-  uint16_t in_dilation[1] = {1};
-
-  uint32_t test_out[23];
-
+  printf("Setting values of MMIO registers\n");
+  
+  // Initialize the accelerator
+  conv_init();
+  
+  // Set parameters for the convolution operation
+  int result = conv_set_params(in_arr, in_len, in_dilation, in_kernel, kernel_len);
+  if (result != 0) {
+    printf("Error setting parameters\n");
+    return;
+  }
+  
+  puts("Starting Convolution");
   // Start the convolution operation
-  printf("Starting Convolution\n");
-
-  uint8_t status = perform_convolution((uint64_t) &in_arr,     
-                                       (uint64_t) &test_out, 
-                                       (uint16_t) &in_kernel, 
-                                       (uint32_t) &in_len, 
-                                       (uint16_t) &in_dilation);
+  start_conv();
   
-  if (status != 0x0) {
-      printf("Convolution Failed\n");
-      printf("Error Status: %p\n", status);
-      switch (status) {
-        case 0x01: printf("BUSY\n"); break;
-        case 0x02: printf("COMPL\n"); break;
-        case 0x04: printf("ERROR\n"); break;
-        case 0x08: printf("INVALID\n"); break;
-        case 0x10: printf("INFINITE\n"); break;
-        case 0x20: printf("OVERFLOW\n"); break;
-        case 0x40: printf("UNDERFLOW\n"); break;
-        case 0x80: printf("INEXACT\n"); break;
-        default: printf("UNKNOWN STATUS\n"); break;
-      }
-    }
-
-  printf("Convolution Finished!\n");
-  printf("Check status: %p\n", status);
-
-  // Compare hardware output to software output
+  puts("Waiting for convolution to complete");
   
-  printf("Input (FP32): \n");
-  for (int i = 0; i < 16; i++) {
+  printf("Input (FP32): ");
+  for (int i = 0; i < in_len; i++) {
     printf("%#x ", in_arr[i]);
   }
   
-  printf("\nTest Output (FP32 binary): \n");
+  // Create array for output
+  uint32_t test_out[output_len];
+  int status = 0;
+  
+  printf("\nTest Output (FP32 binary): ");
+  
+  // Read the output using our function
+  conv_read_output( test_out, output_len, &status, in_arr);
   
   // Print the results
-  for (int i = 0; i < 23; i++) {
+  for (int i = 0; i < output_len; i++) {
     printf("0x%08x ", test_out[i]);
   }
-
-  // // Print out the reference golden model
   
-  // float ref_out[32];
+  // Print final status
+  printf("\nFinal status: ");
+  switch (status) {
+    case 0x01: printf("BUSY"); break;
+    case 0x02: printf("COMPL"); break;
+    case 0x04: printf("ERROR"); break;
+    case 0x08: printf("INVALID"); break;
+    case 0x10: printf("INFINITE"); break;
+    case 0x20: printf("OVERFLOW"); break;
+    case 0x40: printf("UNDERFLOW"); break;
+    case 0x80: printf("INEXACT"); break;
+    default: printf("UNKNOWN STATUS"); break;
+  }
+  printf("\nOutput count: %d\n", get_register_out_count());
 
-
-  // convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
-  // printf("\nReference Output (FP32 binary): ");
-  // union Converter converter;
-  // for (int i = 0; i < 23; i++) {
-  //     converter.f = ref_out[i];
-  //     printf("0x%08X ", converter.u);
-  // }
-  // printf("\n");
-
-    // Print out the correct reference output
-
-
-  // uint32_t ref_out[8] = {0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000, 0x00000000}; // {2, 3, 4, 5, 6, 7, 8, 0} in FP16
-  float ref_out[15] = {0, 0, 0 ,0 , 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0};
+  float ref_out[output_len];
+  convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
+  printf("\nReference Output (FP32 binary): ");
   union Converter converter;
-  printf("\nReference Output (FP16 binary): \n");
-  for (int i = 0; i < 15; i++) {
+  for (int i = 0; i < output_len; i++) {
       converter.f = ref_out[i];
-      // printf("%f", (ref_out[i]));
       printf("0x%08X ", converter.u);
-      // printf("%#x ", (ref_out[i]));
   }
   printf("\n");
-
-
-  
-  if (memcmp(test_out, ref_out, 60) == 0) {
-      printf("[TEST PASSED]: Test Output matches Reference Output.\n");
-  } else {
-      printf("[TEST FAILED]: Test Output does not match Reference Output.\n");
-  }
-  printf("\n\n");
 }
 
-// Simple main function that just runs once
-int main() {
-  // // Make sure we're on hart 0
-  // uint64_t mhartid;
-  // asm volatile ("csrr %0, mhartid" : "=r" (mhartid));
-  // if (mhartid != 0) {
-  //     // If not on hart 0, just return
-  //     return 0;
-  // }
-
-  
+void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
 
   printf("Hello world from hart %d: %d\n", mhartid, counter);
-  
-  // app_init();
-
-  while (1) {
-    printf("Before app_main in while loop\n");
-
-    app_main();
-    return 0;
-  }
-  // app_main();
-  
-  // // Add a small delay to ensure output is printed
-  // for (volatile int i = 0; i < 1000; i++);
-  
-  // return 0;
 }
 /* USER CODE END PUC */
 
@@ -250,27 +359,10 @@ int main() {
   * @brief  The application entry point.
   * @retval int
   */
-// int main(int argc, char **argv) {
-//   /* MCU Configuration--------------------------------------------------------*/
-
-//   /* Configure the system clock */
-//   /* USER CODE BEGIN SysInit */
-
-//   /* USER CODE END SysInit */
-
-//   /* Initialize all configured peripherals */  
-//   /* USER CODE BEGIN Init */
-//   app_init();
-//   /* USER CODE END Init */
-
-//   /* Infinite loop */
-//   /* USER CODE BEGIN WHILE */
-//   while (1) {
-//     app_main();
-//     return 0;
-//   }
-//   /* USER CODE END WHILE */
-// }
+int main(int argc, char **argv) {
+  test_simple();
+  return 0;
+}
 
 /*
  * Main function for secondary harts
@@ -282,3 +374,5 @@ void __attribute__((weak, noreturn)) __main(void) {
    asm volatile ("wfi");
   }
 }
+
+

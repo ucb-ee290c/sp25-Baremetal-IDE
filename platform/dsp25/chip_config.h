@@ -44,8 +44,8 @@ extern "C" {
 #define PLIC                       ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
 
-#define CONV_BASE                   0x08800000U
-#define CONV1D                  ((ConvAccel_Type *)CONV_BASE)
+// #define CONV_BASE                   0x08800000U
+// #define CONV1D                  ((ConvAccel_Type *)CONV_BASE)
 
 #ifdef __cplusplus
 }

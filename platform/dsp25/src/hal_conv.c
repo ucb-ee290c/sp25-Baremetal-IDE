@@ -1,132 +1,125 @@
 #include "hal_conv.h"
 #include "chip_config.h"
-#include <string.h>
+
+// --- MMIO Register Access Functions (Unchanged) ---
 
 void reg_write8(uintptr_t addr, uint8_t data) {
-	volatile uint8_t *ptr = (volatile uint8_t *) addr;
-	*ptr = data;
+volatile uint8_t *ptr = (volatile uint8_t *) addr;
+*ptr = data;
 }
 
 uint8_t reg_read8(uintptr_t addr) {
-	volatile uint8_t *ptr = (volatile uint8_t *) addr;
-	return *ptr & 0xFF;
+volatile uint8_t *ptr = (volatile uint8_t *) addr;
+return *ptr & 0xFF;
 }
 
 void reg_write16(uintptr_t addr, uint16_t data) {
-	volatile uint16_t *ptr = (volatile uint16_t *) addr;
-	*ptr = data;
+volatile uint16_t *ptr = (volatile uint16_t *) addr;
+*ptr = data;
 }
 
 uint16_t reg_read16(uintptr_t addr) {
-	volatile uint16_t *ptr = (volatile uint16_t *) addr;
-	return *ptr & 0xFFFF;
+volatile uint16_t *ptr = (volatile uint16_t *) addr;
+return *ptr & 0xFFFF;
 }
 
 void reg_write32(uintptr_t addr, uint32_t data) {
-	volatile uint32_t *ptr = (volatile uint32_t *) addr;
-	*ptr = data;
+volatile uint32_t *ptr = (volatile uint32_t *) addr;
+*ptr = data;
 }
 
 uint32_t reg_read32(uintptr_t addr) {
-	volatile uint32_t *ptr = (volatile uint32_t *) addr;
-	return *ptr & 0xFFFFFFFF;
+volatile uint32_t *ptr = (volatile uint32_t *) addr;
+return *ptr & 0xFFFFFFFF;
 }
 
 void reg_write64(unsigned long addr, uint64_t data) {
-	volatile uint64_t *ptr = (volatile uint64_t *) addr;
-	*ptr = data;
+volatile uint64_t *ptr = (volatile uint64_t *) addr;
+*ptr = data;
 }
 
 uint64_t reg_read64(unsigned long addr) {
-	volatile uint64_t *ptr = (volatile uint64_t *) addr;
-	return *ptr;
+volatile uint64_t *ptr = (volatile uint64_t *) addr;
+return *ptr;
 }
 
+// =================================================================
+// --- Refactored Driver Implementation ---
+// Replaced &conv->MEMBER with (MMIO_BASE + MEMBER_ADDR)
+// =================================================================
 
- 
-uint8_t perform_convolution(uint64_t inputAddrValue,     
-                            uint64_t outputAddrValue, 
-                            uint16_t kernelAddrValue, 
-                            uint32_t lengthAddrValue, 
-                            uint16_t dilationAddrValue) {
 
-    // Define the Hardware/MMIO registers
-
-    // --- Data Ports (Read/Write) ---
-    // These are used for streaming 64-bit data packets into or out of the accelerator.
-    volatile uint64_t* inputDataPtr    = (volatile uint64_t*) (MMIO_BASE + 0x00); // Input (0x00, 64-bit, W)
-    volatile uint64_t* outputDataPtr   = (volatile uint64_t*) (MMIO_BASE + 0x20); // Output (0x20, 64-bit, R)
-    volatile uint64_t* kernelDataPtr   = (volatile uint64_t*) (MMIO_BASE + 0x40); // Kernel (0x40, 64-bit, W)
-
-    // --- Control and Status Registers (Read/Write) ---
-    // These are used to launch the operation, check completion, and handle errors.
-    volatile uint8_t* statusPtr       = (volatile uint8_t*) (MMIO_BASE + 0x6A); // Status (0x6A, 8-bit, R)
-    volatile uint8_t* startPtr        = (volatile uint8_t*) (MMIO_BASE + 0x6C); // Start (0x6C, 1-bit, W)
-    // volatile uint8_t* clearPtr        = (volatile uint8_t*) (MMIO_BASE + 0x6D); // Clear (0x6D, 1-bit, W)
-    // volatile uint8_t* mmioResetPtr    = (volatile uint8_t*) (MMIO_BASE + 0x8F); // MMIO Reset (0x8F, 1-bit, W)
-
-    // --- Configuration Registers (Write) ---
-    // These set up the parameters for the convolution.
-    volatile uint32_t* lengthPtr       = (volatile uint32_t*) (MMIO_BASE + 0x78); // Length (0x78, 32-bit, W)
-    volatile uint16_t* dilationPtr     = (volatile uint16_t*) (MMIO_BASE + 0x7C); // Dilation (0x7C, 16-bit, W)
-    // volatile uint8_t* doubleKernelPtr = (volatile uint8_t*) (MMIO_BASE + 0x8E); // Double Kernel (0x8E, 1-bit, W)
-
-    // --- Monitoring and Queue Registers (Read) ---
-    // These are primarily for debugging or DMA/queue management.
-    // volatile uint32_t* countPtr        = (volatile uint32_t*) (MMIO_BASE + 0x70); // Count (0x70, 32-bit, R)
-    // volatile uint8_t* reqEnqueuePtr   = (volatile uint8_t*) (MMIO_BASE + 0x8C); // Req Enqueue (0x8C, 1-bit, R)
-    // volatile uint8_t* deqOutputValidPtr = (volatile uint8_t*) (MMIO_BASE + 0x8D); // Deq Output Valid (0x8D, 1-bit, R)
-
-    // Connect Hardware Regs with args
-    *inputDataPtr   = inputAddrValue ;
-    *outputDataPtr  = outputAddrValue;
-    *kernelDataPtr  = kernelAddrValue;
-
-    asm volatile("fence");
-
-    *lengthPtr      = lengthAddrValue;
-    *dilationPtr    = dilationAddrValue;
-
-    asm volatile("fence iorw, iorw" ::: "memory");
-
-    // THIS STARTS THE 1D Convolution
-    *startPtr = (uint8_t) 1;    // Value of 1 starts the accelerator 
-                            
-    // Poll until the accelerator is no longer busy
-    // It is not busy when the LSB, or bit index 0 if LSB=0, of statusPtr 0
-    while (*statusPtr != 0);
-
-    asm volatile("fence iorw, iorw" ::: "memory");                          
-                            
-    return *statusPtr;
+void conv_init() {
+  // All accesses now use MMIO_BASE + OFFSET
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
 }
 
+int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length){
+  // Clear MMIO Reset, Clear Datapath, Stop
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 0);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0); 
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
 
+  // Write input data (Streaming 64-bit writes)
+  for (int i = 0; i < input_length; i += 2) {
+  reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + i)));
+  }
 
-// TODO: Make sure the definitions below are correctly set!
-// // Defines ALL the Hardware/MMIO registers
+  // Write parameters
+  reg_write32((uintptr_t)(MMIO_BASE + CONV_LENGTH_ADDR), input_length);
+  reg_write16((uintptr_t)(MMIO_BASE + CONV_DILATION_ADDR), dilation);
 
-// // --- Data Ports (Read/Write) ---
-// // These are used for streaming 64-bit data packets into or out of the accelerator.
-// volatile uint64_t* inputDataPtr    = (volatile uint64_t*) (MMIO_BASE + 0x00); // Input (0x00, 64-bit, W)
-// volatile uint64_t* outputDataPtr   = (volatile uint64_t*) (MMIO_BASE + 0x20); // Output (0x20, 64-bit, R)
-// volatile uint64_t* kernelDataPtr   = (volatile uint64_t*) (MMIO_BASE + 0x40); // Kernel (0x40, 64-bit, W)
+  // Write kernel data and kernel length encoding
+  if (kernel_length == 8) {
+  for (int i = 0; i < 8; i += 2) {
+  reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+  }
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
+  } else if (kernel_length == 16) {
+  for (int i = 0; i < 16; i += 2) {
+  reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+  }
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);   } else {
+  return -1;  }
 
-// // --- Control and Status Registers (Read/Write) ---
-// // These are used to launch the operation, check completion, and handle errors.
-// volatile uint8_t* statusPtr       = (volatile uint8_t*) (MMIO_BASE + 0x6A); // Status (0x6A, 8-bit, R)
-// volatile uint8_t* startPtr        = (volatile uint8_t*) (MMIO_BASE + 0x6C); // Start (0x6C, 1-bit, W)
-// volatile uint8_t* clearPtr        = (volatile uint8_t*) (MMIO_BASE + 0x6D); // Clear (0x6D, 1-bit, W)
-// volatile uint8_t* mmioResetPtr    = (volatile uint8_t*) (MMIO_BASE + 0x8F); // MMIO Reset (0x8F, 1-bit, W)
+  return 0;
 
-// // --- Configuration Registers (Write) ---
-// // These set up the parameters for the convolution.
-// volatile uint32_t* lengthPtr       = (volatile uint32_t*) (MMIO_BASE + 0x78); // Length (0x78, 32-bit, W)
-// volatile uint16_t* dilationPtr     = (volatile uint16_t*) (MMIO_BASE + 0x7C); // Dilation (0x7C, 16-bit, W)
-// volatile uint8_t* doubleKernelPtr = (volatile uint8_t*) (MMIO_BASE + 0x8E); // Double Kernel (0x8E, 1-bit, W)
+}
 
-// // --- Monitoring and Queue Registers (Read) ---
-// // These are primarily for debugging or DMA/queue management.
-// volatile uint32_t* countPtr        = (volatile uint32_t*) (MMIO_BASE + 0x70); // Count (0x70, 32-bit, R)
-// volatile uint8_t* reqEnqueuePtr   = (volatile uint8_t*) (MMIO_BASE + 0x8C); // Req Enqueue (0x8C, 1-bit, R)
-// volatile uint8_t* deqOutputValidPtr = (volatile uint8_t*) (MMIO_BASE + 0x8D); // Deq Output Valid (0x8D, 1-bit, R)
+void conv_read_output(uint32_t *output, int output_len, int *status, uint32_t* input) {
+  // Read pairs of FP32s (2 per 64-bit read)
+  int j; // Index for 32-bit output elements
+  for (j = 0; j < output_len - 1; j += 2) {
+  uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+  uint32_t *unpacked = (uint32_t *) &current_out;
+
+  output[j]   = unpacked[0];
+  output[j + 1] = unpacked[1];
+  }
+    
+  // Handle the final odd element if output_len is odd
+  if (output_len % 2 != 0) {
+     uint64_t last_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+     uint32_t* unpacked_out = (uint32_t*) &last_out;
+     output[output_len - 1] = unpacked_out[0];
+  }
+
+  // Read Status
+  *status = reg_read8((uintptr_t)(MMIO_BASE + CONV_STATUS_ADDR));
+}
+
+void start_conv() {
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 1);
+}
+
+uint8_t get_register_status() {
+  return reg_read8((uintptr_t)(MMIO_BASE + CONV_STATUS_ADDR));
+}
+
+uint32_t get_register_out_count() {
+  return reg_read32((uintptr_t)(MMIO_BASE + CONV_COUNT_ADDR));
+}
+
+uint8_t get_register_read_check() {
+  return reg_read8((uintptr_t)(MMIO_BASE + READ_CHECK_ADDR));
+}

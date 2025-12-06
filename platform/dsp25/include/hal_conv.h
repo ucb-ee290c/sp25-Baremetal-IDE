@@ -15,12 +15,30 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
-
 // Baremetal IDE Definitions //
 #include "metal.h"
+#include <stdint.h>
+#include <stddef.h> // For uintptr_t
 
-#define MMIO_BASE        0x08800000
+
+// 1D Conv Base Address
+#define MMIO_BASE   0x08800000
+
+// Register Offset Definitions
+#define CONV_INPUT_ADDR   0x00
+#define CONV_OUTPUT_ADDR  0x20
+#define CONV_KERNEL_ADDR  0x40
+#define CONV_STATUS_ADDR  0x6A
+#define CONV_START_ADDR   0x6C
+#define CONV_CLEAR_ADDR   0x6D // Set to 1 to flush Datapath
+
+#define CONV_COUNT_ADDR   0x70
+#define CONV_LENGTH_ADDR  0x78
+#define CONV_DILATION_ADDR 0x7C
+
+#define READ_CHECK_ADDR   0x8D
+#define CONV_KERNEL_LEN_ADDR  0x8E
+#define CONV_MMIO_RESET   0x8F
 
 // Methods //
 
@@ -40,47 +58,20 @@ void reg_write64(unsigned long addr, uint64_t data);
 
 uint64_t reg_read64(unsigned long addr);
 
-/**
- * \brief Simplified wrapper function for performing 2D convolution
- * \param inputAddr Source address of the input data
- * \param outputAddr Destination address for the output data
- * \param kernelAddr Pointer to the kernel values
- * \param lengthAddr Pointer to the number of entries in the input data 
- * \param dilationAddr ___(TODO: FILL OUT DOCUMENTATION)___
- * This Function returns a uint8_t, which is a status flag (i.e. error flags)
- * 
- * Here's an example of how to call it:
- * 
-  uint8_t status = perform_convolution((uint64_t)&testImage, (uint64_t)&outputImage, HEIGHT, WIDTH, (uint8_t*)kernel, 3, (uint8_t)0, 1);
-  
-  if (status != 0x0) {
-    printf("Error Status: %p\n", status);
-  }
- * 
- * \
- * If the status is 0x0, That means it was successful.
- */
+void conv_init();
+
+int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length);
+
+void conv_read_output(uint32_t *output, int output_len, int *status, uint32_t* input);
+
+void start_conv();
+
+uint8_t get_register_status();
+
+uint32_t get_register_out_count();
+
+uint8_t get_register_read_check();
  
-uint8_t perform_convolution(uint64_t inputAddrValue,     
-                            uint64_t outputAddrValue, 
-                            uint16_t kernelAddrValue, 
-                            uint32_t lengthAddrValue, 
-                            uint16_t dilationAddrValue);
-
-
-/*
-
-TODO: figure out the rest of these things!
-Not sure about using the rest in any other functions?
-
- typedef struct {
-   __IO uint32_t OUT_COUNT;     // 0x70: Number of output elements ready
-   __I  uint8_t  READ_CHECK;    // 0x8D: DMA Read check status
-   __IO uint8_t  KERNEL_LEN;    // 0x8E: Kernel length 16 (1) or 8 (0)?
-   __IO uint8_t  MMIO_RESET;    // 0x8F: Reset MMIO 
- } ConvAccel_Type;
-*/
-
 
 #ifdef __cplusplus
 }

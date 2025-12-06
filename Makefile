@@ -54,4 +54,4 @@ BINARY_REL := $(patsubst $(realpath ../../sims/vcs)/%,%,$(abspath $(BINARY)))
 .PHONY: run
 run:
 	srun -p ee194 --pty make -C ../../sims/vcs run-binary LOADMEM=1 CONFIG=$(CONFIG) BINARY=$(BINARY_REL)
-	(cd $(CY_DIR)/sims/vcs && make run-binary-debug-hex CONFIG=$(CONFIG) LOADMEM=1 BINARY=$(BINARY))
+# 	(cd $(CY_DIR)/sims/vcs && make run-binary-debug-hex CONFIG=$(CONFIG) LOADMEM=1 BINARY=$(BINARY))

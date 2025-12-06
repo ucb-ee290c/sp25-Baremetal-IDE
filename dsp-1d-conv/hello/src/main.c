@@ -112,6 +112,8 @@ void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kern
 
 // Perform 1D convolution using the wrapper function
 void app_main() {
+  printf("In app_main\n");
+
   union Converter {
     float f;
     uint32_t u;
@@ -119,8 +121,12 @@ void app_main() {
   
   // Inputs and outputs
 
-  __attribute__((aligned(CACHELINE))) uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
-  __attribute__((aligned(CACHELINE))) uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
+  // __attribute__((aligned(CACHELINE))) uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
+  // __attribute__((aligned(CACHELINE))) uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
+
+  uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
+  uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
+
   
   uint32_t in_len[1] = {8};
   uint16_t in_dilation[1] = {1};
@@ -128,7 +134,7 @@ void app_main() {
   uint32_t test_out[23];
 
   // Start the convolution operation
-  printf("Starting Convolution");
+  printf("Starting Convolution\n");
 
   uint8_t status = perform_convolution((uint64_t) &in_arr,     
                                        (uint64_t) &test_out, 
@@ -137,32 +143,32 @@ void app_main() {
                                        (uint16_t) &in_dilation);
   
   if (status != 0x0) {
-      printf("Convolution Failed");
+      printf("Convolution Failed\n");
       printf("Error Status: %p\n", status);
       switch (status) {
-        case 0x01: printf("BUSY"); break;
-        case 0x02: printf("COMPL"); break;
-        case 0x04: printf("ERROR"); break;
-        case 0x08: printf("INVALID"); break;
-        case 0x10: printf("INFINITE"); break;
-        case 0x20: printf("OVERFLOW"); break;
-        case 0x40: printf("UNDERFLOW"); break;
-        case 0x80: printf("INEXACT"); break;
-        default: printf("UNKNOWN STATUS"); break;
+        case 0x01: printf("BUSY\n"); break;
+        case 0x02: printf("COMPL\n"); break;
+        case 0x04: printf("ERROR\n"); break;
+        case 0x08: printf("INVALID\n"); break;
+        case 0x10: printf("INFINITE\n"); break;
+        case 0x20: printf("OVERFLOW\n"); break;
+        case 0x40: printf("UNDERFLOW\n"); break;
+        case 0x80: printf("INEXACT\n"); break;
+        default: printf("UNKNOWN STATUS\n"); break;
       }
     }
 
-  printf("Convolution Finished!");
+  printf("Convolution Finished!\n");
   printf("Check status: %p\n", status);
 
   // Compare hardware output to software output
   
-  printf("Input (FP32): ");
+  printf("Input (FP32): \n");
   for (int i = 0; i < 16; i++) {
     printf("%#x ", in_arr[i]);
   }
   
-  printf("\nTest Output (FP32 binary): ");
+  printf("\nTest Output (FP32 binary): \n");
   
   // Print the results
   for (int i = 0; i < 23; i++) {
@@ -189,7 +195,7 @@ void app_main() {
   // uint32_t ref_out[8] = {0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000, 0x00000000}; // {2, 3, 4, 5, 6, 7, 8, 0} in FP16
   float ref_out[15] = {0, 0, 0 ,0 , 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0};
   union Converter converter;
-  printf("\nReference Output (FP16 binary): ");
+  printf("\nReference Output (FP16 binary): \n");
   for (int i = 0; i < 15; i++) {
       converter.f = ref_out[i];
       // printf("%f", (ref_out[i]));
@@ -201,30 +207,42 @@ void app_main() {
 
   
   if (memcmp(test_out, ref_out, 60) == 0) {
-      printf("[TEST PASSED]: Test Output matches Reference Output.");
+      printf("[TEST PASSED]: Test Output matches Reference Output.\n");
   } else {
-      printf("[TEST FAILED]: Test Output does not match Reference Output.");
+      printf("[TEST FAILED]: Test Output does not match Reference Output.\n");
   }
   printf("\n\n");
 }
 
 // Simple main function that just runs once
 int main() {
-    // Make sure we're on hart 0
-    uint64_t mhartid;
-    asm volatile ("csrr %0, mhartid" : "=r" (mhartid));
-    if (mhartid != 0) {
-        // If not on hart 0, just return
-        return 0;
-    }
-    
-    app_init();
+  // // Make sure we're on hart 0
+  // uint64_t mhartid;
+  // asm volatile ("csrr %0, mhartid" : "=r" (mhartid));
+  // if (mhartid != 0) {
+  //     // If not on hart 0, just return
+  //     return 0;
+  // }
+
+  
+  uint64_t mhartid = READ_CSR("mhartid");
+
+  printf("Hello world from hart %d: %d\n", mhartid, counter);
+  
+  // app_init();
+
+  while (1) {
+    printf("Before app_main in while loop\n");
+
     app_main();
-    
-    // Add a small delay to ensure output is printed
-    for (volatile int i = 0; i < 1000; i++);
-    
     return 0;
+  }
+  // app_main();
+  
+  // // Add a small delay to ensure output is printed
+  // for (volatile int i = 0; i < 1000; i++);
+  
+  // return 0;
 }
 /* USER CODE END PUC */
 

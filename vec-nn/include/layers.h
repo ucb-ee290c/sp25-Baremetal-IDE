@@ -151,7 +151,6 @@ void residual_add(
     requantization_params_t rqp
 );
 
-#endif
 /*---------------------------------------------*/
 /*                                             */
 /* Activation Layers                           */

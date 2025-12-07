@@ -1124,96 +1124,202 @@ void app_main() {
 
     const size_t in_elems   = Cin * H * W;
     const size_t out_elems  = Cin * H_out * W_out;
-    const size_t weight_len = Cin * (1 + 9); // bias + 3x3
+    const size_t weight_len = Cin * (4 + 9); // bias (int32 as 4 bytes) + 3x3
+
+    (void)in_elems;
+    (void)weight_len;
 
     // Allocate output buffers
-    int8_t *out_norelu = (int8_t *)calloc(out_elems, sizeof(int8_t));
-    int8_t *out_relu   = (int8_t *)calloc(out_elems, sizeof(int8_t));
-    int8_t *out_relu6  = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *outA_norelu = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *outA_relu   = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *outA_relu6  = (int8_t *)calloc(out_elems, sizeof(int8_t));
 
-    // Set up requant params: scales=1 (already in header), zp=0
-    requantization_params_t rq;
-    rq.scale      = (float *)dwconv_p1s1_5x5_c3_scales; // all 1.0f
-    rq.zero_point = 0;
+    int8_t *outB_norelu = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *outB_relu   = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *outB_relu6  = (int8_t *)calloc(out_elems, sizeof(int8_t));
 
-    printf("Starting conv! \n");
+    int8_t *out_residual = (int8_t *)calloc(out_elems, sizeof(int8_t));
 
-    // print_int8_matrix((int8_t *)dwconv_p1s1_5x5_c3_input, H, W);
+    if (!outA_norelu || !outA_relu || !outA_relu6 ||
+        !outB_norelu || !outB_relu || !outB_relu6 ||
+        !out_residual) {
+        fprintf(stderr, "Allocation failed\n");
+        return 1;
+    }
 
-    // --- Test without ReLU ---
+    // Set up requant params for Conv A
+    requantization_params_t rqA;
+    rqA.scale      = (float *)dwconv_p1s1_5x5_c3_scales;
+    rqA.zero_point = 0;
+
+    // Set up requant params for Conv B
+    requantization_params_t rqB;
+    rqB.scale      = (float *)dwconv_p1s1_5x5_c3_scales_b;
+    rqB.zero_point = 0;
+
+    // Requant params for residual add
+    requantization_params_t rqRes;
+    rqRes.scale      = (float *)dwconv_p1s1_5x5_c3_res_scales;
+    rqRes.zero_point = 0;
+
+    printf("Starting Conv A...\n");
+
+    // --- Conv A: no ReLU ---
     dwconv2D_3x3_int8(
         H, W, Cin,
         stride, padding,
         (const void *)dwconv_p1s1_5x5_c3_weights,
         (int8_t *)dwconv_p1s1_5x5_c3_input,   // cast away const for API
-        out_norelu,
+        outA_norelu,
         /*relu=*/0,
-        rq
+        rqA
     );
 
-    // print_int8_matrix(out_norelu, H, W);
-
-    printf("done conv! \n");
-
-    int err0 = compare_int8_buffers(
-        out_norelu,
+    int errA0 = compare_int8_buffers(
+        outA_norelu,
         dwconv_p1s1_5x5_c3_ref_norelu,
         out_elems
     );
-    printf("No-ReLU test: %s (%d mismatches)\n",
-           err0 == 0 ? "PASS" : "FAIL", err0);
+    printf("Conv A No-ReLU test: %s (%d mismatches)\n",
+           errA0 == 0 ? "PASS" : "FAIL", errA0);
 
-    // --- Test with ReLU ---
+    // --- Conv A: ReLU ---
     dwconv2D_3x3_int8(
         H, W, Cin,
         stride, padding,
         (const void *)dwconv_p1s1_5x5_c3_weights,
         (int8_t *)dwconv_p1s1_5x5_c3_input,
-        out_relu,
+        outA_relu,
         /*relu=*/1,
-        rq
+        rqA
     );
 
-    int err1 = compare_int8_buffers(
-        out_relu,
+    int errA1 = compare_int8_buffers(
+        outA_relu,
         dwconv_p1s1_5x5_c3_ref_relu,
         out_elems
     );
-    printf("ReLU test:    %s (%d mismatches)\n",
-           err1 == 0 ? "PASS" : "FAIL", err1);
+    printf("Conv A ReLU test:    %s (%d mismatches)\n",
+           errA1 == 0 ? "PASS" : "FAIL", errA1);
 
 #ifdef DWCONV_P1S1_5X5_C3_HAS_RELU6
-    int err2 = 0;
-    // --- Test with ReLU6 ---
+    // --- Conv A: ReLU6 ---
     dwconv2D_3x3_int8_relu6(
         H, W, Cin,
         stride, padding,
         (const void *)dwconv_p1s1_5x5_c3_weights,
         (int8_t *)dwconv_p1s1_5x5_c3_input,
-        out_relu6,
-        rq
+        outA_relu6,
+        rqA
     );
 
-    err2 = compare_int8_buffers(
-        out_relu6,
+    int errA2 = compare_int8_buffers(
+        outA_relu6,
         dwconv_p1s1_5x5_c3_ref_relu6,
         out_elems
     );
-    printf("ReLU6 test:   %s (%d mismatches)\n",
-           err2 == 0 ? "PASS" : "FAIL", err2);
+    printf("Conv A ReLU6 test:   %s (%d mismatches)\n",
+           errA2 == 0 ? "PASS" : "FAIL", errA2);
 #else
-    printf("ReLU6 test:   SKIPPED (regen headers with ReLU6 refs)\n");
+    int errA2 = 0;
+    printf("Conv A ReLU6 test:   SKIPPED\n");
 #endif
 
-    free(out_norelu);
-    free(out_relu);
-    free(out_relu6);
+    printf("\nStarting Conv B...\n");
 
-    return (err0 == 0 && err1 == 0
+    // --- Conv B: no ReLU ---
+    dwconv2D_3x3_int8(
+        H, W, Cin,
+        stride, padding,
+        (const void *)dwconv_p1s1_5x5_c3_weights_b,
+        (int8_t *)dwconv_p1s1_5x5_c3_input,
+        outB_norelu,
+        /*relu=*/0,
+        rqB
+    );
+
+    int errB0 = compare_int8_buffers(
+        outB_norelu,
+        dwconv_p1s1_5x5_c3_ref_b_norelu,
+        out_elems
+    );
+    printf("Conv B No-ReLU test: %s (%d mismatches)\n",
+           errB0 == 0 ? "PASS" : "FAIL", errB0);
+
+    // --- Conv B: ReLU ---
+    dwconv2D_3x3_int8(
+        H, W, Cin,
+        stride, padding,
+        (const void *)dwconv_p1s1_5x5_c3_weights_b,
+        (int8_t *)dwconv_p1s1_5x5_c3_input,
+        outB_relu,
+        /*relu=*/1,
+        rqB
+    );
+
+    int errB1 = compare_int8_buffers(
+        outB_relu,
+        dwconv_p1s1_5x5_c3_ref_b_relu,
+        out_elems
+    );
+    printf("Conv B ReLU test:    %s (%d mismatches)\n",
+           errB1 == 0 ? "PASS" : "FAIL", errB1);
+
 #ifdef DWCONV_P1S1_5X5_C3_HAS_RELU6
-            && err2 == 0
+    // --- Conv B: ReLU6 ---
+    dwconv2D_3x3_int8_relu6(
+        H, W, Cin,
+        stride, padding,
+        (const void *)dwconv_p1s1_5x5_c3_weights_b,
+        (int8_t *)dwconv_p1s1_5x5_c3_input,
+        outB_relu6,
+        rqB
+    );
+
+    int errB2 = compare_int8_buffers(
+        outB_relu6,
+        dwconv_p1s1_5x5_c3_ref_b_relu6,
+        out_elems
+    );
+    printf("Conv B ReLU6 test:   %s (%d mismatches)\n",
+           errB2 == 0 ? "PASS" : "FAIL", errB2);
+#else
+    int errB2 = 0;
+    printf("Conv B ReLU6 test:   SKIPPED\n");
 #endif
-    ) ? 0 : 1;
+
+    printf("\nStarting residual_add (A_norelu + B_norelu)...\n");
+
+    // Residual add uses the no-ReLU outputs of A and B
+    residual_add(
+        H_out, W_out, Cin,
+        outA_norelu, outB_norelu,
+        out_residual,
+        rqRes
+    );
+
+    int errR = compare_int8_buffers(
+        out_residual,
+        dwconv_p1s1_5x5_c3_res_ref,
+        out_elems
+    );
+    printf("Residual add test:   %s (%d mismatches)\n",
+           errR == 0 ? "PASS" : "FAIL", errR);
+
+    free(outA_norelu);
+    free(outA_relu);
+    free(outA_relu6);
+    free(outB_norelu);
+    free(outB_relu);
+    free(outB_relu6);
+    free(out_residual);
+
+    int ok =
+        (errA0 == 0 && errA1 == 0 && errA2 == 0 &&
+         errB0 == 0 && errB1 == 0 && errB2 == 0 &&
+         errR  == 0);
+
+    return;
 }
 /* USER CODE END PUC */
 

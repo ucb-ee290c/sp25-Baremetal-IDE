@@ -60,7 +60,8 @@ def depthwise_conv_int32(
 def requantize_int32_per_channel(
     acc_int32: torch.Tensor,  # [Cin, H_out, W_out]
     scales: torch.Tensor,     # [Cin] float32
-    relu: bool,
+    relu: bool = False,
+    relu6: bool = False,
 ) -> torch.Tensor:
     """
     Quantize int32 accumulator to int8 using per-channel scales:
@@ -68,20 +69,24 @@ def requantize_int32_per_channel(
         q[c, i, j] = round(acc[c, i, j] * scales[c])
 
     then clamp:
-        - no ReLU: [-128, 127]
-        - with ReLU: [0, 127]
+        - no ReLU:   [-128, 127]
+        - ReLU:      [0, 127]
+        - ReLU6:     [0, floor(6 / scale[c])] (still clamped to int8 range)
     """
     Cin = acc_int32.shape[0]
     acc_f = acc_int32.float()
     s = scales.view(Cin, 1, 1)  # broadcast to spatial dims
 
-    y = acc_f * s
-    y = torch.round(y)
+    y = torch.round(acc_f * s)
+    y = torch.clamp(y, -128, 127)
 
-    if relu:
-        y = torch.clamp(y, 0, 127)
-    else:
-        y = torch.clamp(y, -128, 127)
+    if relu6:
+        # q6[c] = floor(6 / scale[c]) per channel, capped at int8 max
+        q6 = torch.floor(6.0 / scales).clamp(max=127).view(Cin, 1, 1)
+        y = torch.clamp(y, min=0)
+        y = torch.minimum(y, q6)
+    elif relu:
+        y = torch.clamp(y, min=0, max=127)
 
     return y.to(torch.int8)
 
@@ -189,6 +194,7 @@ def generate_case(name, H, W, Cin, stride, padding, seed, out_dir):
     # Quantized outputs
     out_no_relu = requantize_int32_per_channel(acc_int32, scales, relu=False)
     out_relu    = requantize_int32_per_channel(acc_int32, scales, relu=True)
+    out_relu6   = requantize_int32_per_channel(acc_int32, scales, relu6=True)
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -211,6 +217,7 @@ def generate_case(name, H, W, Cin, stride, padding, seed, out_dir):
         f.write(f"#define DWCONV_{upper}_PADDING {padding}\n")
         f.write(f"#define DWCONV_{upper}_H_OUT {H_out}\n")
         f.write(f"#define DWCONV_{upper}_W_OUT {W_out}\n\n")
+        f.write(f"#define DWCONV_{upper}_HAS_RELU6 1\n\n")
 
         # Arrays:
         #   input:       [Cin][H][W]          -> flattened CHW
@@ -221,6 +228,7 @@ def generate_case(name, H, W, Cin, stride, padding, seed, out_dir):
         write_c_array(f, "int8_t",  f"dwconv_{name}_weights",    dw_weights.astype(np.int8))
         write_c_array(f, "int8_t",  f"dwconv_{name}_ref_norelu", out_no_relu.numpy())
         write_c_array(f, "int8_t",  f"dwconv_{name}_ref_relu",   out_relu.numpy())
+        write_c_array(f, "int8_t",  f"dwconv_{name}_ref_relu6",  out_relu6.numpy())
         write_c_array(f, "float",   f"dwconv_{name}_scales",     scales.numpy())
 
     print(f"Generated test case '{name}':")

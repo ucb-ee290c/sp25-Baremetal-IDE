@@ -152,3 +152,17 @@ void residual_add(
 );
 
 #endif
+/*---------------------------------------------*/
+/*                                             */
+/* Activation Layers                           */
+/*                                             */
+/*---------------------------------------------*/
+void relu6_int8(
+    size_t channels,
+    size_t inner_size,
+    const float *input,
+    int8_t *output,
+    requantization_params_t requant_params
+);
+
+#endif

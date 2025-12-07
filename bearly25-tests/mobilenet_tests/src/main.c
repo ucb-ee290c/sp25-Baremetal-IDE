@@ -17,6 +17,7 @@
 #include "main.h"
 #include <layers.h>
 #include <riscv_vector.h> 
+#include <stdlib.h>
 
 
 /* Private includes ----------------------------------------------------------*/
@@ -136,6 +137,32 @@ void print_vint16_m2(vint16m2_t vec, size_t n) {
         printf("%d ", buffer[i]);
     }
     printf("\n");
+}
+
+static void relu6_postprocess_single_channel(
+    int8_t *output,
+    size_t rows,
+    size_t stride,
+    float scale,
+    int32_t zero_point
+) {
+    size_t len = rows * stride;
+
+    /*
+     * Compute q6 = floor(6 / scale) + zp.
+     * scale is positive, so truncation via (int32_t) is equivalent to floor().
+     * This avoids pulling in libm for floorf.
+     */
+    int32_t q6 = (int32_t)((6.0f / scale) + (float)zero_point);
+    if (q6 > 127) q6 = 127;
+    if (q6 < -128) q6 = -128;
+
+    for (size_t i = 0; i < len; i++) {
+        int32_t v = output[i];
+        if (v < zero_point) v = zero_point;
+        if (v > q6) v = q6;
+        output[i] = (int8_t)v;
+    }
 }
 
 void pad_input_channel_(
@@ -933,6 +960,73 @@ void dwconv_3x3_int8_VCO_relu_(
     }
 }
 
+void vec_conv_c_code_relu6_(
+    size_t rows, size_t cols, 
+    size_t a_stride, size_t b_stride, 
+    const int8_t*k, 
+    const int8_t*a, 
+    int8_t* b, 
+    int32_t bias, 
+    int32_t zero_point, 
+    float scale
+) {
+    vec_conv_c_code_(rows, cols, a_stride, b_stride, k, a, b, bias, zero_point, scale);
+    relu6_postprocess_single_channel(b, rows, b_stride, scale, zero_point);
+}
+
+void vec_conv_c_code_stride2_relu6_(
+    size_t rows, size_t cols, 
+    size_t a_stride, size_t b_stride, 
+    const int8_t*k, 
+    const int8_t*a, 
+    int8_t* b, 
+    int32_t bias, 
+    int32_t zero_point, 
+    float scale
+) {
+    vec_conv_c_code_stride2_(rows, cols, a_stride, b_stride, k, a, b, bias, zero_point, scale);
+    relu6_postprocess_single_channel(b, rows, b_stride, scale, zero_point);
+}
+
+void dwconv_3x3_int8_VCO_relu6_(
+    size_t input_rows, size_t input_cols,
+    size_t stride, size_t padding,
+    size_t channels,
+    size_t a_stride, size_t b_stride,
+    const void *weights,
+    int8_t *input, 
+    int8_t *output,
+    requantization_params_t requant_params
+) {
+    const int8_t *in_conv; 
+    int8_t in_conv_buf [input_rows + 2*padding][input_cols + 2*padding];
+    size_t rows = (input_rows + 2*padding - 3)/stride + 1;
+    size_t cols = (input_cols + 2*padding - 3)/stride + 1;
+
+    size_t a_channel_size = (input_rows) * a_stride;
+    size_t b_channel_size = rows * b_stride;
+    const int8_t* w = (const int8_t*) ((const int32_t*) weights + channels);
+
+    for (size_t ch = 0; ch < channels; ch++) {
+        const int8_t *k_ch = w + ch * 9;
+        int8_t *a_ch = input + ch * a_channel_size;
+        int8_t *b_ch = output + ch * b_channel_size;
+
+        if (padding) {
+            pad_input_channel_(input_cols, input_rows, padding, padding, (const int8_t*) a_ch, (int8_t*) in_conv_buf);
+            in_conv = (int8_t*) in_conv_buf; 
+        } else {
+            in_conv = a_ch;
+        }
+
+        if (stride == 1) {
+            vec_conv_c_code_relu6_(rows, cols, (a_stride + 2*padding)*stride, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+        } else if (stride == 2) {
+            vec_conv_c_code_stride2_relu6_(rows, cols, (a_stride + 2*padding)*stride, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+        }
+    }
+}
+
 void dwconv2D_3x3_int8_ (
     size_t H, size_t W,
     size_t Cin,
@@ -973,6 +1067,31 @@ void dwconv2D_3x3_int8_ (
     }
 }
 
+void dwconv2D_3x3_int8_relu6 (
+    size_t H, size_t W,
+    size_t Cin,
+    size_t stride,
+    size_t padding,
+    const void *dw_weights,
+    int8_t *input,
+    int8_t *output,
+    requantization_params_t requant_params_dwconv
+) {
+    size_t H_out = (H + 2*padding - 3)/stride + 1;
+    size_t W_out = (W + 2*padding - 3)/stride + 1;
+
+    dwconv_3x3_int8_VCO_relu6_(
+        H, W,
+        stride, padding, 
+        Cin, 
+        W, W_out, 
+        dw_weights, 
+        input, 
+        output, 
+        requant_params_dwconv
+    );
+}
+
 static int compare_int8_buffers(const int8_t *a, const int8_t *b, size_t n) {
     int errors = 0;
     for (size_t i = 0; i < n; i++) {
@@ -1010,6 +1129,7 @@ void app_main() {
     // Allocate output buffers
     int8_t *out_norelu = (int8_t *)calloc(out_elems, sizeof(int8_t));
     int8_t *out_relu   = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *out_relu6  = (int8_t *)calloc(out_elems, sizeof(int8_t));
 
     // Set up requant params: scales=1 (already in header), zp=0
     requantization_params_t rq;
@@ -1062,10 +1182,38 @@ void app_main() {
     printf("ReLU test:    %s (%d mismatches)\n",
            err1 == 0 ? "PASS" : "FAIL", err1);
 
+#ifdef DWCONV_P1S1_5X5_C3_HAS_RELU6
+    int err2 = 0;
+    // --- Test with ReLU6 ---
+    dwconv2D_3x3_int8_relu6(
+        H, W, Cin,
+        stride, padding,
+        (const void *)dwconv_p1s1_5x5_c3_weights,
+        (int8_t *)dwconv_p1s1_5x5_c3_input,
+        out_relu6,
+        rq
+    );
+
+    err2 = compare_int8_buffers(
+        out_relu6,
+        dwconv_p1s1_5x5_c3_ref_relu6,
+        out_elems
+    );
+    printf("ReLU6 test:   %s (%d mismatches)\n",
+           err2 == 0 ? "PASS" : "FAIL", err2);
+#else
+    printf("ReLU6 test:   SKIPPED (regen headers with ReLU6 refs)\n");
+#endif
+
     free(out_norelu);
     free(out_relu);
+    free(out_relu6);
 
-    return (err0 == 0 && err1 == 0) ? 0 : 1;
+    return (err0 == 0 && err1 == 0
+#ifdef DWCONV_P1S1_5X5_C3_HAS_RELU6
+            && err2 == 0
+#endif
+    ) ? 0 : 1;
 }
 /* USER CODE END PUC */
 

@@ -136,4 +136,19 @@ void softmax_vec(
     size_t innerSize
 );
 
+
+/*---------------------------------------------*/
+/*                                             */
+/* Residual Add                                */
+/*                                             */
+/*---------------------------------------------*/
+
+void residual_add(
+    size_t rows, size_t cols, 
+    size_t channels, 
+    int8_t* a, int8_t* b, 
+    int8_t* output, 
+    requantization_params_t rqp
+);
+
 #endif

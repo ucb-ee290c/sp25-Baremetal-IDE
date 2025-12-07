@@ -4,7 +4,7 @@
 #include "ops/conv2D/conv2D.h"
 
 
-void conv2D_3x3_int8 (
+void dwconv2D_3x3_int8 (
     size_t H, size_t W,
     size_t Cin,
     size_t stride,
@@ -15,13 +15,14 @@ void conv2D_3x3_int8 (
     int relu,
     requantization_params_t requant_params_dwconv
 ) {
-    size_t H_out = (H - 3)/stride + 1;
-    size_t W_out = (W - 3)/stride + 1;
+    size_t H_out = (H + 2*padding - 3)/stride + 1;
+    size_t W_out = (W + 2*padding - 3)/stride + 1;
 
 
     if (!relu) {
         dwconv_3x3_int8_VCO(
-            H_out, W_out, 
+            H, W,
+            stride, padding, 
             Cin, 
             W, W_out, 
             dw_weights, 
@@ -31,7 +32,8 @@ void conv2D_3x3_int8 (
         );
     } else {
         dwconv_3x3_int8_VCO_relu(
-            H_out, W_out, 
+            H, W,
+            stride, padding, 
             Cin, 
             W, W_out, 
             dw_weights, 

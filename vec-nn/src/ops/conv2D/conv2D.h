@@ -5,7 +5,8 @@
 #include "layers.h"
 
 void dwconv_3x3_int8_VCO(
-    size_t rows, size_t cols,
+    size_t input_rows, size_t input_cols,
+    size_t stride, size_t padding,
     size_t channels,
     size_t a_stride, size_t b_stride,
     const void *weights,
@@ -15,7 +16,8 @@ void dwconv_3x3_int8_VCO(
 );
 
 void dwconv_3x3_int8_VCO_relu(
-    size_t rows, size_t cols,
+    size_t input_rows, size_t input_cols,
+    size_t stride, size_t padding,
     size_t channels,
     size_t a_stride, size_t b_stride,
     const void *weights,

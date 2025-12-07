@@ -1,12 +1,201 @@
-#include "ops/conv2D/conv2D.h"
-#include "ops/padding/padding.h"
-
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include <layers.h>
 #include <riscv_vector.h> 
-#include <stdint.h>
-#include "stdio.h"
-#include "string.h"
 
-void vec_conv_c_code(
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* USER CODE BEGIN PV */
+
+uint8_t counter = 0;
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+/* USER CODE BEGIN PFP */
+
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN PUC */
+
+// void dwconv2D_3x3_int8 (
+//     size_t H, size_t W,
+//     size_t Cin,
+//     size_t stride,
+//     size_t padding,
+//     const void *dw_weights,  // Cin*(1+9) int8_t
+//     int8_t *input,           // [Cin][H][W]
+//     int8_t *output,          // [Cin][H_out][W_out]
+//     int relu,
+//     requantization_params_t requant_params_dwconv
+// );
+
+#include "dwconv_p1s1_5x5_c3.h"   
+
+void print_int8_matrix(
+                    int8_t *arr,
+                       size_t rows,
+                       size_t cols)
+{
+    printf("matrix: \n");
+
+    for (size_t r = 0; r < rows; r++) {
+        printf("  [");
+        for (size_t c = 0; c < cols; c++) {
+            int idx = r * cols + c;
+            printf("%4d", arr[idx]);
+            if (c + 1 < cols) printf(", ");
+        }
+        printf("]\n");
+    }
+}
+
+void print_vint32_m4(vint32m4_t vec, size_t n) {
+    // Configure VL (vector length) for 32-bit elements, LMUL=4
+    size_t vl = __riscv_vsetvl_e32m4(n);
+
+    // Temporary buffer to hold vector contents (C99 VLA)
+    int32_t buffer[vl];
+
+    // Store vector elements into the buffer
+    __riscv_vse32_v_i32m4(buffer, vec, vl);
+
+    // Print each element
+    for (size_t i = 0; i < vl; ++i) {
+        printf("%d ", buffer[i]);
+    }
+    printf("\n");
+}
+
+void print_vint8_m1(vint8m1_t vec, size_t n) {
+    // Configure VL (vector length) for 32-bit elements, LMUL=4
+    size_t vl = __riscv_vsetvl_e8m1(n);
+
+    // Temporary buffer to hold vector contents (C99 VLA)
+    int8_t buffer[vl];
+
+    // Store vector elements into the buffer
+    __riscv_vse8_v_i8m1(buffer, vec, vl);
+
+    // Print each element
+    for (size_t i = 0; i < vl; ++i) {
+        printf("%d ", buffer[i]);
+    }
+    printf("\n");
+}
+
+void print_vint16_m2(vint16m2_t vec, size_t n) {
+    // Configure VL (vector length) for 32-bit elements, LMUL=4
+    size_t vl = __riscv_vsetvl_e16m2(n);
+
+    // Temporary buffer to hold vector contents (C99 VLA)
+    int16_t buffer[vl];
+
+    // Store vector elements into the buffer
+    __riscv_vse16_v_i16m2(buffer, vec, vl);
+
+    // Print each element
+    for (size_t i = 0; i < vl; ++i) {
+        printf("%d ", buffer[i]);
+    }
+    printf("\n");
+}
+
+void pad_input_channel_(
+    size_t input_cols, 
+    size_t input_rows, 
+    size_t x_padding, 
+    size_t y_padding, 
+    const int8_t* input, 
+    int8_t* output
+) 
+{
+    // printf("output: %p \n", output);
+    register vint8m8_t temp;
+    register size_t output_cols = input_cols + 2*x_padding;
+    register size_t output_rows = input_rows + 2*y_padding;
+    register size_t o_cols = output_cols - x_padding;
+    register int32_t vl;
+    do {
+        register const int8_t* i = input;
+        register int8_t* o = output; 
+        vl = __riscv_vsetvl_e8m8(o_cols);
+        register size_t rows = input_rows;
+
+        // add padding in the top of vl-columns
+        for (size_t i = 0; i < y_padding; i++) {
+            __riscv_vse8_v_i8m8(o, __riscv_vmv_v_x_i8m8(0, vl), vl); o += output_cols;
+        }
+
+        do { 
+            if (o_cols == output_cols - x_padding) {
+                temp = __riscv_vle8_v_i8m8(i, vl);
+                vint8m8_t zeros = __riscv_vmv_v_x_i8m8(0, vl);
+                temp = __riscv_vslideup_vx_i8m8(zeros, temp, x_padding, vl);
+            }
+            __riscv_vse8_v_i8m8(o, temp, vl); o += output_cols;
+            i += input_cols;
+            rows -= 1;
+        } while (rows != 0);
+
+        // add padding in the bottom of vl-columns
+        for (size_t i = 0; i < y_padding; i++) {
+            __riscv_vse8_v_i8m8(o, __riscv_vmv_v_x_i8m8(0, vl), vl); o += output_cols;
+        }
+
+        input = (o_cols == output_cols - x_padding) ? input + vl - x_padding : input + vl;
+        o_cols -= vl; 
+        output = output + vl;
+
+    } while (o_cols != 0);
+
+    // printf("output: %p \n", output);
+    for (size_t r = 0; r < output_rows; r++){
+        vl = __riscv_vsetvl_e8m8(x_padding);
+        __riscv_vse8_v_i8m8(output, __riscv_vmv_v_x_i8m8(0, vl), vl);
+        output += output_cols;
+    }
+}
+
+
+void vec_conv_c_code_(
     size_t rows, size_t cols, 
     size_t a_stride, size_t b_stride, 
     const int8_t*k, 
@@ -51,6 +240,7 @@ void vec_conv_c_code(
         vl = __riscv_vsetvl_e8m1(cols);
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap, vl), vl);
+        print_vint16_m2(vload0, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl); ap += a_stride;
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_1, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k1, vload1, vl); ap_1 += a_stride;
@@ -59,6 +249,7 @@ void vec_conv_c_code(
 
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap, vl), vl);
+        print_vint16_m2(vload0, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k3, vload0, vl); ap += a_stride;
         vrow1 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_1, vl), vl);
@@ -69,17 +260,19 @@ void vec_conv_c_code(
         vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k2, vload2, vl);
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap, vl), vl);
+        print_vint16_m2(vload0, vl);
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_1, vl), vl);
         vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_2, vl), vl);
 
-        // printf("cols: %d \n", cols);
+        printf("cols: %d \n", cols);
 
         do {
+            printf("k: %d \n", k6);
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl); ap += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl); ap_1 += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k8, vload2, vl); ap_2 += a_stride;
 
-            // print_vint32_m4(vrow0, vl);
+            print_vint32_m4(vrow0, vl);
             
             vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow0, vl);
             vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -109,7 +302,7 @@ void vec_conv_c_code(
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k4, vload1, vl);
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k5, vload2, vl);
 
-            // print_vint32_m4(vrow1, vl);
+            print_vint32_m4(vrow1, vl);
             
             vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow1, vl);
             vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -134,7 +327,7 @@ void vec_conv_c_code(
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k8, vload2, vl);
 
-        // print_vint32_m4(vrow0, vl);
+        print_vint32_m4(vrow0, vl);
         
         vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow0, vl);
         vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -157,7 +350,7 @@ void vec_conv_c_code(
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_2, vl), vl);
             vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k8, vload2, vl);
 
-            // print_vint32_m4(vrow1, vl);
+            print_vint32_m4(vrow1, vl);
             
             vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow1, vl);
             vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -177,7 +370,7 @@ void vec_conv_c_code(
     
 }
 
-void vec_conv_c_code_relu(
+void vec_conv_c_code_relu_(
     size_t rows, size_t cols, 
     size_t a_stride, size_t b_stride, 
     const int8_t*k, 
@@ -348,7 +541,7 @@ void vec_conv_c_code_relu(
     } while (cols != 0);
 }
 
-void vec_conv_c_code_stride2(
+void vec_conv_c_code_stride2_(
     size_t rows, size_t cols, 
     size_t a_stride, size_t b_stride, 
     const int8_t*k, 
@@ -519,7 +712,7 @@ void vec_conv_c_code_stride2(
     
 }
 
-void vec_conv_c_code_stride2_relu(
+void vec_conv_c_code_stride2_relu_(
     size_t rows, size_t cols, 
     size_t a_stride, size_t b_stride, 
     const int8_t*k, 
@@ -690,7 +883,7 @@ void vec_conv_c_code_stride2_relu(
     } while (cols != 0);
 }
 
-void dwconv_3x3_int8_VCO(
+void dwconv_3x3_int8_VCO_(
     size_t input_rows, size_t input_cols,
     size_t stride, size_t padding,
     size_t channels,
@@ -719,22 +912,30 @@ void dwconv_3x3_int8_VCO(
         int8_t *a_ch = input + ch * a_channel_size;
         int8_t *b_ch = output + ch * b_channel_size;
 
+        print_int8_matrix(k_ch, 3, 3);
+
         if (padding) {
-            pad_input_channel(input_cols, input_rows, padding, padding, (const int8_t*) a_ch, (int8_t*) in_conv_buf);
+            printf("Padding \n");
+            print_int8_matrix(a_ch, input_cols, input_rows);
+            pad_input_channel_(input_cols, input_rows, padding, padding, (const int8_t*) a_ch, (int8_t*) in_conv_buf);
+            printf("Done Padding \n");
             in_conv = (int8_t*) in_conv_buf; 
+            print_int8_matrix(in_conv, input_cols + 2, input_rows + 2);
         } else {
             in_conv = a_ch;
         }
 
         if (stride == 1) {
-            vec_conv_c_code(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+            printf("Conv \n");
+            vec_conv_c_code_(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+            printf("Done Conv \n");
         } else if (stride == 2) {
-            vec_conv_c_code_stride2(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+            vec_conv_c_code_stride2_(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
         }
     }
 }
 
-void dwconv_3x3_int8_VCO_relu(
+void dwconv_3x3_int8_VCO_relu_(
     size_t input_rows, size_t input_cols,
     size_t stride, size_t padding,
     size_t channels,
@@ -763,17 +964,190 @@ void dwconv_3x3_int8_VCO_relu(
         int8_t *a_ch = input + ch * a_channel_size;
         int8_t *b_ch = output + ch * b_channel_size;
 
+        print_int8_matrix(k_ch, 3, 3);
+
         if (padding) {
-            pad_input_channel(input_cols, input_rows, padding, padding, (const int8_t*) a_ch, (int8_t*) in_conv_buf);
+            pad_input_channel_(input_cols, input_rows, padding, padding, (const int8_t*) a_ch, (int8_t*) in_conv_buf);
             in_conv = (int8_t*) in_conv_buf; 
         } else {
             in_conv = a_ch;
         }
 
         if (stride == 1) {
-            vec_conv_c_code_relu(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+            vec_conv_c_code_relu_(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
         } else if (stride == 2) {
-            vec_conv_c_code_stride2_relu(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
+            vec_conv_c_code_stride2_relu_(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
         }
     }
+}
+
+void dwconv2D_3x3_int8_ (
+    size_t H, size_t W,
+    size_t Cin,
+    size_t stride,
+    size_t padding, // 0 for valid, 1 for same, 2 for full (NOT SUPPORTED YET)
+    const void *dw_weights,  // length = Cin*(1 + 9)
+    int8_t *input,       // CHW: [Cin][H][W]
+    int8_t *output,            // CHW: [Cout][H_out][W_out]
+    int relu,
+    requantization_params_t requant_params_dwconv
+) {
+    size_t H_out = (H + 2*padding - 3)/stride + 1;
+    size_t W_out = (W + 2*padding - 3)/stride + 1;
+
+
+    if (!relu) {
+        dwconv_3x3_int8_VCO_(
+            H, W,
+            stride, padding, 
+            Cin, 
+            W, W_out, 
+            dw_weights, 
+            input, 
+            output, 
+            requant_params_dwconv
+        );
+    } else {
+        dwconv_3x3_int8_VCO_relu_(
+            H, W,
+            stride, padding, 
+            Cin, 
+            W, W_out, 
+            dw_weights, 
+            input, 
+            output, 
+            requant_params_dwconv
+        );
+    }
+}
+
+static int compare_int8_buffers(const int8_t *a, const int8_t *b, size_t n) {
+    int errors = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (a[i] != b[i]) {
+            if (errors < 16) { // don’t spam too much
+                printf("  Mismatch at %zu: got %d, expected %d\n",
+                       i, (int)a[i], (int)b[i]);
+            }
+            errors++;
+        }
+    }
+    return errors;
+}
+
+
+
+void app_init() {
+  // torch::executor::runtime_init();
+
+}
+
+void app_main() {
+    const size_t H       = DWCONV_P1S1_5X5_C3_H;
+    const size_t W       = DWCONV_P1S1_5X5_C3_W;
+    const size_t Cin     = DWCONV_P1S1_5X5_C3_CIN;
+    const size_t stride  = DWCONV_P1S1_5X5_C3_STRIDE;
+    const size_t padding = DWCONV_P1S1_5X5_C3_PADDING;
+    const size_t H_out   = DWCONV_P1S1_5X5_C3_H_OUT;
+    const size_t W_out   = DWCONV_P1S1_5X5_C3_W_OUT;
+
+    const size_t in_elems   = Cin * H * W;
+    const size_t out_elems  = Cin * H_out * W_out;
+    const size_t weight_len = Cin * (1 + 9); // bias + 3x3
+
+    // Allocate output buffers
+    int8_t *out_norelu = (int8_t *)calloc(out_elems, sizeof(int8_t));
+    int8_t *out_relu   = (int8_t *)calloc(out_elems, sizeof(int8_t));
+
+    // Set up requant params: scales=1 (already in header), zp=0
+    requantization_params_t rq;
+    rq.scale      = (float *)dwconv_p1s1_5x5_c3_scales; // all 1.0f
+    rq.zero_point = 0;
+
+    printf("Starting conv! \n");
+
+    // print_int8_matrix((int8_t *)dwconv_p1s1_5x5_c3_input, H, W);
+
+    // --- Test without ReLU ---
+    dwconv2D_3x3_int8(
+        H, W, Cin,
+        stride, padding,
+        (const void *)dwconv_p1s1_5x5_c3_weights,
+        (int8_t *)dwconv_p1s1_5x5_c3_input,   // cast away const for API
+        out_norelu,
+        /*relu=*/0,
+        rq
+    );
+
+    // print_int8_matrix(out_norelu, H, W);
+
+    printf("done conv! \n");
+
+    int err0 = compare_int8_buffers(
+        out_norelu,
+        dwconv_p1s1_5x5_c3_ref_norelu,
+        out_elems
+    );
+    printf("No-ReLU test: %s (%d mismatches)\n",
+           err0 == 0 ? "PASS" : "FAIL", err0);
+
+    // --- Test with ReLU ---
+    dwconv2D_3x3_int8(
+        H, W, Cin,
+        stride, padding,
+        (const void *)dwconv_p1s1_5x5_c3_weights,
+        (int8_t *)dwconv_p1s1_5x5_c3_input,
+        out_relu,
+        /*relu=*/1,
+        rq
+    );
+
+    int err1 = compare_int8_buffers(
+        out_relu,
+        dwconv_p1s1_5x5_c3_ref_relu,
+        out_elems
+    );
+    printf("ReLU test:    %s (%d mismatches)\n",
+           err1 == 0 ? "PASS" : "FAIL", err1);
+
+    free(out_norelu);
+    free(out_relu);
+
+    return (err0 == 0 && err1 == 0) ? 0 : 1;
+}
+/* USER CODE END PUC */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(int argc, char **argv) {
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Configure the system clock */
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */  
+  /* USER CODE BEGIN Init */
+  app_init();
+  /* USER CODE END Init */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  app_main();
+  return 0;
+  /* USER CODE END WHILE */
+}
+
+/*
+ * Main function for secondary harts
+ * 
+ * Multi-threaded programs should provide their own implementation.
+ */
+void __attribute__((weak, noreturn)) __main(void) {
+  while (1) {
+   asm volatile ("wfi");
+  }
 }

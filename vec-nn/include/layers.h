@@ -70,7 +70,7 @@ void quant_fully_connected_int8 (
 /* 2D Convolution Layers                       */
 /*                                             */
 /*---------------------------------------------*/
-void conv2D_3x3_int8 (
+void dwconv2D_3x3_int8 (
     size_t H, size_t W,
     size_t Cin,
     size_t stride,

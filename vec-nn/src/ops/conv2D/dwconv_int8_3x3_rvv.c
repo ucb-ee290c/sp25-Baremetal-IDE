@@ -359,7 +359,7 @@ void vec_conv_c_code_stride2(
     float scale
 ) {
     register size_t row_check = rows;
-    row_check -= 2;
+    row_check -= 1;
     register size_t row_count;
     register int rows_odd = rows & 1;
 
@@ -384,13 +384,13 @@ void vec_conv_c_code_stride2(
     int8_t* bp; 
 
     do {
-        register size_t vl = __riscv_vsetvl_e32m4((cols + 1)/2);
+        register size_t vl = __riscv_vsetvl_e32m4(cols);
         ap = a; ap_1 = ap + 1; ap_2 = ap + 2;
         bp = b; 
         row_count = row_check; 
         vbias = __riscv_vmv_v_x_i32m4(bias, vl);
 
-        vl = __riscv_vsetvl_e8m1((cols+1)/2);
+        vl = __riscv_vsetvl_e8m1(cols);
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl); ap += a_stride;
@@ -402,13 +402,10 @@ void vec_conv_c_code_stride2(
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k3, vload0, vl); ap += a_stride;
-        vrow1 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k4, vload1, vl); ap_1 += a_stride;
-        vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k1, vload1, vl);
         vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k5, vload2, vl); ap_2 += a_stride;
-        vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k2, vload2, vl);
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
@@ -420,8 +417,6 @@ void vec_conv_c_code_stride2(
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl); ap += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl); ap_1 += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k8, vload2, vl); ap_2 += a_stride;
-
-            // print_vint32_m4(vrow0, vl);
             
             vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow0, vl);
             vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -432,10 +427,6 @@ void vec_conv_c_code_stride2(
             vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
             __riscv_vse8_v_i8m1(bp, vout8, vl); bp += b_stride;
 
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k3, vload0, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k4, vload1, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k5, vload2, vl);
-
             vrow0 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
             vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl); ap += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k1, vload1, vl);
@@ -443,40 +434,20 @@ void vec_conv_c_code_stride2(
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k2, vload2, vl);
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl); ap_2 += a_stride;             
             
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k6, vload0, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k7, vload1, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k8, vload2, vl);
-
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k3, vload0, vl);
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k4, vload1, vl);
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k5, vload2, vl);
 
-            // print_vint32_m4(vrow1, vl);
-            
-            vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow1, vl);
-            vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
-            vfacc = __riscv_vfmax_vf_f32m4(vfacc, vout_min_minus_zp, vl);
-            vfacc = __riscv_vfmin_vf_f32m4(vfacc, vout_max_minus_zp, vl);
-            vout16 = __riscv_vfncvt_x_f_w_i16m2(vfacc, vl);
-            vout16 = __riscv_vadd_vx_i16m2(vout16, zero_point, vl);
-            vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
-            __riscv_vse8_v_i8m1(bp, vout8, vl); bp += b_stride;
-
-            vrow1 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
             vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k1, vload1, vl);
             vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k2, vload2, vl);
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl);
 
-            row_count -= 2;
+            row_count -= 1;
         } while (row_count != 0);
 
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k8, vload2, vl);
-
-        // print_vint32_m4(vrow0, vl);
         
         vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow0, vl);
         vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -487,33 +458,9 @@ void vec_conv_c_code_stride2(
         vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
         __riscv_vse8_v_i8m1(bp, vout8, vl); bp += b_stride;
 
-        if (!rows_odd) {
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k3, vload0, vl); ap += a_stride;
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k4, vload1, vl); ap_1 += a_stride;
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k5, vload2, vl); ap_2 += a_stride;
-
-            vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k6, vload0, vl);
-            vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k7, vload1, vl);
-            vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k8, vload2, vl);
-
-            // print_vint32_m4(vrow1, vl);
-            
-            vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow1, vl);
-            vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
-            vfacc = __riscv_vfmax_vf_f32m4(vfacc, vout_min_minus_zp, vl);
-            vfacc = __riscv_vfmin_vf_f32m4(vfacc, vout_max_minus_zp, vl);
-            vout16 = __riscv_vfncvt_x_f_w_i16m2(vfacc, vl);
-            vout16 = __riscv_vadd_vx_i16m2(vout16, zero_point, vl);
-            vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
-            __riscv_vse8_v_i8m1(bp, vout8, vl);
-
-        }
-        a += vl;
+        a += 2*vl;
         b += vl;
-        cols -= vl;
+        cols = cols - vl;
 
     } while (cols != 0);
     
@@ -530,7 +477,7 @@ void vec_conv_c_code_stride2_relu(
     float scale
 ) {
     register size_t row_check = rows;
-    row_check -= 2;
+    row_check -= 1;
     register size_t row_count;
     register int rows_odd = rows & 1;
 
@@ -554,7 +501,6 @@ void vec_conv_c_code_stride2_relu(
     const int8_t* ap; const int8_t* ap_1; const int8_t* ap_2;
     int8_t* bp; 
 
-
     do {
         register size_t vl = __riscv_vsetvl_e32m4(cols);
         ap = a; ap_1 = ap + 1; ap_2 = ap + 2;
@@ -574,13 +520,10 @@ void vec_conv_c_code_stride2_relu(
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k3, vload0, vl); ap += a_stride;
-        vrow1 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k4, vload1, vl); ap_1 += a_stride;
-        vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k1, vload1, vl);
         vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k5, vload2, vl); ap_2 += a_stride;
-        vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k2, vload2, vl);
 
         vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
         vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
@@ -592,8 +535,6 @@ void vec_conv_c_code_stride2_relu(
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl); ap += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl); ap_1 += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k8, vload2, vl); ap_2 += a_stride;
-
-            // print_vint32_m4(vrow0, vl);
             
             vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow0, vl);
             vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
@@ -604,10 +545,6 @@ void vec_conv_c_code_stride2_relu(
             vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
             __riscv_vse8_v_i8m1(bp, vout8, vl); bp += b_stride;
 
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k3, vload0, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k4, vload1, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k5, vload2, vl);
-
             vrow0 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
             vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl); ap += a_stride;
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k1, vload1, vl);
@@ -615,33 +552,15 @@ void vec_conv_c_code_stride2_relu(
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k2, vload2, vl);
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl); ap_2 += a_stride;             
             
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k6, vload0, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k7, vload1, vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k8, vload2, vl);
-
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k3, vload0, vl);
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k4, vload1, vl);
             vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k5, vload2, vl);
 
-            // print_vint32_m4(vrow1, vl);
-            
-            vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow1, vl);
-            vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
-            vfacc = __riscv_vfmax_vf_f32m4(vfacc, vout_min_minus_zp, vl);
-            vfacc = __riscv_vfmin_vf_f32m4(vfacc, vout_max_minus_zp, vl);
-            vout16 = __riscv_vfncvt_x_f_w_i16m2(vfacc, vl);
-            vout16 = __riscv_vadd_vx_i16m2(vout16, zero_point, vl);
-            vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
-            __riscv_vse8_v_i8m1(bp, vout8, vl); bp += b_stride;
-
-            vrow1 = __riscv_vwmacc_vx_i32m4(vbias, k0, vload0, vl);
             vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k1, vload1, vl);
             vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k2, vload2, vl);
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl);
 
-            row_count -= 2;
+            row_count -= 1;
         } while (row_count != 0);
 
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl);
@@ -659,31 +578,7 @@ void vec_conv_c_code_stride2_relu(
         vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
         __riscv_vse8_v_i8m1(bp, vout8, vl); bp += b_stride;
 
-        if (!rows_odd) {
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k3, vload0, vl); ap += a_stride;
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k4, vload1, vl); ap_1 += a_stride;
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k5, vload2, vl); ap_2 += a_stride;
-
-            vload0 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k6, vload0, vl);
-            vload1 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_1, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k7, vload1, vl);
-            vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vlse8_v_i8m1(ap_2, 2, vl), vl);
-            vrow1 = __riscv_vwmacc_vx_i32m4(vrow1, k8, vload2, vl);
-
-            // print_vint32_m4(vrow1, vl);
-            
-            vfacc = __riscv_vfcvt_f_x_v_f32m4(vrow1, vl);
-            vfacc = __riscv_vfmul_vf_f32m4(vfacc, scale, vl);
-            vfacc = __riscv_vfmax_vf_f32m4(vfacc, vout_min_minus_zp, vl);
-            vfacc = __riscv_vfmin_vf_f32m4(vfacc, vout_max_minus_zp, vl);
-            vout16 = __riscv_vfncvt_x_f_w_i16m2(vfacc, vl);
-            vout16 = __riscv_vadd_vx_i16m2(vout16, zero_point, vl);
-            vout8 = __riscv_vncvt_x_x_w_i8m1(vout16, vl);
-            __riscv_vse8_v_i8m1(bp, vout8, vl);
-
-        }
-        a += vl;
+        a += 2*vl;
         b += vl;
         cols -= vl;
 

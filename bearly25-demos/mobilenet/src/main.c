@@ -340,5 +340,6 @@ int main(void)
             top = i;
         }
     }
+    printf("Top-1 class: %d  logit: %.4f\n", top, logits_f32[top]);
     return top;
 }

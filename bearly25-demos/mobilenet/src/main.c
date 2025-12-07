@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../include/model_params_self.h"
+#include "../include/inputs.h"
 #include "layers.h"
 
 /* -------------------------------------------------------------------------- */
@@ -113,6 +114,11 @@ static void run_block(
         after_expand = buf0;
     }
 
+    printf("After expansion: h=%zu w=%zu ch=%zu\n", in_h, in_w, hidden_ch);
+
+    printf("Next depthwise input dimensions:= h=%zu w=%zu ch=%zu\n", in_h, in_w, hidden_ch);
+    printf("Next depthwise stride and padding:= stride=%zu padding=%d\n", cfg->stride, 1);
+
     /* 2) Depthwise 3x3 stride {1,2} with SAME padding */
     const size_t dw_out_h = (in_h + cfg->stride - 1) / cfg->stride;
     const size_t dw_out_w = (in_w + cfg->stride - 1) / cfg->stride;
@@ -128,6 +134,8 @@ static void run_block(
         rq_hidden);
     relu6_apply_int8(buf1, hidden_ch, dw_out_h, dw_out_w, &rq_hidden);
 
+    printf("After depthwise conv: h=%zu w=%zu ch=%zu\n", dw_out_h, dw_out_w, hidden_ch);
+
     /* 3) Pointwise projection 1x1 */
     pointwise_conv1x1_int8(
         dw_out_h, dw_out_w,
@@ -136,6 +144,8 @@ static void run_block(
         buf1, buf0,
         cfg->rq);
     relu6_apply_int8(buf0, cfg->out_ch, dw_out_h, dw_out_w, cfg->rq);
+
+    printf("After pointwise conv: h=%zu w=%zu ch=%zu\n", dw_out_h, dw_out_w, cfg->out_ch);
 
     /* 4) Residual */
     if (cfg->use_residual && cfg->stride == 1 && in_ch == cfg->out_ch) {
@@ -148,6 +158,7 @@ static void run_block(
             *cfg->rq);
     }
 
+    printf("After residual add: h=%zu w=%zu ch=%zu\n", dw_out_h, dw_out_w, cfg->out_ch);
     *out = buf0;
     *out_h = dw_out_h;
     *out_w = dw_out_w;
@@ -228,6 +239,8 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
     relu6_apply_int8(buf0, 32, stem_h, stem_w, &rq_stem);
     h = stem_h; w = stem_w; ch = 32;
 
+    printf("Mobilenet forward checkpoint 1 reached.\n");
+
     /* Inverted residual stack */
     static const block_desc_t blocks[] = {
         {1, 16, 1, 0, NULL, blocks_0_net_0_0_wb_q, blocks_0_net_1_0_wb_q, &rq_block0},
@@ -249,8 +262,11 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
         {6, 320, 1, 0, blocks_16_net_0_0_wb_q, blocks_16_net_1_0_wb_q, blocks_16_net_2_0_wb_q, &rq_block16},
     };
 
+    printf("Mobilenet forward checkpoint 2 reached.\n");
+
     int8_t *cur = buf0;
     for (size_t i = 0; i < sizeof(blocks) / sizeof(blocks[0]); ++i) {
+        printf("Running block %zu: in h=%zu w=%zu ch=%zu\n", i, h, w, ch);
         int8_t *out = NULL;
         run_block(&blocks[i],
                   h, w, ch,
@@ -261,6 +277,8 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
                   &h, &w, &ch);
         cur = out;
     }
+
+    printf("Mobilenet forward checkpoint 3 reached.\n");
 
     /* Head: 1x1 320->1280 */
     pointwise_conv1x1_int8(
@@ -296,23 +314,31 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
         qp_logits);
 }
 
-
 int main(void)
 {
     static float input_f32[BATCHES * 3 * 224 * 224] = {0};
     static float logits_f32[BATCHES * 10];
+
+    printf("Starting MobileNet\n");
+
+    /* Load first test sample from inputs.h into float buffer */
+    const size_t total = INPUT_C * INPUT_H * INPUT_W;
+    for (size_t i = 0; i < total; ++i) {
+        input_f32[i] = (float)input_samples[0][i];
+    }
+
+    printf("Loaded Sample\n");
+
     mobilenet_forward(input_f32, logits_f32);
-    return 0;
-}
 
+    printf("Completed Forward Pass\n");
 
-/*
- * Main function for secondary harts
- * 
- * Multi-threaded programs should provide their own implementation.
- */
-void __attribute__((weak, noreturn)) __main(void) {
-  while (1) {
-   asm volatile ("wfi");
-  }
+    /* Compute argmax of logits for quick sanity check */
+    int top = 0;
+    for (int i = 1; i < 10; ++i) {
+        if (logits_f32[i] > logits_f32[top]) {
+            top = i;
+        }
+    }
+    return top;
 }

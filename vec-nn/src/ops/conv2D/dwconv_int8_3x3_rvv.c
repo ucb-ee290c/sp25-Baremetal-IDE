@@ -128,7 +128,7 @@ void vec_conv_c_code(
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_2, vl), vl);
 
             row_count -= 2;
-        } while (row_count != 0);
+        } while (row_count > 0 && (row_count != SIZE_MAX));
 
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl);
@@ -300,7 +300,7 @@ void vec_conv_c_code_relu(
             vload2 = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ap_2, vl), vl);
 
             row_count -= 2;
-        } while (row_count != 0);
+        } while (row_count > 0 && (row_count != SIZE_MAX));
 
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k6, vload0, vl);
         vrow0 = __riscv_vwmacc_vx_i32m4(vrow0, k7, vload1, vl);

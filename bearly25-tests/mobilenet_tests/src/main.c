@@ -1106,6 +1106,7 @@ static int compare_int8_buffers(const int8_t *a, const int8_t *b, size_t n) {
     return errors;
 }
 
+#undef DWCONV_P1S1_5X5_C3_HAS_RELU6
 
 
 void app_init() {

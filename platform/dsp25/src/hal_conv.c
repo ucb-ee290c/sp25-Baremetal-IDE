@@ -51,7 +51,9 @@ return *ptr;
 
 void conv_init() {
   // All accesses now use MMIO_BASE + OFFSET
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
 }
 
 int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length){

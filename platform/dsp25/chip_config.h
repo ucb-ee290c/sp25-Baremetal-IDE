@@ -43,6 +43,7 @@ extern "C" {
 #define UART0_BASE                  0x10020000U
 #define I2S_BASE                    0x10042000U
 #define PLL_BASE                    0x00140000U
+#define WAVELET_BASE                0x08810000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
 #define CLINT                       ((CLINT_Type *)CLINT_BASE)

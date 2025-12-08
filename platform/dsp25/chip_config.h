@@ -21,6 +21,7 @@ extern "C" {
 #include "hal_mmio.h"
 #include "hal_rcc.h"
 #include "hal_i2s.h"
+#include "hal_dma.h"
 
 
 // ================================
@@ -44,6 +45,7 @@ extern "C" {
 #define I2S_BASE                    0x10042000U
 #define PLL_BASE                    0x00140000U
 #define WAVELET_BASE                0x08810000U
+#define DMA_BASE                    0x08812000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
 #define CLINT                       ((CLINT_Type *)CLINT_BASE)
@@ -51,6 +53,7 @@ extern "C" {
 #define PLIC_CC                     ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
 #define PLL                         ((PLL_Type *)PLL_BASE)
 #define UART0                       ((UART_Type *)UART0_BASE)
+#define DMA                         ((DMA_Type *)DMA_Base)
 
 
 #ifdef __cplusplus

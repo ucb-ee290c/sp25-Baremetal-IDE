@@ -120,6 +120,15 @@ void set_I2S_force_left(int channel, int tx_force_left, int rx_force_left) {
     *reg = config;
 }
 
+void set_I2S_sample_freq(int channel, uint64_t sys_clk_freq, uint64_t target_sample_freq, uint8_t bits_per_sample) {
+    // Master Clock (256LRCLK) should be `bit_depth * 2` (stereo)
+    uint64_t mclk_freq = target_sample_freq * bits_per_sample * 2;
+
+    // Actual clock divider = 2 * (N+1)
+    uint16_t clkdiv = (uint16_t) ((sys_clk_freq / mclk_freq) / 2 - 1);
+    set_I2S_clkdiv(channel, clkdiv);
+}
+
 // uint64_t write_I2S_tx_DMA(int channel, int dma_num, int length, uint64_t* read_addr, int left, int poll) {
 //     if (left) {
 //         //printf("Writing to left queue\n");
@@ -144,14 +153,6 @@ void set_I2S_force_left(int channel, int tx_force_left, int rx_force_left) {
 
 
 ////////// WIP, Untested ///////////
-
-
-void set_I2S_sample_freq(int channel, uint64_t sys_clk_freq, uint64_t sample_freq) {
-    // Master Clock (256LRCLK) should be 256 times the sample frequency
-    uint64_t mclk_freq = sample_freq * 256;
-    uint32_t clkdiv = (uint32_t) (mclk_freq / sample_freq);
-    set_I2S_clkdiv(channel, clkdiv);
-}
 
 void read_I2S_to_buffer(int channel, i2s_channel_side_t left_right, uint64_t* buffer, int num_blocks) {
     for (int i = 0; i < num_blocks; i++) {

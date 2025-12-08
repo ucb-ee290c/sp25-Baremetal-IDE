@@ -108,22 +108,26 @@ void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kern
     }
 }
 
-void test_simple(){
+void test(){
   union Converter {
     float f;
     uint32_t u;
   };
 
+  uint32_t in_arr[16] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 
+  0x40C00000, 0x40E00000, 0x41000000, 0x41100000, 0x41200000, 0x41300000, 0x41400000, 
+  0x41500000, 0x41600000, 0x41700000, 0x41800000}; // {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16} in FP32
 
-  uint32_t in_arr[8] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000}; // {1, 2, 3, 4, 5, 6, 7, 8} in FP16
-  uint32_t in_kernel[8] = {0x00000000, 0x3F800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0000000}; // {0, 1, 0, 0, 0, 0, 0, 0} in FP16
+  uint32_t in_kernel[8] = {0x40000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
+  0x00000000, 0x00000000, 0x00000000}; // {2, 0, 0, 0, 0, 0, 0, 0} in FP32                                    
 
-  uint32_t in_len = 8;
+ 
+  uint32_t in_len = 16;
   uint16_t in_dilation = 1;
   uint8_t kernel_len = 8;
 
   // TODO: make this variable a function based on the input parameters eventually
-  uint32_t output_len = 15;
+  uint32_t output_len = in_len+kernel_len+-1;
 
   
   printf("Setting values of MMIO registers\n");
@@ -163,8 +167,9 @@ void test_simple(){
     printf("0x%08x ", test_out[i]);
   }
   
+  // Status is not working!
   // Print final status
-  printf("\nFinal status: ");
+  printf("\nFinal status: 0x%08b\n", status);
   switch (status) {
     case 0x01: printf("BUSY"); break;
     case 0x02: printf("COMPL"); break;
@@ -176,7 +181,6 @@ void test_simple(){
     case 0x80: printf("INEXACT"); break;
     default: printf("UNKNOWN STATUS"); break;
   }
-  printf("\nOutput count: %d\n", get_register_out_count());
 
   float ref_out[output_len];
   convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
@@ -187,6 +191,14 @@ void test_simple(){
       printf("0x%08X ", converter.u);
   }
   printf("\n");
+
+ 
+  if (memcmp(test_out, ref_out, 92) == 0) {
+      printf("[TEST PASSED]: Test Output matches Reference Output.");
+  } else {
+      printf("[TEST FAILED]: Test Output does not match Reference Output.");
+  }
+  printf("\n\n");
 }
 
 void app_main() {
@@ -201,7 +213,7 @@ void app_main() {
   * @retval int
   */
 int main(int argc, char **argv) {
-  test_simple();
+  test();
   return 0;
 }
 

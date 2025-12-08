@@ -1,25 +1,25 @@
-# CMakeLists definitions for target `sanity-test`.
+# CMakeLists definitions for target `multiple-test`.
 
 #################################
 # Build Configuration
 #################################
 
 # Source Files
-add_executable(sanity-test
+add_executable(multiple-test
   src/main.c
 )
 
 # Header Files
-target_include_directories(sanity-test PUBLIC include)
+target_include_directories(multiple-test PUBLIC include)
 
 #################################
 # Dependencies
 #################################
 
-target_link_libraries(sanity-test PRIVATE 
+target_link_libraries(multiple-test PRIVATE 
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
 
 if (PROF_COV)
-  target_link_libraries(sanity-test PRIVATE gcov)
+  target_link_libraries(multiple-test PRIVATE gcov)
 endif()

@@ -13,6 +13,7 @@ extern "C" {
 #include "i2c.h"
 #include "uart.h"
 #include "gpio.h"
+#include "pwm.h"
 #include "pll.h"
 
 // ================================
@@ -40,6 +41,7 @@ extern "C" {
 #define RCC_BASE                    0x00100000U
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
+#define PWM_BASE                    0x10060000U
 
 #define UART0_BASE                  0x10020000U
 #define I2S_BASE                    0x10042000U
@@ -53,6 +55,7 @@ extern "C" {
 #define PLIC_CC                     ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
 #define PLL                         ((PLL_Type *)PLL_BASE)
 #define UART0                       ((UART_Type *)UART0_BASE)
+#define PWM0_BASE                   (PWM_BASE)
 #define DMA                         ((DMA_Type *)DMA_Base)
 
 

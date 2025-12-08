@@ -167,20 +167,16 @@ void test(){
     printf("0x%08x ", test_out[i]);
   }
   
-  // Status is not working!
-  // Print final status
-  printf("\nFinal status: 0x%08b\n", status);
-  switch (status) {
-    case 0x01: printf("BUSY"); break;
-    case 0x02: printf("COMPL"); break;
-    case 0x04: printf("ERROR"); break;
-    case 0x08: printf("INVALID"); break;
-    case 0x10: printf("INFINITE"); break;
-    case 0x20: printf("OVERFLOW"); break;
-    case 0x40: printf("UNDERFLOW"); break;
-    case 0x80: printf("INEXACT"); break;
-    default: printf("UNKNOWN STATUS"); break;
-  }
+// // Must use this! 
+// // 1. The caller allocates a buffer of sufficient size
+// char status_output[MAX_BUFFER_SIZE];
+
+// // 2. The caller passes the pointer to that buffer
+// get_register_status_human_readable(status_output);
+
+// // 3. The caller can now use the resulting string
+// printf("Status: %s\n", status_output);
+
 
   float ref_out[output_len];
   convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);

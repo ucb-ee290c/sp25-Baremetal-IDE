@@ -156,7 +156,7 @@ void test_simple(){
   printf("\nTest Output (FP32 binary): ");
   
   // Read the output using our function
-  conv_read_output( test_out, output_len, &status, in_arr);
+  conv_read_output(test_out, output_len);
   
   // Print the results
   for (int i = 0; i < output_len; i++) {

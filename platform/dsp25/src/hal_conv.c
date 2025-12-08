@@ -1,7 +1,7 @@
 #include "hal_conv.h"
 #include "chip_config.h"
 
-// --- MMIO Register Access Functions (Unchanged) ---
+// --- MMIO Register Access Functions ---
 
 void reg_write8(uintptr_t addr, uint8_t data) {
 volatile uint8_t *ptr = (volatile uint8_t *) addr;
@@ -43,20 +43,20 @@ volatile uint64_t *ptr = (volatile uint64_t *) addr;
 return *ptr;
 }
 
-// =================================================================
-// --- Refactored Driver Implementation ---
-// Replaced &conv->MEMBER with (MMIO_BASE + MEMBER_ADDR)
-// =================================================================
-
+// --- 1D Convolution Driver Functions ---
 
 void conv_init() {
-  // All accesses now use MMIO_BASE + OFFSET
   reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
   reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   
   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
 }
 
-int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length){
+
+// Prefill the vector queues input data for a max 16 entries where each each is 2 x 32FP
+// Prefill the Kernel queue for either 
+// 
+// dilation, and kernel data. 
+int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length) {
   // Clear MMIO Reset, Clear Datapath, Stop
   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 0);
   reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0); 
@@ -64,7 +64,7 @@ int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, u
 
   // Write input data (Streaming 64-bit writes)
   for (int i = 0; i < input_length; i += 2) {
-  reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + i)));
+    reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + i)));
   }
 
   // Write parameters
@@ -73,30 +73,38 @@ int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, u
 
   // Write kernel data and kernel length encoding
   if (kernel_length == 8) {
-  for (int i = 0; i < 8; i += 2) {
-  reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
-  }
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
+    for (int i = 0; i < 8; i += 2) {
+      reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+    }
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
   } else if (kernel_length == 16) {
-  for (int i = 0; i < 16; i += 2) {
-  reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+    for (int i = 0; i < 16; i += 2) {
+    reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+    }
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);   } 
+  else {
+    return -1;  
   }
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);   } else {
-  return -1;  }
 
   return 0;
 
 }
 
-void conv_read_output(uint32_t *output, int output_len, int *status, uint32_t* input) {
+uint8_t conv_read_output(uint32_t *output, uint32_t output_len) {
+
   // Read pairs of FP32s (2 per 64-bit read)
+
   int j; // Index for 32-bit output elements
   for (j = 0; j < output_len - 1; j += 2) {
-  uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
-  uint32_t *unpacked = (uint32_t *) &current_out;
+    // TODO: implement checks to make sure there are things to read from the output queue
+    // if (get_register_out_count() == 0) {
+    //  return -1;
+    // }
+    uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+    uint32_t *unpacked = (uint32_t *) &current_out;
 
-  output[j]   = unpacked[0];
-  output[j + 1] = unpacked[1];
+    output[j]   = unpacked[0];
+    output[j + 1] = unpacked[1];
   }
     
   // Handle the final odd element if output_len is odd
@@ -106,8 +114,7 @@ void conv_read_output(uint32_t *output, int output_len, int *status, uint32_t* i
      output[output_len - 1] = unpacked_out[0];
   }
 
-  // Read Status
-  *status = reg_read8((uintptr_t)(MMIO_BASE + CONV_STATUS_ADDR));
+  return get_register_status();
 }
 
 void start_conv() {
@@ -124,4 +131,147 @@ uint32_t get_register_out_count() {
 
 uint8_t get_register_read_check() {
   return reg_read8((uintptr_t)(MMIO_BASE + READ_CHECK_ADDR));
+}
+
+uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation) 
+  {
+
+  uint32_t output_len = input_length + kernel_length - 1;
+
+  // Checks:
+
+  // TODO: Check that the kernel length is less than or equal to ... How small is too small?
+
+  // TODO: Implement bigger than 16 kernel size! By implementing the following
+
+  // Note: about using this accelerator is that a key bottleneck may be the length of the kernel. In that case, it is advised to think about how shorter outputs can be stitched together.
+  // For example, convolutions (cross-correlations) can be done in blocks of 16, as that is the max kernel length, and stitched together
+
+  // for (size_t n = 0; n < temp_len; ++n) {
+  //           if (block_start + n < out_len)
+  //               output[block_start + n] += temp[n];}
+
+
+
+  // Initialize 1D Convolution Engine 
+  conv_init();
+  
+  // TODO: Implement the following comment
+  // The below is for kernel lengths of 8 or 16 and input arrays of arbitrarily long length (minimum length being _____)
+  // for () {}
+
+  // Performs a single convolution for input arrays of length less than 32 x 32FP entries and kernel lengths of 8 or 16 x 32FP entries
+
+  // Prefill the parameters for the convolution. 
+  conv_set_params(input, input_length, dilation, kernel, kernel_length);
+
+  // Start the convolution
+  start_conv();
+
+  // Read 
+  uint8_t status = conv_read_output(output, output_len);
+
+  // if 
+  
+  // volatile conv_status* curr_status = (volatile conv_status*) (STATUS_ADDR);
+
+  return get_register_status();
+
+
+
+}
+
+void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
+  size_t output_len = arr_len + (kernel_len - 1) * dilation;
+
+    for (int i = 0; i < output_len; i++) {
+        output[i] = 0.0f;
+
+        for (int j = 0; j < kernel_len; j++) {
+            int arr_index = i + j * dilation - (kernel_len - 1) * dilation;
+
+            uint32_t item = 0;
+            if (arr_index >= 0 && arr_index < arr_len) {
+                item = arr[arr_index];
+            }
+
+            float float_input = *(float*)&item;
+            float float_kernel = *(float*)&kernel[j]; 
+            output[i] += float_input * float_kernel;
+        }
+    }
+}
+
+// #include <string.h>
+// #include <stdio.h> // Required for sprintf
+// FIXME: I don't think I can compile this at ALL
+void get_register_status_human_readable(char* buffer) {
+    buffer[0] = "bruh";  
+    // buffer[0] = 'b'; // Assigns the character 'b' to the first element.
+  // if (buffer == NULL) {
+    //     return; // Exit if the pointer is NULL
+    // }
+    
+    // // 1. CLEAR THE BUFFER
+    // buffer[0] = '\0'; 
+    
+    // uint8_t status = get_register_status();
+    
+    // // Pointer to the current end of the string, where new data will be written.
+    // // It starts pointing to the beginning of the buffer.
+    // char *write_ptr = buffer; 
+
+    // // 2. Check each flag using bitwise AND (&)
+    // // We use a temporary variable (len_written) to advance the write_ptr.
+    // int len_written = 0;
+
+    // if (status & STATUS_BUSY) {
+    //     len_written = sprintf(write_ptr, "BUSY | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_COMPL) {
+    //     len_written = sprintf(write_ptr, "COMPL | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_ERROR) {
+    //     len_written = sprintf(write_ptr, "ERROR | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_INVALID) {
+    //     len_written = sprintf(write_ptr, "INVALID | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_INFINITE) {
+    //     len_written = sprintf(write_ptr, "INFINITE | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_OVERFLOW) {
+    //     len_written = sprintf(write_ptr, "OVERFLOW | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_UNDERFLOW) {
+    //     len_written = sprintf(write_ptr, "UNDERFLOW | ");
+    //     write_ptr += len_written;
+    // }
+    // if (status & STATUS_INEXACT) {
+    //     len_written = sprintf(write_ptr, "INEXACT | ");
+    //     write_ptr += len_written;
+    // }
+    
+    // // 3. Final string cleanup
+    
+    // // If the buffer pointer hasn't moved (only contains the initial '\0' or is empty)
+    // if (write_ptr == buffer) { 
+    //     if (status == 0x00) {
+    //         sprintf(buffer, "IDLE/READY");
+    //     } else {
+    //         sprintf(buffer, "UNKNOWN STATUS");
+    //     }
+    // } else {
+    //     // Remove the trailing " | " 
+    //     // We know the length of the trailing part is 3 chars (" | ")
+    //     // We just move the write_ptr back 3 positions and null-terminate there.
+    //     write_ptr -= 3; 
+    //     *write_ptr = '\0';
+    // }
 }

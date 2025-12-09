@@ -176,9 +176,6 @@ uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t*
   // volatile conv_status* curr_status = (volatile conv_status*) (STATUS_ADDR);
 
   return get_register_status();
-
-
-
 }
 
 void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
@@ -202,12 +199,21 @@ void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kerne
     }
 }
 
+// NOTE: As of 12/9/25 the below get_register_status_human_readable() function cannot be included in drivers files because of the following:
+// 1) you cannot use printf in driver files.
+// 2) you cannot do general string manipulation.
+// The above will generate this relocation truncated to fit error
+// /bwrcq/C/louiejoshualabata/sp25-chips/software/baremetal-ide/platform/dsp25/src/hal_conv.c:200:(.text+0x5fa): relocation truncated to fit: R_RISCV_HI20 against `.LC0'
+// collect2: error: ld returned 1 exit status
+
+// NOTE: I believe this is due to how the sp25-baremetal-ide compiles .c into .riscv binaries because it is possible to do the above, (1) and (2). See /bwrcq/C/louiejoshualabata/sp25-chips/generators/dsp25-audio/baremetal_test/tests-dma/dma_utils.c and how this file is being included in this test /bwrcq/C/louiejoshualabata/sp25-chips/generators/dsp-1d-conv-sp25/baremetal_test/dma-temp.c
+
+
 // #include <string.h>
 // #include <stdio.h> // Required for sprintf
-// FIXME: I don't think I can compile this at ALL
-void get_register_status_human_readable(char* buffer) {
-    buffer[0] = "bruh";  
-    // buffer[0] = 'b'; // Assigns the character 'b' to the first element.
+
+// void get_register_status_human_readable(char* buffer) {
+
   // if (buffer == NULL) {
     //     return; // Exit if the pointer is NULL
     // }
@@ -274,4 +280,4 @@ void get_register_status_human_readable(char* buffer) {
     //     write_ptr -= 3; 
     //     *write_ptr = '\0';
     // }
-}
+// }

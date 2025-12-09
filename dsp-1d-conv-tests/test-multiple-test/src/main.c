@@ -108,101 +108,93 @@ void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kern
     }
 }
 
-void test(){
-  union Converter {
-    float f;
-    uint32_t u;
-  };
+void app_main() {
+  uint64_t mhartid = READ_CSR("mhartid");
 
-  uint32_t in_arr[16] = {0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 
-  0x40C00000, 0x40E00000, 0x41000000, 0x41100000, 0x41200000, 0x41300000, 0x41400000, 
-  0x41500000, 0x41600000, 0x41700000, 0x41800000}; // {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16} in FP32
+  printf("Hello world from hart %d: %d\n", mhartid, counter);
+}
 
-  uint32_t in_kernel[8] = {0x40000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-  0x00000000, 0x00000000, 0x00000000}; // {2, 0, 0, 0, 0, 0, 0, 0} in FP32                                    
 
+void first_convolution() {
+
+  // IO:
+  uint32_t in_arr[16] = {0x3F800000,0xBF800000,0x40000000,0x40400000,0xC0800000,
+                           0x40A00000,0xBF800000,0x40000000,0x41100000,0x40E00000,
+                           0x40400000,0x40C00000,0x40800000,0x40A00000,0x40000000,0x40A00000};
+  uint32_t in_kernel[8] = {0x3F800000,0x40400000,0x40400000,0x3F800000,0,0,0,0};
  
   uint32_t in_len = 16;
-  uint16_t in_dilation = 1;
   uint8_t kernel_len = 8;
 
-  // TODO: make this variable a function based on the input parameters eventually
+  // Config:
+  uint16_t in_dilation = 1;
+  
+  // Create array for output data
   uint32_t output_len = in_len+kernel_len+-1;
-
-  
-  printf("Setting values of MMIO registers\n");
-  
-  // Initialize the accelerator
-  conv_init();
-  
-  // Set parameters for the convolution operation
-  int result = conv_set_params(in_arr, in_len, in_dilation, in_kernel, kernel_len);
-  if (result != 0) {
-    printf("Error setting parameters\n");
-    return;
-  }
-  
-  puts("Starting Convolution");
-  // Start the convolution operation
-  start_conv();
-  
-  puts("Waiting for convolution to complete");
-  
-  printf("Input (FP32): ");
-  for (int i = 0; i < in_len; i++) {
-    printf("%#x ", in_arr[i]);
-  }
-  
-  // Create array for output
   uint32_t test_out[output_len];
-  int status = 0;
   
-  printf("\nTest Output (FP32 binary): ");
+  size_t n = sizeof(test_out);  // Size of test output in bytes
+
+  printf("Starting Convolution\n");
   
-  // Read the output using our function
-  conv_read_output(test_out, output_len);
-  
-  // Print the results
+  uint8_t status = perform_convolution_1D(in_arr, in_len, in_kernel, kernel_len, test_out, in_dilation);
+
+  if (status != 0) {
+
+    // get_register_status_human_readable() does not work
+    // printf("Convolution Failed: %s (%d)\n", get_register_status_human_readable(), status);
+
+    printf("Convolution Failed: %d\n", status);
+    switch (status) {
+      case -1:   printf("Invalid Kernel Length. Must be 8 or 16"); break;
+      case 0x01: printf("BUSY"); break;
+      case 0x02: printf("COMPL"); break;
+      case 0x04: printf("ERROR"); break;
+      case 0x08: printf("INVALID"); break;
+      case 0x10: printf("INFINITE"); break;
+      case 0x20: printf("OVERFLOW"); break;
+      case 0x40: printf("UNDERFLOW"); break;
+      case 0x80: printf("INEXACT"); break;
+      default: printf("UNKNOWN STATUS"); break;
+    }
+
+    return status;
+  }
+
+  printf("Convolution completed!\n");  
+
+  // Print the input
+  printf("Input (FP32):\n");
+  for (int i = 0; i < in_len; i++) {
+    printf("0x%08x ", in_arr[i]);
+  }
+
+  // Print the kernel
+  printf("Kernel (FP32):\n");
+  for (int i = 0; i < kernel_len; i++) {
+    printf("0x%08x ", in_kernel[i]);
+  }
+
+  // Print the test results
+  printf("\nTest Output (FP32):\n");
   for (int i = 0; i < output_len; i++) {
     printf("0x%08x ", test_out[i]);
   }
-  
-// // Must use this! 
-// // 1. The caller allocates a buffer of sufficient size
-// char status_output[MAX_BUFFER_SIZE];
 
-// // 2. The caller passes the pointer to that buffer
-// get_register_status_human_readable(status_output);
-
-// // 3. The caller can now use the resulting string
-// printf("Status: %s\n", status_output);
-
-  switch (status) {
-    case -1:   printf("Invalid Kernel Length. Must be 8 or 16"); break;
-    case 0x01: printf("BUSY"); break;
-    case 0x02: printf("COMPL"); break;
-    case 0x04: printf("ERROR"); break;
-    case 0x08: printf("INVALID"); break;
-    case 0x10: printf("INFINITE"); break;
-    case 0x20: printf("OVERFLOW"); break;
-    case 0x40: printf("UNDERFLOW"); break;
-    case 0x80: printf("INEXACT"); break;
-    default: printf("UNKNOWN STATUS"); break;
-  }
-
-
+  // Calculate the correct convolution (Golden Model)
   float ref_out[output_len];
-  convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
-  printf("\nReference Output (FP32 binary): ");
+  perform_naive_convolution_1D(in_arr, in_len, in_kernel, kernel_len, in_dilation, ref_out);
+  printf("\nReference Output (FP32):\n");
   union Converter converter;
   for (int i = 0; i < output_len; i++) {
       converter.f = ref_out[i];
-      printf("0x%08X ", converter.u);
+      printf("0x%08x ", converter.u);
   }
-  printf("\n");
 
- 
-  if (memcmp(test_out, ref_out, 92) == 0) {
+  printf("\nComparing test to reference.\n");
+
+  // Check if the test passed
+  if (memcmp(test_out, ref_out, n) == 0) {
       printf("[TEST PASSED]: Test Output matches Reference Output.");
   } else {
       printf("[TEST FAILED]: Test Output does not match Reference Output.");
@@ -210,11 +202,6 @@ void test(){
   printf("\n\n");
 }
 
-void app_main() {
-  uint64_t mhartid = READ_CSR("mhartid");
-
-  printf("Hello world from hart %d: %d\n", mhartid, counter);
-}
 /* USER CODE END PUC */
 
 /**
@@ -222,7 +209,9 @@ void app_main() {
   * @retval int
   */
 int main(int argc, char **argv) {
-  test();
+  app_main();
+  first_convolution();
+  // test();
   return 0;
 }
 

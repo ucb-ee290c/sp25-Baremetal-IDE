@@ -117,6 +117,8 @@ uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t*
 
 // TODO: turn the below in to \param and \brief 
 /* 
+1D Convolution Golden Model:
+
 Computes the convolution of arr with the given kernel and dilation factor and stores the result in output, specifically 
 based on the implementation of the convolution block. The first value in the output array is computed with the kernel's 
 left element aligned with the array's left element.
@@ -144,7 +146,7 @@ For border values (at the end), we assume the array is zero-extended to fit the 
 void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output);
 
 // Returns a human-readable string containing all set status flags
-void get_register_status_human_readable(char* buffer);
+// void get_register_status_human_readable(char* buffer);
 
 #ifdef __cplusplus
 }

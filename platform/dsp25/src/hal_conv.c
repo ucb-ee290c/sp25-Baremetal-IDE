@@ -160,7 +160,11 @@ uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t*
   // The below is for kernel lengths of 8 or 16 and input arrays of arbitrarily long length (minimum length being _____)
   // for () {}
 
-  // Performs a single convolution for input arrays of length less than 32 x 32FP entries and kernel lengths of 8 or 16 x 32FP entries
+  // Perform a single convolution for inputs an arbitrary number of FP32 values and kernels of either 8 or 16 FP32 values.
+
+  
+
+  // Performs a single convolution for inputs up to 32 FP32 values and kernels of either 8 or 16 FP32 values.
 
   // Prefill the parameters for the convolution. 
   conv_set_params(input, input_length, dilation, kernel, kernel_length);

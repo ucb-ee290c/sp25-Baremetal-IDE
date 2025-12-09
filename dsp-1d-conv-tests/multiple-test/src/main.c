@@ -115,6 +115,17 @@ void app_main() {
 }
 
 
+// -----------------------------------------------------------------------------
+// Cycle counter
+// -----------------------------------------------------------------------------
+static uint64_t read_cycles(void) {
+    uint64_t cycles;
+    asm volatile ("rdcycle %0" : "=r" (cycles));
+    return cycles;
+}
+
+
+
 void first_convolution() {
 
   // IO:
@@ -136,8 +147,18 @@ void first_convolution() {
   size_t n = sizeof(test_out);  // Size of test output in bytes
 
   printf("Starting Convolution\n");
+
+  uint64_t start_cycle = read_cycles();
   
   uint8_t status = perform_convolution_1D(in_arr, in_len, in_kernel, kernel_len, test_out, in_dilation);
+
+  uint64_t end_cycle = read_cycles();
+
+  printf("Convolution took Cycles: %" PRIu64 "\n", end_cycle - start_cycle);
+
+
+
+
 
   if (status != 0) {
 
@@ -225,7 +246,13 @@ void second_convolution() {
 
   printf("Starting Convolution\n");
   
+  uint64_t start_cycle = read_cycles();
+  
   uint8_t status = perform_convolution_1D(in_arr, in_len, in_kernel, kernel_len, test_out, in_dilation);
+  
+  uint64_t end_cycle = read_cycles();
+
+  printf("Convolution took Cycles: %" PRIu64 "\n", end_cycle - start_cycle);
 
   if (status != 0) {
     // printf("Convolution Failed: %s (%d)\n", get_register_status_human_readable(), status);

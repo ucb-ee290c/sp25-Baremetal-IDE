@@ -171,6 +171,8 @@ uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t*
   // Read 
   uint8_t status = conv_read_output(output, output_len);
 
+  // TODO: Handle status!
+  // if status
   // if 
   
   // volatile conv_status* curr_status = (volatile conv_status*) (STATUS_ADDR);

@@ -61,53 +61,6 @@ union Converter {
     uint32_t u;
 };
 
-void convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
-  
-  /* 
-  Computes the convolution of arr with the given kernel and dilation factor and stores the result in output, specifically 
-  based on the implementation of the convolution block. The first value in the output array is computed with the kernel's 
-  left element aligned with the array's left element.
-
-  arr:        pointer to input array      FP16 array
-  arr_len:    length of input array       
-  kernel:     pointer to kernel array     FP16 array (represented as uint16_t)
-  kernel_len: length of kernel array 
-  dilation:   dilation factor
-  output:     pointer to output array     FP16 array (represented as uint16_t) 
-
-  Example input and output: 
-
-  arr:        {1, 2, 3, 4}
-  arr_len:    4
-  kernel:     {-1, 1, -1}
-  kernel_len: 3
-  dilation:   1
-
-  output: {-2, -3, -1, -4} ({-1*1 + 1*2 + -1*3, -1*2 + 1*3 + -1*4, -1*3 + 1*4 + -1*0, -1*4 + 1*0 + -1*0})
-
-  For border values (at the end), we assume the array is zero-extended to fit the length of the kernel (including dilation).
-  */
-
-  size_t output_len = arr_len + (kernel_len - 1) * dilation;
-
-    for (int i = 0; i < output_len; i++) {
-        output[i] = 0.0f;
-
-        for (int j = 0; j < kernel_len; j++) {
-            int arr_index = i + j * dilation - (kernel_len - 1) * dilation;
-
-            uint32_t item = 0;
-            if (arr_index >= 0 && arr_index < arr_len) {
-                item = arr[arr_index];
-            }
-
-            float float_input = *(float*)&item;
-            float float_kernel = *(float*)&kernel[j]; 
-            output[i] += float_input * float_kernel;
-        }
-    }
-}
-
 void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
 
@@ -185,13 +138,13 @@ void first_convolution() {
   printf("Convolution completed!\n");  
 
   // Print the input
-  printf("Input (FP32):\n");
+  printf("\nInput (FP32):\n");
   for (int i = 0; i < in_len; i++) {
     printf("0x%08X ", in_arr[i]);
   }
 
   // Print the kernel
-  printf("Kernel (FP32):\n");
+  printf("\nKernel (FP32):\n");
   for (int i = 0; i < kernel_len; i++) {
     printf("0x%08X ", in_kernel[i]);
   }
@@ -277,13 +230,13 @@ void second_convolution() {
   printf("Convolution completed!\n");
 
   // Print the input
-  printf("Input (FP32):\n");
+  printf("\nInput (FP32):\n");
   for (int i = 0; i < in_len; i++) {
     printf("0x%08X ", in_arr[i]);
   }
 
   // Print the kernel
-  printf("Kernel (FP32):\n");
+  printf("\nKernel (FP32):\n");
   for (int i = 0; i < kernel_len; i++) {
     printf("0x%08X ", in_kernel[i]);
   }

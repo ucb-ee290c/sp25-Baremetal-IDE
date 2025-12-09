@@ -3,6 +3,77 @@
 
 // --- 1D Convolution Driver Functions ---
 
+void conv_init() {
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
+}
+
+// Prefill the vector queues input data for a max 16 entries where each each is 2 x 32FP
+// Prefill the Kernel queue for either 
+// 
+// dilation, and kernel data. 
+int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length) {
+  // Clear MMIO Reset, Clear Datapath, Stop
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 0);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0); 
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
+
+  // Write input data (Streaming 64-bit writes)
+  for (int i = 0; i < input_length; i += 2) {
+    reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + i)));
+  }
+
+  // Write parameters
+  reg_write32((uintptr_t)(MMIO_BASE + CONV_LENGTH_ADDR), input_length);
+  reg_write16((uintptr_t)(MMIO_BASE + CONV_DILATION_ADDR), dilation);
+
+  // Write kernel data and kernel length encoding
+  if (kernel_length == 8) {
+    for (int i = 0; i < 8; i += 2) {
+      reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+    }
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
+  } else if (kernel_length == 16) {
+    for (int i = 0; i < 16; i += 2) {
+    reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+    }
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);   } 
+  else {
+    return -1;  
+  }
+
+  return 0;
+
+}
+
+uint8_t conv_read_output(uint32_t *output, uint32_t output_len) {
+
+  // Read pairs of FP32s (2 per 64-bit read)
+
+  int j; // Index for 32-bit output elements
+  for (j = 0; j < output_len - 1; j += 2) {
+    // TODO: implement checks to make sure there are things to read from the output queue
+    // if (get_register_out_count() == 0) {
+    //  return -1;
+    // }
+    uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+    uint32_t *unpacked = (uint32_t *) &current_out;
+
+    output[j]   = unpacked[0];
+    output[j + 1] = unpacked[1];
+  }
+    
+  // Handle the final odd element if output_len is odd
+  if (output_len % 2 != 0) {
+     uint64_t last_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+     uint32_t* unpacked_out = (uint32_t*) &last_out;
+     output[output_len - 1] = unpacked_out[0];
+  }
+
+  return get_register_status();
+}
+
 void start_conv() {
   reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 1);
 }
@@ -19,134 +90,56 @@ uint8_t get_register_read_check() {
   return reg_read8((uintptr_t)(MMIO_BASE + READ_CHECK_ADDR));
 }
 
-void conv_init() {
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
+uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation) 
+  {
+
+  uint32_t output_len = input_length + kernel_length - 1;
+
+  // Checks:
+
+  // TODO: Check that the kernel length is less than or equal to ... How small is too small?
+
+  // TODO: Implement bigger than 16 kernel size! By implementing the following
+
+  // Note: about using this accelerator is that a key bottleneck may be the length of the kernel. In that case, it is advised to think about how shorter outputs can be stitched together.
+  // For example, convolutions (cross-correlations) can be done in blocks of 16, as that is the max kernel length, and stitched together
+
+  // for (size_t n = 0; n < temp_len; ++n) {
+  //           if (block_start + n < out_len)
+  //               output[block_start + n] += temp[n];}
+
+
+
+  // Initialize 1D Convolution Engine 
+  conv_init();
+  
+  // TODO: Implement the following comment
+  // The below is for kernel lengths of 8 or 16 and input arrays of arbitrarily long length (minimum length being _____)
+  // for () {}
+
+  // Perform a single convolution for inputs an arbitrary number of FP32 values and kernels of either 8 or 16 FP32 values.
+
+
+
+  // Performs a single convolution for inputs up to 32 FP32 values and kernels of either 8 or 16 FP32 values.
+
+  // Prefill the parameters for the convolution. 
+  conv_set_params(input, input_length, dilation, kernel, kernel_length);
+
+  // Start the convolution
+  start_conv();
+
+  // Read 
+  uint8_t status = conv_read_output(output, output_len);
+
+  // TODO: Handle status!
+  // if status
+  // if 
+  
+  // volatile conv_status* curr_status = (volatile conv_status*) (STATUS_ADDR);
+
+  return get_register_status();
 }
-
-// This function now ONLY writes parameters (Length, Dilation, Kernel)
-int conv_set_params_kernel_only(uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length) {
-  // Clear MMIO Reset, Clear Datapath, Stop
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 0);
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0); 
-  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
-
-  // Write parameters
-  reg_write32((uintptr_t)(MMIO_BASE + CONV_LENGTH_ADDR), input_length);
-  reg_write16((uintptr_t)(MMIO_BASE + CONV_DILATION_ADDR), dilation);
-
-  // Write kernel data and kernel length encoding (One-time setup)
-  if (kernel_length == 8) {
-    for (int i = 0; i < 8; i += 2) {
-      reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
-    }
-    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
-  } else if (kernel_length == 16) {
-    for (int i = 0; i < 16; i += 2) {
-      reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
-    }
-    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);  
-  } else {
-    return -1;  
-  }
-
-  return 0;
-}
-
-// Separate function to stream input data (used repeatedly in the main loop)
-void conv_stream_input_batch(uint32_t *input, size_t start_element, size_t num_packets) {
-    for (size_t i = 0; i < num_packets; ++i) {
-        size_t element_idx = start_element + (i * FP32_PER_PACKET);
-        reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + element_idx)));
-    }
-}
-
-// Separate function to read output data (used repeatedly in the main loop)
-void conv_read_output_batch(uint32_t *output, size_t start_element, size_t num_packets) {
-    for (size_t i = 0; i < num_packets; ++i) {
-        size_t element_idx = start_element + (i * FP32_PER_PACKET);
-        
-        // Wait until at least one 64-bit word (2 FP32) is ready in the output FIFO
-        while (get_register_out_count() < 1) {
-            // Spin-wait for output data
-        }
-        
-        uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
-        
-        // Unpack the 64-bit word into two 32-bit FP32 elements
-        uint32_t *unpacked = (uint32_t *) &current_out;
-        output[element_idx]   = unpacked[0];
-        output[element_idx + 1] = unpacked[1];
-    }
-}
-
-// The main streaming driver function
-uint8_t perform_convolution_1D(
-    uint32_t* input, 
-    uint32_t input_length, 
-    uint32_t* kernel, 
-    uint8_t kernel_length, 
-    uint32_t* output, 
-    uint16_t dilation
-) {
-    // 1. Initial Setup
-    conv_init();
-    conv_set_params_kernel_only(input_length, dilation, kernel, kernel_length);
-
-    // Calculate total packets
-    size_t input_packets = input_length / FP32_PER_PACKET;
-    // Assuming a valid convolution length, output_packets calculation is based on the DMA driver
-    size_t kernel_packets = kernel_length / FP32_PER_PACKET; 
-    size_t output_packets = input_packets + kernel_packets;
-
-    size_t in_packet_idx = 0;
-    size_t out_packet_idx = 0;
-
-    // 2. Start the convolution engine
-    start_conv();
-
-    // 3. Streaming in Batches
-    while (out_packet_idx < output_packets) {
-        // Calculate batch size, capped by the FIFO capacity (8 packets)
-        size_t remaining_out_packets = output_packets - out_packet_idx;
-        size_t current_batch_packets = remaining_out_packets < FIFO_CAPACITY_PACKETS
-                                        ? remaining_out_packets
-                                        : FIFO_CAPACITY_PACKETS;
-        
-        // The number of input packets to stream in this batch is limited by the remaining input
-        size_t input_stream_packets = 0;
-        if (in_packet_idx < input_packets) {
-            size_t remaining_in_packets = input_packets - in_packet_idx;
-            input_stream_packets = remaining_in_packets < current_batch_packets
-                                    ? remaining_in_packets
-                                    : current_batch_packets;
-        }
-
-        // A. Stream Input Batch (MMIO write)
-        if (input_stream_packets > 0) {
-            // Convert packet index to FP32 element index
-            size_t start_element = in_packet_idx * FP32_PER_PACKET; 
-            conv_stream_input_batch(input, start_element, input_stream_packets);
-            in_packet_idx += input_stream_packets;
-        }
-
-        // B. Read Output Batch (MMIO read)
-        // Read the full batch, waiting for data if necessary (handled inside conv_read_output_batch)
-        size_t start_element = out_packet_idx * FP32_PER_PACKET;
-        conv_read_output_batch(output, start_element, current_batch_packets);
-        out_packet_idx += current_batch_packets;
-
-        // Note: Unlike the DMA driver which waits for bus silence, 
-        // the MMIO driver uses the `get_register_out_count()` check 
-        // inside `conv_read_output_batch` for synchronization (spin-wait).
-    }
-
-    // 4. Final Status Read (Output fully drained)
-    return get_register_status();
-}
-
-// --- Utility 1D Convolution Driver Functions ---
 
 void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output) {
   size_t output_len = arr_len + (kernel_len - 1) * dilation;

@@ -1,48 +1,6 @@
 #include "hal_conv.h"
 #include "chip_config.h"
 
-// --- MMIO Register Access Functions ---
-
-void reg_write8(uintptr_t addr, uint8_t data) {
-volatile uint8_t *ptr = (volatile uint8_t *) addr;
-*ptr = data;
-}
-
-uint8_t reg_read8(uintptr_t addr) {
-volatile uint8_t *ptr = (volatile uint8_t *) addr;
-return *ptr & 0xFF;
-}
-
-void reg_write16(uintptr_t addr, uint16_t data) {
-volatile uint16_t *ptr = (volatile uint16_t *) addr;
-*ptr = data;
-}
-
-uint16_t reg_read16(uintptr_t addr) {
-volatile uint16_t *ptr = (volatile uint16_t *) addr;
-return *ptr & 0xFFFF;
-}
-
-void reg_write32(uintptr_t addr, uint32_t data) {
-volatile uint32_t *ptr = (volatile uint32_t *) addr;
-*ptr = data;
-}
-
-uint32_t reg_read32(uintptr_t addr) {
-volatile uint32_t *ptr = (volatile uint32_t *) addr;
-return *ptr & 0xFFFFFFFF;
-}
-
-void reg_write64(unsigned long addr, uint64_t data) {
-volatile uint64_t *ptr = (volatile uint64_t *) addr;
-*ptr = data;
-}
-
-uint64_t reg_read64(unsigned long addr) {
-volatile uint64_t *ptr = (volatile uint64_t *) addr;
-return *ptr;
-}
-
 // --- 1D Convolution Driver Functions ---
 
 void conv_init() {
@@ -50,7 +8,6 @@ void conv_init() {
   reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   
   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
 }
-
 
 // Prefill the vector queues input data for a max 16 entries where each each is 2 x 32FP
 // Prefill the Kernel queue for either 
@@ -162,7 +119,7 @@ uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t*
 
   // Perform a single convolution for inputs an arbitrary number of FP32 values and kernels of either 8 or 16 FP32 values.
 
-  
+
 
   // Performs a single convolution for inputs up to 32 FP32 values and kernels of either 8 or 16 FP32 values.
 

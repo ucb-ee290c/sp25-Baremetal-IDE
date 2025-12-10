@@ -82,7 +82,7 @@ void conv_read_output_batch(uint32_t *output, size_t start_element, size_t num_p
 }
 
 // The main streaming driver function
-uint8_t perform_convolution_1D(
+uint8_t perform_convolution_1D_FAIL(
     uint32_t* input, 
     uint32_t input_length, 
     uint32_t* kernel, 

@@ -132,7 +132,7 @@ uint8_t get_register_read_check();
  * \param dilation The dilation factor.
  * \return uint8_t: The final status flag of the engine upon completion.
  */
-uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation);
+uint8_t perform_convolution_1D_FAIL(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation);
 
 
 // --- Utility 1D Convolution Driver Functions (Golden Model) ---

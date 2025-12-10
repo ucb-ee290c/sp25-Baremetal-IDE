@@ -61,12 +61,6 @@ union Converter {
     uint32_t u;
 };
 
-void app_main() {
-  uint64_t mhartid = READ_CSR("mhartid");
-
-  printf("Hello world from hart %d: %d\n", mhartid, counter);
-}
-
 // -----------------------------------------------------------------------------
 // Cycle counter
 // -----------------------------------------------------------------------------
@@ -213,8 +207,6 @@ void first_convolution() {
   * @retval int
   */
 int main(int argc, char **argv) {
-  app_main();
-
   // printf('\n');  // NOTE: If you uncomment this line your program will hang because
   printf("\n\nFirst convolution:\n\n");
   first_convolution();

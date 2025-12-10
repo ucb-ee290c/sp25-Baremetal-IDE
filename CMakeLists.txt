@@ -57,7 +57,9 @@ set(CMODEL              "medany")
 set(ARCH_FLAGS          -march=${ARCH} -mabi=${ABI} -mcmodel=${CMODEL})
 
 # spec
-set(SPECS               "nosys.specs")
+# set(SPECS               "nosys.specs")
+set(SPECS               "htif_nano.specs")
+
 set(SPEC_FLAGS          -specs=${SPECS})
 
 
@@ -67,20 +69,24 @@ string(TOLOWER ${CHIP} CHIP)
 # linker script
 # HACK: ideally this should be handled by glossy, but currently i couldn't 
 # figure out a way to propagate the LINKER_SCRIPT variable to the compile and link commands
-if (NOT CHIP)
-  message(STATUS "Chip not specified, using default configuration")
-  set(CHIP "default")
+# if (NOT CHIP)
+#   message(STATUS "Chip not specified, using default configuration")
+#   set(CHIP "default")
 
-  set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/glossy/glossy.ld")
-else()
-  set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}.ld")
-endif()
+#   set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/glossy/glossy.ld")
+# else()
+#   set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}.ld")
+# endif()
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/platform/${CHIP})
 
 add_compile_options(-O1)
 add_compile_options(-Wall -Wextra)
 add_compile_options(-Wno-error=coverage-mismatch)
+
+add_compile_options(-specs=htif_nano.specs)
+add_link_options(-specs=htif_nano.specs)
+
 
 if (PROF_COV)
   message(STATUS "Building with profiling and coverage")
@@ -117,7 +123,7 @@ add_link_options(-static)
 add_link_options(-nostartfiles)
 add_link_options(${ARCH_FLAGS})
 add_link_options(${SPEC_FLAGS})
-add_link_options(-T ${LINKER_SCRIPT})
+# add_link_options(-T ${LINKER_SCRIPT})
 # add_link_options(-rtlib=compiler-rt)
 # add_link_options(-Wl,--rtlib-path=/scratch/iansseijelly/riscv-llvm-install/lib/linux/libclang_rt.builtins-riscv64.a)
 if (PROF_COV)
@@ -130,7 +136,7 @@ endif()
 #################################
 
 add_subdirectory(driver)
-add_subdirectory(glossy)
+# add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
 
@@ -151,22 +157,22 @@ add_subdirectory(dsp-1d-conv-tests)
 
 set(CMAKE_INSTALL_PREFIX "$ENV{RISCV}/riscv64-unknown-elf")
 
-set_property(TARGET glossy PROPERTY PUBLIC_HEADER
-  glossy/include/riscv.h
-  glossy/include/riscv_encoding.h
-  glossy/include/riscv_interrupt.h
-)
+# set_property(TARGET glossy PROPERTY PUBLIC_HEADER
+#   glossy/include/riscv.h
+#   glossy/include/riscv_encoding.h
+#   glossy/include/riscv_interrupt.h
+# )
 
-set_property(TARGET glossy PROPERTY RESOURCE
-  glossy/glossy.ld
-  glossy/glossy.specs
-)
+# set_property(TARGET glossy PROPERTY RESOURCE
+#   glossy/glossy.ld
+#   glossy/glossy.specs
+# )
 
-install(TARGETS glossy
-  LIBRARY DESTINATION "lib"
-  PUBLIC_HEADER DESTINATION "include"
-  RESOURCE DESTINATION "lib"
-)
+# install(TARGETS glossy
+#   LIBRARY DESTINATION "lib"
+#   PUBLIC_HEADER DESTINATION "include"
+#   RESOURCE DESTINATION "lib"
+# )
 
 install(TARGETS htif
   LIBRARY DESTINATION "lib"

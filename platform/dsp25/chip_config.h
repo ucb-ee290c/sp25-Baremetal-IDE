@@ -23,6 +23,7 @@ extern "C" {
 #include "hal_rcc.h"
 #include "hal_i2s.h"
 #include "hal_dma.h"
+#include "hal_can.h"
 
 
 // ================================
@@ -48,6 +49,7 @@ extern "C" {
 #define PLL_BASE                    0x00140000U
 #define WAVELET_BASE                0x08810000U
 #define DMA_BASE                    0x08812000U
+#define CAN_BASE                    0x10050000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
 #define CLINT                       ((CLINT_Type *)CLINT_BASE)

@@ -16,9 +16,12 @@ target_include_directories(multiple-test PUBLIC include)
 # Dependencies
 #################################
 
-target_link_libraries(multiple-test PRIVATE 
-  -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
-)
+# target_link_libraries(multiple-test PRIVATE 
+#   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
+# )
+
+target_link_libraries(multiple-test chip-config)
+
 
 if (PROF_COV)
   target_link_libraries(multiple-test PRIVATE gcov)

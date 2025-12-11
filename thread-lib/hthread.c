@@ -6,6 +6,7 @@ static volatile uint8_t hart_busy[N_HARTS];
 static volatile uint32_t barrier_count = 0;
 static volatile uint32_t barrier_epoch = 0;
 
+// Atomic compare-and-swap operation for lock-free algorithms
 static inline int atomic_cas(volatile uint32_t *ptr, uint32_t expected, uint32_t desired) {
     uint32_t old;
 
@@ -22,6 +23,7 @@ static inline int atomic_cas(volatile uint32_t *ptr, uint32_t expected, uint32_t
     return old == expected;
 }
 
+// Add a task to the bottom of a hart’s deque (owner push)
 static inline void ws_push(uint32_t hartid, htask_t task) {
     wsdeque_t *dq = &deques[hartid];
 
@@ -32,6 +34,7 @@ static inline void ws_push(uint32_t hartid, htask_t task) {
     hart_busy[hartid] = 1;
 }
 
+// Pop a local task from the bottom of the hart’s deque
 static inline int ws_pop(uint32_t hartid, htask_t *out) {
     wsdeque_t *dq = &deques[hartid];
 
@@ -49,14 +52,16 @@ static inline int ws_pop(uint32_t hartid, htask_t *out) {
     }
 }
 
+// Attempt to steal a task from the top of another hart’s queue
 static inline int ws_steal(uint32_t victim, htask_t *out) {
     wsdeque_t *dq = &deques[victim];
 
     uint32_t t = dq->top;
     uint32_t b = dq->bottom;
 
-    if (t >= b)
-        return 0; // empty
+    if (t >= b) {
+        return 0;
+    }
 
     htask_t task = dq->tasks[t & (WSQ_SIZE - 1)];
 
@@ -68,26 +73,30 @@ static inline int ws_steal(uint32_t victim, htask_t *out) {
     return 0;
 }
 
+// Pushes a task directly onto a specific hart’s queue and wakes that hart
 void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg) {
-    htask_t t = { fn, arg };
+    htask_t t = {fn, arg};
     ws_push(hartid, t);
-    CLINT->MSIP[hartid] = 1;    // wake hart
+    CLINT->MSIP[hartid] = 1;
 }
 
+// Submit a unit of work without deciding which hart executes it.
 void hthread_dispatch(void (*fn)(void *), void *arg) {
-    htask_t t = { fn, arg };
+    htask_t t = {fn, arg};
     ws_push(0, t);
 
     for (int i = 0; i < N_HARTS; i++)
         CLINT->MSIP[i] = 1;
 }
 
+// Block until a specific hart has no more pending tasks
 void hthread_join(uint32_t hartid) {
     while (hart_busy[hartid]) {
         asm volatile("nop");
     }
 }
 
+// Synchronizes all harts so they reach the same point before proceeding
 void hthread_barrier() {
     uint64_t mhartid = READ_CSR("mhartid");
     uint32_t epoch = barrier_epoch;
@@ -104,7 +113,7 @@ void hthread_barrier() {
     }
 }
 
-
+// Initializes the entire threading subsystem before any parallel work happens
 void hthread_init() {
     for (int i = 0; i < N_HARTS; i++) {
         deques[i].top = 0;
@@ -113,9 +122,9 @@ void hthread_init() {
     }
 }
 
-
+// Define the infinite scheduling loop running on every hart except hart0
 void __main(void) {
-    
+
     uint64_t mhartid = READ_CSR("mhartid");
     CLINT->MSIP[mhartid] = 0;
     htask_t task;

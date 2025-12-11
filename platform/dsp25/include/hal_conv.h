@@ -137,8 +137,8 @@ uint8_t get_register_read_check();
 /**
  * @brief Perform a 1D convolution using the streaming MMIO hardware accelerator.
  *
- * This function first preloads the input and kernel queues, then starts the accelerator.
- * Then this function streams input data into the 1D accelerator in fixed-size packets and retrieves the output in batches.
+ * This function first initializes the accelerator and preloads the kernel queue, then starts the accelerator.
+ * Then this function streams input data into the 1D accelerator and retrieves the output in batches of 8 packets (each packet is two FP32 numbers).
  *
  * The accelerator has a limited FIFO capacity (FIFO_CAPACITY_PACKETS), so the
  * function dynamically batches input and output transfers to avoid overflow.

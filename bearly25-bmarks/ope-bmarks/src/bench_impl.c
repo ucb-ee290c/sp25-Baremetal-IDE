@@ -13,6 +13,25 @@ typedef struct {
   int32_t *C_ref;
 } ope_case_ctx_t;
 
+#if OPE_EXT_FLIP == 1
+// The hardware writes tiles transposed when OPE_EXT_FLIP is set.
+// Remap back to row-major before checking correctness.
+static void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
+  const int rowsU = ctx->C->rowsU;
+  const int colsU = ctx->C->colsU;
+  for (int i = 0; i < rowsU; ++i) {
+    for (int j = 0; j < colsU; ++j) {
+      scratch[j * rowsU + i] = ctx->C->data[i * colsU + j];
+    }
+  }
+  memcpy(ctx->C->data, scratch, (size_t)rowsU * (size_t)colsU * sizeof(int32_t));
+}
+#else
+static inline void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
+  (void)ctx; (void)scratch;
+}
+#endif
+
 static int ope_case_ctx_init(ope_case_ctx_t *ctx, const OpeSizeCase *cs) {
   const int M = cs->M;
   const int N = cs->N;
@@ -157,6 +176,17 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     return;
   }
 
+  int32_t *unflip_buf = NULL;
+#if OPE_EXT_FLIP == 1
+  size_t unflip_elems = (size_t)ctx.C->rowsU * (size_t)ctx.C->colsU;
+  unflip_buf = (int32_t *)aligned_alloc(8, unflip_elems * sizeof(int32_t));
+  if (!unflip_buf) {
+    printf("  ERROR: Failed to alloc unflip buffer\n");
+    ope_case_ctx_destroy(&ctx);
+    return;
+  }
+#endif
+
   bench_cache_flush();
   bench_fill_int32_zero(ctx.C->data, ctx.C->rows, ctx.C->colsU, ctx.C->colsU);
 
@@ -170,6 +200,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     sanity_cycles_total = (long)(t1 - t0);
   }
 
+  unflip_output(&ctx, unflip_buf);
   int errors = bench_compare_results(ctx.C->data, ctx.C->colsU, 
                                      ctx.C_ref, N, M, N, 1);
 
@@ -195,6 +226,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     uint64_t t1 = rdcycle64();
     long cycles_total = (long)(t1 - t0);
 
+    unflip_output(&ctx, unflip_buf);
     int errs = bench_compare_results(ctx.C->data, ctx.C->colsU,
                                      ctx.C_ref, N, M, N, 0);
 
@@ -233,6 +265,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     uint64_t t1 = rdcycle64();
     long cycles_total = (long)(t1 - t0);
 
+    unflip_output(&ctx, unflip_buf);
     int errs = bench_compare_results(ctx.C->data, ctx.C->colsU,
                                     ctx.C_ref, N, M, N, 0);
 
@@ -258,5 +291,6 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     printf("  HOT:  no valid runs\n");
   }
 
+  if (unflip_buf) free(unflip_buf);
   ope_case_ctx_destroy(&ctx);
 }

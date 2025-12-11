@@ -110,11 +110,14 @@ uint8_t perform_convolution_1D(
     while (out_packet_idx < output_packets) {
         // Calculate batch size, capped by the FIFO capacity (8 packets)
         size_t remaining_out_packets = output_packets - out_packet_idx;
+
+        // Pseudocode: current_batch_packets = min(FIFO_CAPACITY_PACKETS, remaining_out_packets);
         size_t current_batch_packets = remaining_out_packets < FIFO_CAPACITY_PACKETS
                                         ? remaining_out_packets
                                         : FIFO_CAPACITY_PACKETS;
         
         // The number of input packets to stream in this batch is limited by the remaining input
+        // Pseudocode: input_stream_packets = min(current_batch_packets, remaining_in_packets)
         size_t input_stream_packets = 0;
         if (in_packet_idx < input_packets) {
             size_t remaining_in_packets = input_packets - in_packet_idx;

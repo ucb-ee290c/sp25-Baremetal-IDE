@@ -132,6 +132,49 @@ uint8_t get_register_read_check();
  * \param dilation The dilation factor.
  * \return uint8_t: The final status flag of the engine upon completion.
  */
+
+ 
+/**
+ * @brief Perform a 1D convolution using the streaming MMIO hardware accelerator.
+ *
+ * This function first preloads the input and kernel queues, then starts the accelerator.
+ * Then this function streams input data into the 1D accelerator in fixed-size packets and retrieves the output in batches.
+ *
+ * The accelerator has a limited FIFO capacity (FIFO_CAPACITY_PACKETS), so the
+ * function dynamically batches input and output transfers to avoid overflow.
+ * It spin-waits for output availability using get_register_out_count() inside
+ * conv_read_output_batch().
+ * 
+ * FIFO_CAPACITY_PACKETS = 16 because that is the size of the input/output vector queues
+ *
+ * Input and output data are transferred using MMIO-based functions:
+ *    - conv_stream_input_batch()
+ *    - conv_read_output_batch()
+ *
+ * Streaming Protocol Summary:
+ *  - Input and kernel values must be packetized (FP32_PER_PACKET floats).
+ *  - input_packets  = input_length  / FP32_PER_PACKET
+ *  - kernel_packets = kernel_length / FP32_PER_PACKET
+ *  - output_packets = input_packets + kernel_packets
+ *  - The hardware begins producing output after enough input data arrives.
+ * 
+ * FP32_PER_PACKET = 2 because the input/output vector queues are 64 bits wide so two FP32 numbers fit in one entry of the input/output vector queues
+ *
+ * 
+ * \param input Pointer to the input buffer (FP32 array).
+ * \param input_length Total number of FP32 elements in the input.
+ * \param kernel Pointer to the kernel buffer (FP32 array).
+ * \param kernel_length Number of FP32 elements in the kernel (8 or 16).
+ * \param output Pointer to the destination output buffer (FP32 array).
+ * \param dilation The dilation factor.
+ * \return uint8_t: Hardware status register after output is fully drained.
+ *
+ * @note This is an MMIO-based (non-DMA) streaming driver. All synchronization
+ *       is handled via register polling inside the read/write helpers.
+ * @note The output size (in packets) is determined by the hardware protocol.
+ * @note The function will block until all expected output packets are read.
+ */
+
 uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation);
 
 

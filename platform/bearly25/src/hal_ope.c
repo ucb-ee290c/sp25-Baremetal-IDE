@@ -329,21 +329,8 @@ long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
 
   // Square Case
   if (mU == kU && kU == nU) {
-    if (mU == 8) {
-      return ope_matmul_8x8(A, B, out);
-    }
-    else if (mU == 16) {
-      return ope_matmul_16x16(A, B, out);
-    }
-    else if (mU == 32) {
-      return ope_matmul_32x32(A, B, out);
-    }
-    else if (mU == 64) {
-      return ope_matmul_64x64(A, B, out);
-    }
-    else {
-      return ope_matmul_square(A, B, out);
-    }
+    if (mU == 8) return ope_matmul_8x8(A, B, out);
+    return ope_matmul_square(A, B, out);
   }
 
   // Rectangular case

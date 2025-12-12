@@ -5,6 +5,11 @@
 #include "main.h"
 #include "chip_config.h"
 #include <data/inputs.h>
+#include <stdlib.h>
+
+#ifndef OPE_OUT_FULL_TRANSPOSE
+#define OPE_OUT_FULL_TRANSPOSE 0
+#endif
 
 static inline size_t ru8(size_t x) {
   return (x + 7u) & ~7u;
@@ -108,6 +113,41 @@ static int compare_results(const int32_t* C, int ldc,
   }
 }
 
+#if OPE_EXT_FLIP == 1
+// Hardware returns tiles transposed; fix tiles and optionally the full matrix.
+static void fix_output_layout(ope_mat32_t* C, int32_t* full_scratch) {
+  int32_t tile_scratch[64];
+  const int rowsU = C->rowsU;
+  const int colsU = C->colsU;
+  for (int tr = 0; tr < rowsU; tr += 8) {
+    for (int tc = 0; tc < colsU; tc += 8) {
+      for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 8; ++c) {
+          tile_scratch[c * 8 + r] = C->data[(tr + r) * colsU + (tc + c)];
+        }
+      }
+      for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 8; ++c) {
+          C->data[(tr + r) * colsU + (tc + c)] = tile_scratch[r * 8 + c];
+        }
+      }
+    }
+  }
+#if OPE_OUT_FULL_TRANSPOSE
+  for (int i = 0; i < rowsU; ++i) {
+    for (int j = 0; j < colsU; ++j) {
+      full_scratch[j * rowsU + i] = C->data[i * colsU + j];
+    }
+  }
+  memcpy(C->data, full_scratch, (size_t)rowsU * (size_t)colsU * sizeof(int32_t));
+#endif
+}
+#else
+static inline void fix_output_layout(ope_mat32_t* C, int32_t* full_scratch) {
+  (void)C; (void)full_scratch;
+}
+#endif
+
 static int run_aligned_case(const OpeInputCase *tc) {
   const int M = tc->M;
   const int N = tc->N;
@@ -148,17 +188,20 @@ static int run_aligned_case(const OpeInputCase *tc) {
   long ope_cycles = ope_matmul_square(A, B, C);  
   uint64_t t1 = rdcycle64();
 
-  #if OPE_EXT_FLIP == 1
-  // Always transpose the full padded buffer
-  int32_t* temp = aligned_alloc(8, C->rowsU * C->colsU * sizeof(int32_t));
-  for (int i = 0; i < C->rowsU; i++) {
-    for (int j = 0; j < C->colsU; j++) {
-      temp[j * C->rowsU + i] = C->data[i * C->colsU + j];
-    }
+  int32_t *full_unflip = NULL;
+#if OPE_EXT_FLIP == 1
+  size_t full_elems = (size_t)C->rowsU * (size_t)C->colsU;
+  full_unflip = (int32_t *)aligned_alloc(8, full_elems * sizeof(int32_t));
+  if (!full_unflip) {
+    printf("ERROR: failed to allocate full unflip buffer\n");
+    ope_mat8_free(A);
+    ope_mat8_free(B);
+    ope_mat32_free(C);
+    return -1;
   }
-  memcpy(C->data, temp, C->rowsU * C->colsU * sizeof(int32_t));
-  free(temp);
-  #endif
+#endif
+
+  fix_output_layout(C, full_unflip);
 
   // Extract results from padded matrix
   int32_t C_ope[M * N];
@@ -174,6 +217,7 @@ static int run_aligned_case(const OpeInputCase *tc) {
   int ok = compare_results(C_ope, N, C_ref, N, M, N);
   printf("Result: %s\n", ok == 0 ? "PASS" : "FAIL");
 
+  if (full_unflip) free(full_unflip);
   ope_mat8_free(A);
   ope_mat8_free(B);
   ope_mat32_free(C);
@@ -221,17 +265,20 @@ static int run_unaligned_case(const OpeInputCase *tc) {
   long ope_cycles = ope_matmul_arb(A, B, C);
   uint64_t t1 = rdcycle64();
 
-  #if OPE_EXT_FLIP == 1
-  // Always transpose the full padded buffer
-  int32_t* temp = aligned_alloc(8, C->rowsU * C->colsU * sizeof(int32_t));
-  for (int i = 0; i < C->rowsU; i++) {
-    for (int j = 0; j < C->colsU; j++) {
-      temp[j * C->rowsU + i] = C->data[i * C->colsU + j];
-    }
+  int32_t *full_unflip = NULL;
+#if OPE_EXT_FLIP == 1
+  size_t full_elems = (size_t)C->rowsU * (size_t)C->colsU;
+  full_unflip = (int32_t *)aligned_alloc(8, full_elems * sizeof(int32_t));
+  if (!full_unflip) {
+    printf("ERROR: failed to allocate full unflip buffer\n");
+    ope_mat8_free(A);
+    ope_mat8_free(B);
+    ope_mat32_free(C);
+    return -1;
   }
-  memcpy(C->data, temp, C->rowsU * C->colsU * sizeof(int32_t));
-  free(temp);
-  #endif
+#endif
+
+  fix_output_layout(C, full_unflip);
 
   // Extract results from padded matrix
   int32_t C_ope[M * N];
@@ -247,6 +294,7 @@ static int run_unaligned_case(const OpeInputCase *tc) {
   int ok = compare_results(C_ope, N, C_ref, N, M, N);
   printf("Result: %s\n", ok == 0 ? "PASS" : "FAIL");
 
+  if (full_unflip) free(full_unflip);
   ope_mat8_free(A);
   ope_mat8_free(B);
   ope_mat32_free(C);
@@ -255,11 +303,11 @@ static int run_unaligned_case(const OpeInputCase *tc) {
 }
 
 void app_init(void) {
-  UART_InitType UART_init_config;
-  UART_init_config.baudrate = 115200;
-  UART_init_config.mode = UART_MODE_TX_RX;
-  UART_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0, &UART_init_config);
+  // UART_InitType UART_init_config;
+  // UART_init_config.baudrate = 115200;
+  // UART_init_config.mode = UART_MODE_TX_RX;
+  // UART_init_config.stopbits = UART_STOPBITS_2;
+  // uart_init(UART0, &UART_init_config);
 }
 
 void app_main(void) {

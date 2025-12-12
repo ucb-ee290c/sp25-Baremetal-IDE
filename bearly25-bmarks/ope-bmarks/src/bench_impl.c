@@ -13,10 +13,15 @@ typedef struct {
   int32_t *C_ref;
 } ope_case_ctx_t;
 
+#ifndef OPE_OUT_FULL_TRANSPOSE
+#define OPE_OUT_FULL_TRANSPOSE 0
+#endif
+
 #if OPE_EXT_FLIP == 1
-// Hardware returns each 8x8 tile transposed; flip tiles back in-place.
-// Scratch must hold at least 64 int32_t entries.
-static void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
+// Hardware returns tiles transposed; fix tiles and optionally the whole matrix.
+static void unflip_output(const ope_case_ctx_t *ctx,
+                          int32_t *tile_scratch,
+                          int32_t *full_scratch) {
   const int rowsU = ctx->C->rowsU;
   const int colsU = ctx->C->colsU;
   for (int tr = 0; tr < rowsU; tr += 8) {
@@ -24,21 +29,32 @@ static void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
       // Transpose one 8x8 tile into scratch
       for (int r = 0; r < 8; ++r) {
         for (int c = 0; c < 8; ++c) {
-          scratch[c * 8 + r] = ctx->C->data[(tr + r) * colsU + (tc + c)];
+          tile_scratch[c * 8 + r] = ctx->C->data[(tr + r) * colsU + (tc + c)];
         }
       }
       // Copy back in original layout
       for (int r = 0; r < 8; ++r) {
         for (int c = 0; c < 8; ++c) {
-          ctx->C->data[(tr + r) * colsU + (tc + c)] = scratch[r * 8 + c];
+          ctx->C->data[(tr + r) * colsU + (tc + c)] = tile_scratch[r * 8 + c];
         }
       }
     }
   }
+#if OPE_OUT_FULL_TRANSPOSE
+  // If tile order was also flipped, transpose the full padded matrix.
+  for (int i = 0; i < rowsU; ++i) {
+    for (int j = 0; j < colsU; ++j) {
+      full_scratch[j * rowsU + i] = ctx->C->data[i * colsU + j];
+    }
+  }
+  memcpy(ctx->C->data, full_scratch, (size_t)rowsU * (size_t)colsU * sizeof(int32_t));
+#endif
 }
 #else
-static inline void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
-  (void)ctx; (void)scratch;
+static inline void unflip_output(const ope_case_ctx_t *ctx,
+                                 int32_t *tile_scratch,
+                                 int32_t *full_scratch) {
+  (void)ctx; (void)tile_scratch; (void)full_scratch;
 }
 #endif
 
@@ -186,17 +202,21 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     return;
   }
 
-  int32_t *unflip_buf = NULL;
+  int32_t tile_scratch[64];
+  int32_t *unflip_full_buf = NULL;
 #if OPE_EXT_FLIP == 1
-  unflip_buf = (int32_t *)aligned_alloc(8, 64 * sizeof(int32_t));
-  if (!unflip_buf) {
-    printf("  ERROR: Failed to alloc unflip buffer\n");
+  size_t unflip_elems = (size_t)ctx.C->rowsU * (size_t)ctx.C->colsU;
+#if OPE_OUT_FULL_TRANSPOSE
+  unflip_full_buf = (int32_t *)aligned_alloc(8, unflip_elems * sizeof(int32_t));
+  if (!unflip_full_buf) {
+    printf("  ERROR: Failed to alloc full unflip buffer\n");
     ope_case_ctx_destroy(&ctx);
     return;
   }
 #endif
+#endif
 
-  bench_cache_flush();
+  // bench_cache_flush();
   bench_fill_int32_zero(ctx.C->data, ctx.C->rows, ctx.C->colsU, ctx.C->colsU);
 
   long sanity_cycles_ope = 0;
@@ -209,7 +229,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     sanity_cycles_total = (long)(t1 - t0);
   }
 
-  unflip_output(&ctx, unflip_buf);
+  unflip_output(&ctx, tile_scratch, unflip_full_buf);
   int errors = bench_compare_results(ctx.C->data, ctx.C->colsU, 
                                      ctx.C_ref, N, M, N, 1);
 
@@ -227,7 +247,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
   int cold_runs = 0;
 
   for (int r = 0; r < BENCH_RUNS_COLD; ++r) {
-    bench_cache_flush();
+    // bench_cache_flush();
     bench_fill_int32_zero(ctx.C->data, ctx.C->rows, ctx.C->colsU, ctx.C->colsU);
 
     uint64_t t0 = rdcycle64();
@@ -235,7 +255,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     uint64_t t1 = rdcycle64();
     long cycles_total = (long)(t1 - t0);
 
-    unflip_output(&ctx, unflip_buf);
+    unflip_output(&ctx, tile_scratch, unflip_full_buf);
     int errs = bench_compare_results(ctx.C->data, ctx.C->colsU,
                                      ctx.C_ref, N, M, N, 0);
 
@@ -274,7 +294,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     uint64_t t1 = rdcycle64();
     long cycles_total = (long)(t1 - t0);
 
-    unflip_output(&ctx, unflip_buf);
+    unflip_output(&ctx, tile_scratch, unflip_full_buf);
     int errs = bench_compare_results(ctx.C->data, ctx.C->colsU,
                                     ctx.C_ref, N, M, N, 0);
 
@@ -300,6 +320,6 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     printf("  HOT:  no valid runs\n");
   }
 
-  if (unflip_buf) free(unflip_buf);
+  if (unflip_full_buf) free(unflip_full_buf);
   ope_case_ctx_destroy(&ctx);
 }

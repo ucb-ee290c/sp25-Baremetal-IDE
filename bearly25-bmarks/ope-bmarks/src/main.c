@@ -8,7 +8,7 @@
 void app_init(void) {
   printf("DEBUG: app_init() started\n");
   printf("DEBUG: calling bench_cache_init()...\n");
-  bench_cache_init();
+  // bench_cache_init();
   printf("DEBUG: bench_cache_init() completed\n");
 }
 

@@ -228,11 +228,7 @@ long ope_matmul_16x16(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out) {
       OP_ACC_L((int8_t*)(A_T + (i * 16 * 8)),
                (int8_t*)(B_remap + (j * 16 * 8)), 16);
 
-#if OPE_EXT_FLIP == 1
-      int32_t* addr = &out->data[(j * 8) * 16 + (i * 8)];
-#else
       int32_t* addr = &out->data[(i * 8) * 16 + (j * 8)];
-#endif
       OP_EXT_STRIDE(addr, 16, OPE_EXT_FLIP);
     }
   }
@@ -253,11 +249,7 @@ long ope_matmul_32x32(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out) {
       OP_ZERO();
       OP_ACC_L(A_T + (i * 32 * 8), B_remap + (j * 32 * 8), 32);
 
-#if OPE_EXT_FLIP == 1
-      int32_t* addr = &out->data[(j * 8) * 32 + (i * 8)];
-#else
       int32_t* addr = &out->data[(i * 8) * 32 + (j * 8)];
-#endif
       OP_EXT_STRIDE(addr, 32, OPE_EXT_FLIP);
     }
   }
@@ -281,11 +273,7 @@ long ope_matmul_64x64(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out) {
       OP_ACC_L(A_T + (i * 64 * 8) + (32 * 8),
                B_remap + (j * 64 * 8) + (32 * 8), 32);
 
-#if OPE_EXT_FLIP == 1
-      int32_t* addr = &out->data[(j * 8) * 64 + (i * 8)];
-#else
       int32_t* addr = &out->data[(i * 8) * 64 + (j * 8)];
-#endif
       OP_EXT_STRIDE(addr, 64, OPE_EXT_FLIP);
     }
   }
@@ -386,11 +374,7 @@ long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
         }
       }
 
-#if OPE_EXT_FLIP == 1
-      int32_t* addr = &out->data[(j * 8) * out->colsU + (i * 8)];
-#else
       int32_t* addr = &out->data[(i * 8) * out->colsU + (j * 8)];
-#endif
       OP_EXT_STRIDE(addr, stride, OPE_EXT_FLIP);
     }
   }

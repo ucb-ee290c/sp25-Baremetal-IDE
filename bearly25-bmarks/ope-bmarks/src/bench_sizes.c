@@ -23,12 +23,3 @@ const OpeSizeCase OPE_BENCH_RECT_CASES[] = {
 };
 const int OPE_BENCH_NUM_RECT_CASES =
   (int)(sizeof(OPE_BENCH_RECT_CASES)/sizeof(OPE_BENCH_RECT_CASES[0]));
-
-const OpeSizeCase OPE_BENCH_SPECIAL_CASES[] = {
-  {"special_8x8", 8, 8, 8},
-  {"special_16x16", 16, 16, 16},
-  {"special_32x32", 32, 32, 32},
-  {"special_64x64", 64, 64, 64},
-};
-const int OPE_BENCH_NUM_SPECIAL_CASES =
-  (int)(sizeof(OPE_BENCH_SPECIAL_CASES)/sizeof(OPE_BENCH_SPECIAL_CASES[0]));

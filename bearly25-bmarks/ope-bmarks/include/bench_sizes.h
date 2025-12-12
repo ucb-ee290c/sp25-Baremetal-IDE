@@ -11,8 +11,4 @@ extern const int OPE_BENCH_NUM_SQUARE_CASES;
 extern const OpeSizeCase OPE_BENCH_RECT_CASES[];
 extern const int OPE_BENCH_NUM_RECT_CASES;
 
-// Special tile sizes that line up with the specialized functions
-extern const OpeSizeCase OPE_BENCH_SPECIAL_CASES[];
-extern const int OPE_BENCH_NUM_SPECIAL_CASES;
-
 #endif // BENCH_SIZES_H

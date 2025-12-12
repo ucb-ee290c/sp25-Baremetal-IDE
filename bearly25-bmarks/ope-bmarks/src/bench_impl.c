@@ -100,59 +100,6 @@ static void ope_case_ctx_destroy(ope_case_ctx_t *ctx) {
   memset(ctx, 0, sizeof(*ctx));
 }
 
-// Specialized helper for 16/32/64 using remap buffers.
-static long run_special_remap_kernel(ope_impl_kind_t impl,
-                                     const OpeSizeCase *cs,
-                                     const ope_case_ctx_t *ctx) {
-  const int M = cs->M;
-  const int N = cs->N;
-  const int K = cs->K;
-
-  if (!(M == N && N == K)) {
-    // Only valid for square; fall back.
-    return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
-  }
-
-  int tile;
-  switch (impl) {
-    case OPE_IMPL_SPECIAL_16: tile = 16; break;
-    case OPE_IMPL_SPECIAL_32: tile = 32; break;
-    case OPE_IMPL_SPECIAL_64: tile = 64; break;
-    default: return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
-  }
-
-  if (M != tile) {
-    return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
-  }
-
-  const int kU = ctx->A->colsU;
-  const size_t bytes = (size_t)kU * (size_t)kU * sizeof(int8_t);
-
-  int8_t *A_T = (int8_t *)aligned_alloc(8, bytes);
-  int8_t *B_remap = (int8_t *)aligned_alloc(8, bytes);
-  if (!A_T || !B_remap) {
-    printf("WARN: remap alloc failed, falling back to arb\n");
-    if (A_T) free(A_T);
-    if (B_remap) free(B_remap);
-    return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
-  }
-
-  ope_remap_matrix_A(ctx->A, A_T);
-  ope_remap_matrix_B(ctx->B, B_remap);
-
-  long cycles = 0;
-  switch (tile) {
-    case 16: cycles = ope_matmul_16x16(A_T, B_remap, ctx->C); break;
-    case 32: cycles = ope_matmul_32x32(A_T, B_remap, ctx->C); break;
-    case 64: cycles = ope_matmul_64x64(A_T, B_remap, ctx->C); break;
-    default: cycles = ope_matmul_arb(ctx->A, ctx->B, ctx->C); break;
-  }
-
-  free(A_T);
-  free(B_remap);
-  return cycles;
-}
-
 static long run_impl_once(ope_impl_kind_t impl,
                           const OpeSizeCase *cs,
                           ope_case_ctx_t *ctx) {
@@ -170,18 +117,6 @@ static long run_impl_once(ope_impl_kind_t impl,
       } else {
         return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
       }
-
-    case OPE_IMPL_SPECIAL_8:
-      if (M == 8 && N == 8 && K == 8) {
-        return ope_matmul_8x8(ctx->A, ctx->B, ctx->C);
-      } else {
-        return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
-      }
-
-    case OPE_IMPL_SPECIAL_16:
-    case OPE_IMPL_SPECIAL_32:
-    case OPE_IMPL_SPECIAL_64:
-      return run_special_remap_kernel(impl, cs, ctx);
     default:
       return ope_matmul_arb(ctx->A, ctx->B, ctx->C);
   }

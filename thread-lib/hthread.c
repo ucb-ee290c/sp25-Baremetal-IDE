@@ -1,4 +1,5 @@
 #include "hthread.h"
+#include "chip_config.h"
 
 static wsdeque_t deques[N_HARTS];
 static volatile uint8_t hart_busy[N_HARTS];
@@ -100,8 +101,9 @@ void hthread_join(uint32_t hartid) {
 void hthread_barrier() {
     uint64_t mhartid = READ_CSR("mhartid");
     uint32_t epoch = barrier_epoch;
+    uint32_t tmp;
 
-    asm volatile("amoadd.w zero, 1, (%0)" :: "r"(&barrier_count));
+    asm volatile("amoadd.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&barrier_count) : "memory");
 
     if (barrier_count == N_HARTS) {
         barrier_count = 0;

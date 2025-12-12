@@ -3,9 +3,8 @@
 
 #include "clint.h"
 #include "riscv.h"
-#include "chip_config.h"
 
-#define N_HARTS 4
+#define N_HARTS 2
 
 void hthread_issue(uint32_t hartid, void *(* start_routine)(void *), void *arg);
 

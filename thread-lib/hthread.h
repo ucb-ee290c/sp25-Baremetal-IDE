@@ -2,7 +2,6 @@
 #define __HTHREAD_H
 
 #include "clint.h"
-#include "chip_config.h"
 #include "riscv.h"
 #include <stdint.h>
 

@@ -19,7 +19,6 @@ typedef struct {
     htask_t tasks[WSQ_SIZE];
 } wsdeque_t;
 
-
 void hthread_init();
 void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);
 void hthread_dispatch(void (*fn)(void *), void *arg);

@@ -2,6 +2,7 @@
 #include "chip_config.h"
 
 static wsdeque_t deques[N_HARTS];
+static volatile uint32_t pending_tasks[N_HARTS];
 static volatile uint8_t hart_busy[N_HARTS];
 
 static volatile uint32_t barrier_count = 0;
@@ -32,6 +33,7 @@ static inline void ws_push(uint32_t hartid, htask_t task) {
     dq->tasks[b & (WSQ_SIZE - 1)] = task;
     dq->bottom = b + 1;
 
+    __sync_fetch_and_add(&pending_tasks[hartid], 1);
     hart_busy[hartid] = 1;
 }
 
@@ -46,6 +48,7 @@ static inline int ws_pop(uint32_t hartid, htask_t *out) {
 
     if (t <= b) {
         *out = dq->tasks[b & (WSQ_SIZE - 1)];
+        __sync_fetch_and_sub(&pending_tasks[hartid], 1);
         return 1; // success
     } else {
         dq->bottom = t;  // undo
@@ -68,6 +71,7 @@ static inline int ws_steal(uint32_t victim, htask_t *out) {
 
     if (atomic_cas(&dq->top, t, t + 1)) {
         *out = task;
+        __sync_fetch_and_sub(&pending_tasks[victim], 1);
         return 1;
     }
 
@@ -92,7 +96,17 @@ void hthread_dispatch(void (*fn)(void *), void *arg) {
 
 // Block until a specific hart has no more pending tasks
 void hthread_join(uint32_t hartid) {
-    while (hart_busy[hartid]) {
+    uint64_t self = READ_CSR("mhartid");
+    htask_t task;
+
+    while (pending_tasks[hartid] != 0) {
+        // If we're waiting on our own queue, make forward progress locally
+        if (self == hartid) {
+            if (ws_pop(hartid, &task)) {
+                task.fn(task.arg);
+                continue;
+            }
+        }
         asm volatile("nop");
     }
 }
@@ -120,6 +134,7 @@ void hthread_init() {
     for (int i = 0; i < N_HARTS; i++) {
         deques[i].top = 0;
         deques[i].bottom = 0;
+        pending_tasks[i] = 0;
         hart_busy[i] = 0;
     }
 }

@@ -14,17 +14,27 @@ typedef struct {
 } ope_case_ctx_t;
 
 #if OPE_EXT_FLIP == 1
-// The hardware writes tiles transposed when OPE_EXT_FLIP is set.
-// Remap back to row-major before checking correctness.
+// Hardware returns each 8x8 tile transposed; flip tiles back in-place.
+// Scratch must hold at least 64 int32_t entries.
 static void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
   const int rowsU = ctx->C->rowsU;
   const int colsU = ctx->C->colsU;
-  for (int i = 0; i < rowsU; ++i) {
-    for (int j = 0; j < colsU; ++j) {
-      scratch[j * rowsU + i] = ctx->C->data[i * colsU + j];
+  for (int tr = 0; tr < rowsU; tr += 8) {
+    for (int tc = 0; tc < colsU; tc += 8) {
+      // Transpose one 8x8 tile into scratch
+      for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 8; ++c) {
+          scratch[c * 8 + r] = ctx->C->data[(tr + r) * colsU + (tc + c)];
+        }
+      }
+      // Copy back in original layout
+      for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 8; ++c) {
+          ctx->C->data[(tr + r) * colsU + (tc + c)] = scratch[r * 8 + c];
+        }
+      }
     }
   }
-  memcpy(ctx->C->data, scratch, (size_t)rowsU * (size_t)colsU * sizeof(int32_t));
 }
 #else
 static inline void unflip_output(const ope_case_ctx_t *ctx, int32_t *scratch) {
@@ -178,8 +188,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
 
   int32_t *unflip_buf = NULL;
 #if OPE_EXT_FLIP == 1
-  size_t unflip_elems = (size_t)ctx.C->rowsU * (size_t)ctx.C->colsU;
-  unflip_buf = (int32_t *)aligned_alloc(8, unflip_elems * sizeof(int32_t));
+  unflip_buf = (int32_t *)aligned_alloc(8, 64 * sizeof(int32_t));
   if (!unflip_buf) {
     printf("  ERROR: Failed to alloc unflip buffer\n");
     ope_case_ctx_destroy(&ctx);

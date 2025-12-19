@@ -1,3 +1,6 @@
+/*
+ * MNIST input samples for the float FC test in bearly25-tests/mnist.
+ */
 #ifndef INPUT_MNIST_H
 #define INPUT_MNIST_H
 

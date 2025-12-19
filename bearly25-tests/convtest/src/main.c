@@ -13,6 +13,12 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.c - 2D convolution accelerator test.
+ *
+ * Compares a software reference convolution against the hardware block and
+ * reports mismatches and timing.
+ */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "hal_2d_conv.h"

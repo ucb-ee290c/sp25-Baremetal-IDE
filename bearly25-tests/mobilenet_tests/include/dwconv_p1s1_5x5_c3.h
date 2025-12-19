@@ -1,3 +1,6 @@
+/*
+ * Test vectors for depthwise conv validation in bearly25-tests/mobilenet_tests.
+ */
 /* Auto-generated depthwise conv2D 3x3 int8 + residual add test case. */
 #pragma once
 
@@ -88,4 +91,3 @@ static const int8_t dwconv_p1s1_5x5_c3_res_ref[49] = {
 static const float dwconv_p1s1_5x5_c3_res_scales[1] = {
     0.50000000f
 };
-

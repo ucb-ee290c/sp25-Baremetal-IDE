@@ -1,3 +1,6 @@
+/*
+ * tests.h - Test entry points for the thread-lib work-stealing runtime.
+ */
 #ifndef __TESTS_H
 #define __TESTS_H
 

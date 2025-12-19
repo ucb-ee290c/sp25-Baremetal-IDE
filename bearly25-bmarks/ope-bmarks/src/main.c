@@ -1,3 +1,9 @@
+/*
+ * main.c - Entry point for OPE matmul microbenchmarks.
+ *
+ * Runs square and rectangular cases across selected implementations and
+ * reports timing statistics.
+ */
 #include <stdio.h>
 
 #include "bench_config.h"

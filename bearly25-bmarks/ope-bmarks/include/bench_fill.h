@@ -1,3 +1,8 @@
+/*
+ * bench_fill.h - Input generation and reference checks for OPE benchmarks.
+ *
+ * Provides deterministic fills, scalar GEMM, and result comparison helpers.
+ */
 #ifndef BENCH_FILL_H
 #define BENCH_FILL_H
 

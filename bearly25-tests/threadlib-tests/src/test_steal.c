@@ -1,3 +1,6 @@
+/*
+ * test_steal.c - Work-stealing distribution test across harts.
+ */
 #include "tests.h"
 #include "hthread.h"
 #include "riscv.h"

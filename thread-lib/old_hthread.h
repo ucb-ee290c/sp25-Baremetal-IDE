@@ -1,3 +1,9 @@
+/*
+ * old_hthread.h - Legacy threading API for early bring-up.
+ *
+ * Minimal interface for dispatching a single task to a hart and waiting
+ * for completion via shared flags.
+ */
 #ifndef __HTHREAD_H
 #define __HTHREAD_H
 

@@ -1,3 +1,9 @@
+/*
+ * bench_fill.c - Input generation and reference math for OPE benchmarks.
+ *
+ * Provides deterministic int8 patterns, zeroing helpers, CPU GEMM reference,
+ * and output comparison utilities.
+ */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

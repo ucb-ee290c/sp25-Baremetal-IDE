@@ -1,3 +1,6 @@
+/*
+ * Static test matrices for OPE functional tests.
+ */
 #ifndef OPE_TEST_INPUTS_H
 #define OPE_TEST_INPUTS_H
 #include <stdint.h>

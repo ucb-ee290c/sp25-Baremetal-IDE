@@ -1,3 +1,6 @@
+/*
+ * MNIST input samples for the quantized CNN test in bearly25-tests/mnist_cnn_quant.
+ */
 #ifndef INPUT_MNIST_H
 #define INPUT_MNIST_H
 

@@ -1,3 +1,6 @@
+/*
+ * memlat_tests.h - Test entry points for the memory-latency benchmark suite.
+ */
 #ifndef MEMLAT_TESTS_H
 #define MEMLAT_TESTS_H
 

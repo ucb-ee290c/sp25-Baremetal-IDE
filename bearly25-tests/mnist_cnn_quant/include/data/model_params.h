@@ -1,3 +1,8 @@
+/*
+ * Quantized model parameters for the MNIST CNN test in bearly25-tests/mnist_cnn_quant.
+ *
+ * Auto-generated weights and requantization scales.
+ */
 // Auto-generated symmetric-quant model_params.h
 #ifndef MODELPARAMS_H
 #define MODELPARAMS_H

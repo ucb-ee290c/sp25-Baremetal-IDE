@@ -14,6 +14,9 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.h - Common includes and entry points for MobileNet kernel tests.
+ */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
 #ifndef __MAIN_H

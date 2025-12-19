@@ -13,6 +13,12 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.c - Quantized MNIST CNN test using the 2D conv accelerator.
+ *
+ * Uses the accelerator for depthwise convs and vectorized requantization,
+ * then finishes with pointwise conv, pooling, and FC layers.
+ */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "math.h"

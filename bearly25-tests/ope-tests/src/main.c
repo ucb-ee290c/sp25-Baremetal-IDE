@@ -1,5 +1,8 @@
 /* =========================================================================
- * main.c — Simple tests for OPE matmul
+ * main.c - Simple tests for OPE matmul
+ *
+ * Builds reference GEMM outputs, runs OPE kernels, fixes output layout
+ * if tiles are transposed, and compares results.
  * ========================================================================= */
 
 #include "main.h"

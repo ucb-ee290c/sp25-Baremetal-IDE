@@ -1,3 +1,10 @@
+/*
+ * main.c - MobileNetV2 int8 demo inference on Bearly25.
+ *
+ * Implements the forward pass with depthwise/pointwise conv blocks, ReLU6,
+ * global average pooling, and the final FC layer. Uses generated weights
+ * and input samples from the include/ directory.
+ */
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>

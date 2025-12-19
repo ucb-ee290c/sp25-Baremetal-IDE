@@ -1,3 +1,6 @@
+/*
+ * memlat_config.h - Configuration constants for memory-latency microbenchmarks.
+ */
 #ifndef MEMLAT_CONFIG_H
 #define MEMLAT_CONFIG_H
 

@@ -1,3 +1,6 @@
 [submodule "lib/baremetal-nn"]
 	path = lib/baremetal-nn
 	url = https://github.com/ucb-bar/Baremetal-NN.git
+[submodule "whisper/whisper.cpp"]
+	path = whisper/whisper.cpp
+	url = https://github.com/zanderdenning/whisper.cpp.git

@@ -2,3 +2,5 @@
 build/
 *.log
 *.afdo
+
+whisper_model_data.c

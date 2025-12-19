@@ -10,7 +10,7 @@ extern "C" {
 #include "plic.h"
 #include "htif.h"
 #include "spi.h"
-#include "i2c.h"
+// #include "i2c.h"
 #include "uart.h"
 #include "gpio.h"
 #include "pll.h"

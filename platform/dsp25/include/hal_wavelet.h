@@ -6,7 +6,8 @@ extern "C" {
 #endif
 
 #include  "hal_mmio.h"
-#include "chip_config.h"
+//#include "chip_config.h"
+#include <stdint.h>
 
 #define WAVELET_BASE 0x08810000U
 #define WAVELET_EVEN_INPUT  (WAVELET_BASE + 0x00)
@@ -19,6 +20,19 @@ extern "C" {
 
 #define FORWARD 0b100
 #define INVERSE 0b000
+
+enum wavelet_sel {
+	WAVELET_DB_4,
+	WAVELET_BIOR_2_4,
+	WAVELET_BIOR_3_5,
+	WAVELET_COIF_1
+};
+
+enum wavelet_flags {
+	WAVELET_FLUSH = 1,
+	WAVELET_FLOAT = 1<<2,
+	WAVELET_FORWARD = 1<<3
+}
 
 /* typedef struct {
    __IO uint64_t EVEN_INPUT;
@@ -47,6 +61,13 @@ void start_wavelet();
 void wavelet_forward(uint64_t *input_sample, uint8_t num_tests, uint64_t *output_sample, uint8_t sel);
 
 void wavelet_inverse(uint64_t *input_sample, uint8_t num_tests, uint64_t *output_sample, uint8_t sel);
+
+
+unsigned int num_outputs(unsigned int num_inputs, bool inverse);
+void dwt_int(uint32_t* input, uint32_t* output, unsigned int size, uint8_t wavelet);
+void idwt_int(uint32_t* input, uint32_t* output, unsigned int size, uint8_t wavelet);
+void dwt_float(float* input, float* output, unsigned int size, uint8_t wavelet);
+void idwt_float(float* input, float* output, unsigned int size, uint8_t wavelet);
 
 #ifdef __cplusplus
 }

@@ -47,10 +47,8 @@ OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY {
-  LIBIFROM (rwx): ORIGIN = 0x00020000, LENGTH = 64K
-  LIBIFRAM (rwx): ORIGIN = 0x00030000, LENGTH = 64K
   SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 32K
-  FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 128M
+  FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 16M
   DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 2048M
 }
 
@@ -63,7 +61,7 @@ SECTIONS {
   PROVIDE(__stack_size = __stack_size);
 
   /* Default heap size (4K) */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 4K;
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 6K;
   PROVIDE(__heap_size = __heap_size);
   
   /*

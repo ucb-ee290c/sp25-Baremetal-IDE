@@ -29,9 +29,12 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdlib.h>
-// #include <stdint.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
+#include <math.h>
+#include <signal.h>
 
 #include "riscv.h"
 

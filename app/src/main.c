@@ -39,7 +39,7 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
 
-uint8_t counter = 0;
+// uint8_t counter = 0;
 
 /* USER CODE END PV */
 
@@ -60,9 +60,9 @@ void app_init() {
 
 
 void app_main() {
-  uint64_t mhartid = READ_CSR("mhartid");
+  // uint64_t mhartid = READ_CSR("mhartid");
 
-  printf("Hello world from hart %d: %d\n", mhartid, counter);
+  printf("Hello world from hart \n");
 
   // sleep(1);
 }

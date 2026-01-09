@@ -1,20 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "chip_config.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -46,20 +47,41 @@ uint8_t counter = 0;
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
 
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN PUC */
 
-
 void app_init() {
-  // torch::executor::runtime_init();
+
+  GPIO_InitType gpio_init_config;
+  gpio_init_config.mode = GPIO_MODE_OUTPUT;
+  gpio_init_config.pull = GPIO_PULL_NONE;
+  gpio_init_config.drive_strength = GPIO_DS_STRONG;
+
+  gpio_init(GPIOA, &gpio_init_config, GPIO_PIN_0);
+  gpio_init(GPIOA, &gpio_init_config, GPIO_PIN_1);
 }
 
-
+void handle_sigint(int sig) {
+  printf("\nCaught signal %d, exiting...\n", sig);
+  //exit(0);
+}
 
 void app_main() {
+  while (1) {
+    gpio_write_pin(GPIOA, GPIO_PIN_0, 0);
+    gpio_write_pin(GPIOA, GPIO_PIN_1, 1);
+    printf("First LEDs\n"); 
+    /*Always need a new line after print statement 
+    to ensure it doesn't try to fill buffer and 
+    prints every new line*/
+    msleep(1000);
+    gpio_write_pin(GPIOA, GPIO_PIN_0, 1);
+    gpio_write_pin(GPIOA, GPIO_PIN_1, 0);
+    printf("Second LEDs\n");
+    msleep(1000);
+  }
   char *msg = "Alive";
   
   /*for (size_t i = 0; i < strlen(msg); i++) {
@@ -79,13 +101,16 @@ void app_main() {
 /* USER CODE END PUC */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
-  */
+ * @brief  The application entry point.
+ * @retval int
+ */
 int main(int argc, char **argv) {
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Configure the system clock */
+  /* Configure the system clock */
+
+  /* USER CODE BEGIN SysInit */
   /* USER CODE BEGIN SysInit */
   // Initialize UART0 for Serial Monitor
   UART_InitType UART0_init_config;
@@ -96,27 +121,29 @@ int main(int argc, char **argv) {
 
   /* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */  
+  /* Initialize all configured peripherals */
   /* USER CODE BEGIN Init */
   app_init();
+  signal(SIGINT, handle_sigint);
   /* USER CODE END Init */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
     app_main();
-    return 0;
   }
+  return 0;
   /* USER CODE END WHILE */
 }
 
 /*
  * Main function for secondary harts
- * 
+ *
  * Multi-threaded programs should provide their own implementation.
  */
 void __attribute__((weak, noreturn)) __main(void) {
+  uint64_t mhartid = READ_CSR("mhartid");
   while (1) {
-   asm volatile ("wfi");
+    asm volatile("wfi");
   }
 }

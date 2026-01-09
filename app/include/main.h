@@ -32,6 +32,9 @@ extern "C" {
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
+#include <math.h>
+#include <signal.h>
 
 #include "riscv.h"
 

@@ -47,10 +47,8 @@ OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY {
-  LIBIFROM (rwx): ORIGIN = 0x00020000, LENGTH = 64K
-  LIBIFRAM (rwx): ORIGIN = 0x00030000, LENGTH = 64K
   SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 32K
-  FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 128M
+  FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 16M
   DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 2048M
 }
 
@@ -58,12 +56,12 @@ SECTIONS {
   /* Default boot hart */
   PROVIDE(__boot_hart = 0);
   
-  /* Default stack size (1M) */
-  __stack_size = DEFINED(__stack_size) ? __stack_size : 1M;
+  /* Default stack size (4K) */
+  __stack_size = DEFINED(__stack_size) ? __stack_size : 4K;
   PROVIDE(__stack_size = __stack_size);
 
-  /* Default heap size (2M) */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 2M;
+  /* Default heap size (4K) */
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 4K;
   PROVIDE(__heap_size = __heap_size);
   
   /*
@@ -104,7 +102,7 @@ SECTIONS {
     
     *(.gnu.linkonce.t.*)
     PROVIDE(__text_end = .);
-  }> DRAM
+  }> FLASH
   PROVIDE(__text_load_start = LOADADDR(.text));
 
   /* Section containing read-only data */
@@ -118,7 +116,7 @@ SECTIONS {
     *(.srodata.cst4)
     *(.srodata.cst2)
     *(.srodata .srodata.*)
-  }> DRAM
+  }> FLASH
 
   /* Section for initialized data */
   .data : ALIGN(8) {
@@ -145,7 +143,7 @@ SECTIONS {
     KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
     KEEP(*(.fini_array EXCLUDE_FILE(*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o ) .dtors))
     PROVIDE_HIDDEN(__fini_array_end = .);
-  }> DRAM
+  }> SCRATCH AT> FLASH
   
   PROVIDE(__data_load_start = LOADADDR(.data));
 
@@ -154,7 +152,7 @@ SECTIONS {
     PROVIDE(__global_pointer$ = . + 0x800);
     *(.sdata .sdata.*)
     *(.gnu.linkonce.s.*)
-  }> DRAM
+  }> SCRATCH AT> FLASH
 
   /* Section for initialized thread-local small data */
   .tdata : {
@@ -163,7 +161,7 @@ SECTIONS {
     *(.gnu.linkonce.td.*)
     PROVIDE_HIDDEN(__tdata_end = .);
     PROVIDE(__data_end = .);
-  }> DRAM
+  }> SCRATCH AT> FLASH
 
   PROVIDE(__tdata_size = SIZEOF(.tdata));
 
@@ -175,7 +173,7 @@ SECTIONS {
     *(.gnu.linkonce.tb.*)
     *(.tcommon)
     PROVIDE_HIDDEN(__tbss_end = .);
-  }> DRAM
+  }> SCRATCH
   
   PROVIDE(__tbss_size = SIZEOF(.tbss));
 
@@ -184,7 +182,7 @@ SECTIONS {
     PROVIDE_HIDDEN(__bss_start = .);
     *(.sbss .sbss.*)
     *(.gnu.linkonce.sb.*)
-  }> DRAM
+  }> SCRATCH
   
   /* Section for uninitialized data */
   .bss (NOLOAD) : ALIGN(8) {
@@ -192,7 +190,7 @@ SECTIONS {
     *(.gnu.linkonce.b.*)
     *(COMMON)
     PROVIDE_HIDDEN(__bss_end = .);
-  }> DRAM
+  }> SCRATCH
 
   . = ALIGN(8);
   PROVIDE(__end = .);
@@ -203,7 +201,7 @@ SECTIONS {
     . += __heap_size;
     . = ALIGN(4K);
     PROVIDE_HIDDEN(__heap_end = .);
-  }> DRAM
+  }> SCRATCH
   
   /* Reserve stack space */
   .stack (NOLOAD) : ALIGN(16) {
@@ -211,7 +209,7 @@ SECTIONS {
     . += __stack_size * 5; /* Hart 0 */
     PROVIDE(_sp = .);
     PROVIDE_HIDDEN(__stack_end = .);
-  }> DRAM
+  }> SCRATCH
 
   PROVIDE(__stack_shift = LOG2CEIL(__stack_size));
 

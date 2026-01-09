@@ -31,10 +31,10 @@ extern "C" {
 //  System Clock
 // ================================
 // system clock frequency in Hz
-#define SYS_CLK_FREQ   100000000
+#define SYS_CLK_FREQ   50000000
 
 // CLINT time base frequency in Hz
-#define MTIME_FREQ     10000
+#define MTIME_FREQ     50000
 
 
 // ================================
@@ -44,6 +44,8 @@ extern "C" {
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
 #define PWM_BASE                    0x10060000U
+#define GPIOA_BASE                  0x10010000U
+#define GPIOB_BASE                  0x10011000U
 
 #define UART0_BASE                  0x10020000U
 #define I2S_BASE                    0x10042000U
@@ -58,7 +60,8 @@ extern "C" {
 #define PLL                         ((PLL_Type *)PLL_BASE)
 #define UART0                       ((UART_Type *)UART0_BASE)
 #define PWM0_BASE                   (PWM_BASE)
-#define DMA                         ((DMA_Type *)DMA_Base)
+#define GPIOA                       ((GPIO_Type *)GPIOA_BASE)
+#define GPIOB                       ((GPIO_Type *)GPIOB_BASE)
 
 // #define CONV_BASE                   0x08800000U
 // #define CONV1D                  ((ConvAccel_Type *)CONV_BASE)

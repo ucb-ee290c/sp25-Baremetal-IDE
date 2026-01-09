@@ -13,6 +13,7 @@ extern "C" {
 #include "i2c.h"
 #include "uart.h"
 #include "gpio.h"
+#include "pwm.h"
 #include "pll.h"
 
 // ================================
@@ -20,6 +21,9 @@ extern "C" {
 // ================================
 #include "hal_mmio.h"
 #include "hal_rcc.h"
+#include "hal_i2s.h"
+#include "hal_dma.h"
+#include "hal_wavelet.h"
 
 
 // ================================
@@ -38,11 +42,22 @@ extern "C" {
 #define RCC_BASE                    0x00100000U
 #define CLINT_BASE                  0x02000000U
 #define PLIC_BASE                   0x0C000000U
+#define PWM_BASE                    0x10060000U
+
+#define UART0_BASE                  0x10020000U
+#define I2S_BASE                    0x10042000U
+#define PLL_BASE                    0x00140000U
+#define WAVELET_BASE                0x08810000U
+#define DMA_BASE                    0x08812000U
 
 #define RCC_CLOCK_SELECTOR          ((ClockSel_Type*)(RCC_BASE + 0x30000))
-#define CLINT                      ((CLINT_Type *)CLINT_BASE)
-#define PLIC                       ((PLIC_Type *)PLIC_BASE)
-#define PLIC_CC                 ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
+#define CLINT                       ((CLINT_Type *)CLINT_BASE)
+#define PLIC                        ((PLIC_Type *)PLIC_BASE)
+#define PLIC_CC                     ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
+#define PLL                         ((PLL_Type *)PLL_BASE)
+#define UART0                       ((UART_Type *)UART0_BASE)
+#define PWM0_BASE                   (PWM_BASE)
+#define DMA                         ((DMA_Type *)DMA_Base)
 
 
 #ifdef __cplusplus

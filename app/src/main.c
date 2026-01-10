@@ -53,18 +53,10 @@ uint8_t counter = 0;
 /* USER CODE BEGIN PUC */
 
 void app_init() {
-
-  GPIO_InitType gpio_init_config;
-  gpio_init_config.mode = GPIO_MODE_OUTPUT;
-  gpio_init_config.pull = GPIO_PULL_NONE;
-  gpio_init_config.drive_strength = GPIO_DS_STRONG;
-
-  gpio_init(GPIOA, &gpio_init_config, GPIO_PIN_0);
-  gpio_init(GPIOA, &gpio_init_config, GPIO_PIN_1);
 }
 
 void handle_sigint(int sig) {
-  printf("\nCaught signal %d, exiting...\n", sig);
+  //printf("\nCaught signal %d, exiting...\n", sig);
   //exit(0);
 }
 

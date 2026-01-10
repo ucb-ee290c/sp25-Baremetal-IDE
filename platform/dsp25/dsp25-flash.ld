@@ -1,5 +1,5 @@
 /**
-  * @file dsp25-scratch.ld
+  * @file dsp25-flash.ld
   * @brief Linker script to place sections and symbol values. Should be used together
   * with other linker script that defines memory regions FLASH and RAM.
   * It references following symbols, which must be defined in code:
@@ -82,22 +82,27 @@ SECTIONS {
     *(.text.unlikely .text.unlikely.*)
     *(.text.startup .text.startup.*)
     *(.text .text.*)
+    
+    KEEP(*(.init))
+    KEEP(*(.fini))
 
     /* .ctors - Section for constructors */
     KEEP(*crtbegin.o(.ctors))
     KEEP(*crtbegin?.o(.ctors))
     KEEP(*(EXCLUDE_FILE(*crtend.o *crtend?.o) .ctors))
     KEEP(*(SORT(.ctors.*)))
+    KEEP(*(.ctors))
 
     /* .dtors - Section for destructors */
     KEEP(*crtbegin.o(.dtors))
     KEEP(*crtbegin?.o(.dtors))
     KEEP(*(EXCLUDE_FILE(*crtend.o *crtend?.o) .dtors))
     KEEP(*(SORT(.dtors.*)))
+    KEEP(*(.dtors))
     
     *(.gnu.linkonce.t.*)
     PROVIDE(__text_end = .);
-  }> SCRATCH
+  }> FLASH
   PROVIDE(__text_load_start = LOADADDR(.text));
 
   /* Section containing read-only data */
@@ -111,7 +116,7 @@ SECTIONS {
     *(.srodata.cst4)
     *(.srodata.cst2)
     *(.srodata .srodata.*)
-  }> SCRATCH
+  }> FLASH
 
   /* Section for initialized data */
   .data : ALIGN(8) {
@@ -138,7 +143,7 @@ SECTIONS {
     KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
     KEEP(*(.fini_array EXCLUDE_FILE(*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o ) .dtors))
     PROVIDE_HIDDEN(__fini_array_end = .);
-  }> SCRATCH
+  }> SCRATCH AT> FLASH
   
   PROVIDE(__data_load_start = LOADADDR(.data));
 
@@ -147,7 +152,7 @@ SECTIONS {
     PROVIDE(__global_pointer$ = . + 0x800);
     *(.sdata .sdata.*)
     *(.gnu.linkonce.s.*)
-  }> SCRATCH
+  }> SCRATCH AT> FLASH
 
   /* Section for initialized thread-local small data */
   .tdata : {
@@ -156,7 +161,7 @@ SECTIONS {
     *(.gnu.linkonce.td.*)
     PROVIDE_HIDDEN(__tdata_end = .);
     PROVIDE(__data_end = .);
-  }> SCRATCH
+  }> SCRATCH AT> FLASH
 
   PROVIDE(__tdata_size = SIZEOF(.tdata));
 
@@ -201,7 +206,7 @@ SECTIONS {
   /* Reserve stack space */
   .stack (NOLOAD) : ALIGN(16) {
     PROVIDE_HIDDEN(__stack_start = .);
-    . += __stack_size; /* Hart 0 */
+    . += __stack_size * 5; /* Hart 0 */
     PROVIDE(_sp = .);
     PROVIDE_HIDDEN(__stack_end = .);
   }> SCRATCH

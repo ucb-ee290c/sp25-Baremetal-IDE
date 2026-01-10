@@ -1,5 +1,5 @@
 /**
-  * @file dsp25.ld
+  * @file dsp25-scratch.ld
   * @brief Linker script to place sections and symbol values. Should be used together
   * with other linker script that defines memory regions FLASH and RAM.
   * It references following symbols, which must be defined in code:
@@ -61,7 +61,7 @@ SECTIONS {
   PROVIDE(__stack_size = __stack_size);
 
   /* Default heap size (4K) */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 6K;
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 4K;
   PROVIDE(__heap_size = __heap_size);
   
   /*

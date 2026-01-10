@@ -51,35 +51,26 @@
 /* USER CODE BEGIN PUC */
 
 void app_init() {
-
-  GPIO_InitType gpio_init_config;
-  gpio_init_config.mode = GPIO_MODE_OUTPUT;
-  gpio_init_config.pull = GPIO_PULL_NONE;
-  gpio_init_config.drive_strength = GPIO_DS_STRONG;
-
-  gpio_init(GPIOA, &gpio_init_config, GPIO_PIN_0);
-  gpio_init(GPIOA, &gpio_init_config, GPIO_PIN_1);
 }
 
 void handle_sigint(int sig) {
-  printf("\nCaught signal %d, exiting...\n", sig);
+  //printf("\nCaught signal %d, exiting...\n", sig);
   //exit(0);
 }
 
 void app_main() {
-  while (1) {
-    gpio_write_pin(GPIOA, GPIO_PIN_0, 0);
-    gpio_write_pin(GPIOA, GPIO_PIN_1, 1);
-    printf("First LEDs\n"); 
-    /*Always need a new line after print statement 
-    to ensure it doesn't try to fill buffer and 
-    prints every new line*/
-    msleep(1000);
-    gpio_write_pin(GPIOA, GPIO_PIN_0, 1);
-    gpio_write_pin(GPIOA, GPIO_PIN_1, 0);
-    printf("Second LEDs\n");
-    msleep(1000);
-  }
+  char *msg = "Alive\n";
+  /*for (size_t i = 0; i < strlen(msg); i++) {
+    // CORRECT: Wait WHILE the buffer is full (Spin until space opens up)
+    while (UART0->TXDATA & UART_TXDATA_FULL_MSK) {
+        asm("nop"); 
+    }
+    
+    // Space is now available, write the character
+    UART0->TXDATA = msg[i];
+  }*/
+  puts(msg);
+  msleep(1000);
 }
 /* USER CODE END PUC */
 

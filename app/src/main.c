@@ -18,7 +18,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+int count = 0;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,11 +60,21 @@ void app_init() {
 
 
 void app_main() {
-  uint64_t mhartid = READ_CSR("mhartid");
-
-  printf("Hello world from hart %d: %d\n", mhartid, counter);
-
-  // sleep(1);
+  char *msg = "Alive";
+  
+  /*for (size_t i = 0; i < strlen(msg); i++) {
+    // CORRECT: Wait WHILE the buffer is full (Spin until space opens up)
+    while (UART0->TXDATA & UART_TXDATA_FULL_MSK) {
+        asm("nop"); 
+    }
+    
+    // Space is now available, write the character
+    UART0->TXDATA = msg[i];
+  }*/
+  puts(msg);
+  printf("%d\n", count);
+  count++;
+  msleep(1000);
 }
 /* USER CODE END PUC */
 

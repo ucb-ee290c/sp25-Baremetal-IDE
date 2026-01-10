@@ -19,7 +19,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+int count = 0;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,7 +59,8 @@ void handle_sigint(int sig) {
 }
 
 void app_main() {
-  char *msg = "Alive\n";
+  char *msg = "Alive";
+  
   /*for (size_t i = 0; i < strlen(msg); i++) {
     // CORRECT: Wait WHILE the buffer is full (Spin until space opens up)
     while (UART0->TXDATA & UART_TXDATA_FULL_MSK) {
@@ -70,6 +71,8 @@ void app_main() {
     UART0->TXDATA = msg[i];
   }*/
   puts(msg);
+  printf("%d\n", count);
+  count++;
   msleep(1000);
 }
 /* USER CODE END PUC */

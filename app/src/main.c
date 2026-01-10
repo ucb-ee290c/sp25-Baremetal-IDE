@@ -18,7 +18,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+int count = 0;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

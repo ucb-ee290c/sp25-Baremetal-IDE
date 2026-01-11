@@ -1,3 +1,8 @@
+/*
+ * bench_sizes.h - Size tables for OPE benchmark cases.
+ *
+ * Lists square and rectangular test shapes.
+ */
 #ifndef BENCH_SIZES_H
 #define BENCH_SIZES_H
 

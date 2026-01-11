@@ -1,6 +1,8 @@
-/* This code should run a hello world which will be the simplest test when 
-   working with a bitstream and uploading a binary or when working on a chip 
-*/
+/*
+ * main.h - Common includes and entry points for the hello-world test.
+ *
+ * Used by bearly25-tests/hello_world as a basic bring-up smoke test.
+ */
 
 #ifndef __MAIN_H
 #define __MAIN_H

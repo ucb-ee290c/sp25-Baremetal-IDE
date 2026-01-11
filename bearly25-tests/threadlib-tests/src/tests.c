@@ -1,3 +1,6 @@
+/*
+ * tests.c - Top-level aggregator for thread-lib test cases.
+ */
 #include "tests.h"
 #include <stdio.h>
 

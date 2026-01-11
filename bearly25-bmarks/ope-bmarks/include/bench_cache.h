@@ -1,3 +1,8 @@
+/*
+ * bench_cache.h - Cache warm/flush helpers for OPE benchmarks.
+ *
+ * Used to thrash L2 between cold runs.
+ */
 #ifndef BENCH_CACHE_H
 #define BENCH_CACHE_H
 

@@ -1,3 +1,9 @@
+/*
+ * old_hthread.c - Legacy per-hart task launcher (pre work-stealing).
+ *
+ * Uses a shared flag/start-routine table and MSIP wakeups. Each hart runs
+ * one task at a time and clears its flag on completion.
+ */
 #include "old_hthread.h"
 
 typedef struct {

@@ -1,3 +1,6 @@
+/*
+ * memlat_addrs.h - Address helpers for DRAM, scratchpad, and TCM regions.
+ */
 #ifndef MEMLAT_ADDRS_H
 #define MEMLAT_ADDRS_H
 

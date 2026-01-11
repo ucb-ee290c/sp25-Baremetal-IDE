@@ -1,3 +1,8 @@
+/*
+ * memlat_l1_l2_dram.c - L1 hit and DRAM cold-miss latency tests.
+ *
+ * Also stubs for L2 local/remote hit measurements.
+ */
 #include <stdio.h>
 #include "memlat_tests.h"
 #include "memlat_patterns.h"

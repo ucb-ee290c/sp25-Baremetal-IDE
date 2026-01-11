@@ -1,3 +1,8 @@
+/*
+ * bench_cache.c - Cache thrash helpers for OPE benchmark cold runs.
+ *
+ * Initializes and touches a buffer larger than L2 to evict cached data.
+ */
 #include "bench_cache.h"
 
 static uint8_t cache_thrash_buf[OPE_L2_BYTES * 2];

@@ -1,3 +1,8 @@
+/*
+ * Model weights/biases for the MNIST FC test in bearly25-tests/mnist.
+ *
+ * Auto-generated from a Keras model export.
+ */
 // Auto-generated C header from Keras model parameters
 #ifndef MODELPARAMS_H
 #define MODELPARAMS_H

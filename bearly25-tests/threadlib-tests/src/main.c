@@ -1,3 +1,8 @@
+/*
+ * main.c - Thread-lib test runner.
+ *
+ * Initializes the threading runtime and runs the test suite on hart0.
+ */
 #include "main.h"
 #include "chip_config.h"
 #include "tests.h"

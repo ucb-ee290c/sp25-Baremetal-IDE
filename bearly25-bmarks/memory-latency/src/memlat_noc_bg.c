@@ -1,3 +1,6 @@
+/*
+ * memlat_noc_bg.c - Placeholder for NoC background-load latency tests.
+ */
 #include <stdio.h>
 #include "memlat_tests.h"
 

@@ -1,3 +1,8 @@
+/*
+ * memlat_scratch_tcm.c - Scratchpad and TCM hit-latency tests.
+ *
+ * Measures dependent-load chains to estimate best-case hit latency.
+ */
 #include <stdio.h>
 #include "memlat_tests.h"
 #include "memlat_patterns.h"

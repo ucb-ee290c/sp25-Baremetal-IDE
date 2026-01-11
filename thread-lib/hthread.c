@@ -1,3 +1,10 @@
+/*
+ * hthread.c - Work-stealing thread runtime for Bearly25.
+ *
+ * Implements per-hart deques, atomic steal, and CLINT MSIP wakeups to
+ * schedule tasks across cores. Exposes issue/dispatch/join/barrier plus
+ * the worker loop for non-hart0 cores.
+ */
 #include "hthread.h"
 #include "chip_config.h"
 

@@ -1,3 +1,9 @@
+/*
+ * hthread.h - Public API for the bare-metal work-stealing runtime.
+ *
+ * Defines task/deque types and exposes init/dispatch/join/barrier APIs used
+ * by tests and demos on the multi-hart Bearly25 platform.
+ */
 #ifndef __HTHREAD_H
 #define __HTHREAD_H
 

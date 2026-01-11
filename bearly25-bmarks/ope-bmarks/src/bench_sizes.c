@@ -1,3 +1,6 @@
+/*
+ * bench_sizes.c - Size case tables for OPE benchmarks.
+ */
 #include "bench_sizes.h"
 
 const OpeSizeCase OPE_BENCH_SQUARE_CASES[] = {

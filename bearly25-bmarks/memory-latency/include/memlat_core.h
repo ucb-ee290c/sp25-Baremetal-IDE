@@ -1,3 +1,6 @@
+/*
+ * memlat_core.h - Timing helpers and statistics for memory-latency tests.
+ */
 #ifndef MEMLAT_CORE_H
 #define MEMLAT_CORE_H
 

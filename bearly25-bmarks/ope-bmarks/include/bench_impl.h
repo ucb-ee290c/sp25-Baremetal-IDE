@@ -1,3 +1,8 @@
+/*
+ * bench_impl.h - Benchmark harness for a single OPE size/implementation.
+ *
+ * Allocates matrices, runs a reference, times OPE kernels, and reports stats.
+ */
 #ifndef BENCH_IMPL_H
 #define BENCH_IMPL_H
 

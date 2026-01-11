@@ -1,3 +1,9 @@
+/*
+ * main.c - Hello-world bring-up test for Bearly25.
+ *
+ * Initializes UART (optional), prints hart ID, and serves as a basic
+ * binary load/smoke test.
+ */
 #include "main.h"
 #include "chip_config.h"
 

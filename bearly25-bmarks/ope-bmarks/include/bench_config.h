@@ -1,3 +1,8 @@
+/*
+ * bench_config.h - Shared configuration and types for OPE microbenchmarks.
+ *
+ * Defines cache sizing, run counts, implementation toggles, and helpers.
+ */
 #ifndef BENCH_CONFIG_H
 #define BENCH_CONFIG_H
 

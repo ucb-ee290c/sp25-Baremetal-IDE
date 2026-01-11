@@ -1,5 +1,8 @@
 /* =========================================================================
- * main.c — Bearly25 memory-latency microbenchmarks
+ * main.c - Bearly25 memory-latency microbenchmarks
+ *
+ * Orchestrates a set of L1/L2/DRAM/scratchpad/TCM latency tests and prints
+ * CSV-style stats per core.
  * ========================================================================= */
 
 #include <stdio.h>

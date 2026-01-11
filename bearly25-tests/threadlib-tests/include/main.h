@@ -1,3 +1,6 @@
+/*
+ * main.h - Common includes and entry points for thread-lib tests.
+ */
 #ifndef __MAIN_H
 #define __MAIN_H
 

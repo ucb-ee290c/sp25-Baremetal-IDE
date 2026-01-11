@@ -1,3 +1,6 @@
+/*
+ * test_barrier.c - Barrier synchronization correctness test.
+ */
 #include "tests.h"
 #include "hthread.h"
 #include "riscv.h"

@@ -13,6 +13,12 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.c - Quantized MNIST CNN inference test.
+ *
+ * Runs depthwise/pointwise convs, maxpool, and int8 FC layers with
+ * dequantized softmax outputs for inspection.
+ */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include <layers.h>

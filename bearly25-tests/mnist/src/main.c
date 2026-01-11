@@ -13,6 +13,12 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.c - MNIST fully-connected inference test (float).
+ *
+ * Runs two dense layers + softmax using generated weights/inputs and
+ * prints per-sample predictions and timing.
+ */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include <layers.h>

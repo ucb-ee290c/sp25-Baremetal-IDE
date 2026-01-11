@@ -1,3 +1,6 @@
+/*
+ * MNIST input samples for the conv2D-accelerated CNN test.
+ */
 #ifndef INPUT_MNIST_H
 #define INPUT_MNIST_H
 

@@ -1,3 +1,6 @@
+/*
+ * memlat_patterns.h - Streaming and warmup access patterns for tests.
+ */
 #ifndef MEMLAT_PATTERNS_H
 #define MEMLAT_PATTERNS_H
 

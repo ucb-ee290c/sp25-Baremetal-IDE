@@ -1,3 +1,9 @@
+/*
+ * bench_impl.c - Core benchmark loop for OPE matmul implementations.
+ *
+ * Sets up matrices, runs a reference, times OPE kernels, optionally unflips
+ * hardware output tiles, and reports cold/hot run statistics.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

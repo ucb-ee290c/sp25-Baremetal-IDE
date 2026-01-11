@@ -14,6 +14,9 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.h - Common includes and entry points for the quantized MNIST CNN test.
+ */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
 #ifndef __MAIN_H

@@ -1,3 +1,9 @@
+/*
+ * memlat_core.c - Core timing utilities and stats aggregation.
+ *
+ * Provides cycle reads, IRQ masking, dependency-chain timing, and percentile
+ * statistics for memory-latency measurements.
+ */
 #include <stdio.h>
 #include <string.h>
 #include "memlat_core.h"

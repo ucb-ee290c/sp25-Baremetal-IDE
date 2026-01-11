@@ -13,6 +13,12 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+/*
+ * main.c - MobileNet kernel experimentation and vectorized helpers.
+ *
+ * Hosts depthwise convolution tests, padding helpers, and RISC-V vector
+ * implementations used to validate and profile kernels.
+ */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include <layers.h>

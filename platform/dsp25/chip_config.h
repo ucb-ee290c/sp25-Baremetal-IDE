@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-// #include "riscv.h"
+#include "riscv.h"
 #include "clint.h"
 #include "plic.h"
 #include "htif.h"

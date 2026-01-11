@@ -192,11 +192,141 @@
   */
  void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kernel, size_t kernel_len, size_t dilation, float *output);
  
- // Deprecated or removed functions (kept for reference of old structure)
+// ####################################################
+// Copied from Isaac Tsang by LJ Labata- 1/10/26
+// ####################################################
+
+// Source: https://bwrcrepo.eecs.berkeley.edu/ee290c_ee194_intech22/dsp25-audio/-/blob/dp-fa25-dma/baremetal_test/tests-dma/1dconvdrive.h?ref_type=heads
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "hal_dma.h"
+
+// --- Hardware Register Offsets ---
+#define INPUT_ADDR          0x08800000
+#define OUTPUT_ADDR         0x08800020
+#define KERNEL_ADDR         0x08800040
+#define START_ADDR          0x0880006C
+#define CLEAR_ADDR          0x0880006D
+#define LENGTH_ADDR         0x08800078
+#define DILATION_ADDR       0x0880007C
+
+// --- DMA Configuration ---
+#define DMA_INPUT_CORE      3
+#define DMA_KERNEL_CORE     0
+#define DMA_OUTPUT_CORE     5
+#define DMA_WORD_LOGW       3       // 8 bytes (64-bit)
+#define DMA_WORD_INC        8       // increment in bytes for memory-side address
+
+// Threshold: Cycles of silence required to consider the bus "done".
+#define DMA_IDLE_THRESHOLD  100     
+
+// 64-bit beat = 2 FP32
+#define FP32_PER_PACKET         2
+
+void dma_1dConvDriver(
+    uint32_t *input_buffer_ptr,
+    uint32_t *output_buffer_ptr,
+    uint32_t *kernel_buffer_ptr,
+    size_t    total_elements,    // number of FP32 elements in input (assume even)
+    size_t    kernel_elements,   // number of FP32 elements in kernel (assume even)
+    uint16_t  dilation,
+    uint32_t  base_id
+) {
+    // Packets = number of 64-bit beats (each beat carries 2 FP32s)
+    size_t input_packets  = total_elements   / FP32_PER_PACKET;
+    size_t kernel_packets = kernel_elements  / FP32_PER_PACKET;
+
+    // Keep this as in your original hardware protocol
+    size_t output_packets = input_packets + kernel_packets;
+
+    // --- Reset / configure accelerator ---
+    reg_write8(START_ADDR, 0);
+    reg_write8(CLEAR_ADDR, 1);
+    reg_write8(CLEAR_ADDR, 0);
+
+    reg_write32(LENGTH_ADDR,  total_elements);
+    reg_write16(DILATION_ADDR, dilation);
+
+    // ================================
+    // 1) DMA the kernel once
+    // ================================
+    dma_transaction_t k_trans = {
+        .core            = DMA_KERNEL_CORE,
+        .transaction_id  = base_id,
+        .addr_r          = kernel_buffer_ptr,  // from memory
+        .addr_w          = KERNEL_ADDR,        // to kernel MMIO FIFO/port
+        .inc_r           = DMA_WORD_INC,       // walk memory
+        .inc_w           = 0,                  // fixed MMIO address
+        .len             = kernel_packets,     // N x 64-bit beats
+        .logw            = DMA_WORD_LOGW,      // 8 bytes
+        .do_interrupt    = false,
+        .do_address_gate = true
+    };
+
+    set_DMA_P(k_trans.core, k_trans, true);
+    start_DMA(k_trans.core, k_trans.transaction_id, NULL);
+
+    // Wait once for kernel DMA to complete
+    dma_wait_till_inactive(DMA_IDLE_THRESHOLD);
+
+    // ================================
+    // 2) Enable convolution engine
+    // ================================
+    reg_write8(START_ADDR, 1);
+
+    // ================================
+    // 3) DMA *all* output + input in big chunks
+    // ================================
+
+    // 3a) Output: accelerator → memory (read from OUTPUT_ADDR)
+    dma_transaction_t tx_out = {
+        .core            = DMA_OUTPUT_CORE,
+        .transaction_id  = base_id + 1,
+        .addr_r          = OUTPUT_ADDR,              // from MMIO FIFO
+        .addr_w          = output_buffer_ptr,        // to memory
+        .inc_r           = 0,                        // fixed MMIO address
+        .inc_w           = DMA_WORD_INC,             // walk memory
+        .len             = output_packets,           // ALL output beats
+        .logw            = DMA_WORD_LOGW,
+        .do_interrupt    = false,
+        .do_address_gate = true
+    };
+    set_DMA_P(tx_out.core, tx_out, true);
+    start_DMA(tx_out.core, tx_out.transaction_id, NULL);
+
+    // 3b) Input: memory → accelerator (write to INPUT_ADDR)
+    dma_transaction_t tx_in = {
+        .core            = DMA_INPUT_CORE,
+        .transaction_id  = base_id + 2,
+        .addr_r          = input_buffer_ptr,         // from memory
+        .addr_w          = INPUT_ADDR,               // to MMIO FIFO
+        .inc_r           = DMA_WORD_INC,             // walk memory
+        .inc_w           = 0,                        // fixed MMIO address
+        .len             = input_packets,            // ALL input beats
+        .logw            = DMA_WORD_LOGW,
+        .do_interrupt    = false,
+        .do_address_gate = true
+    };
+    set_DMA_P(tx_in.core, tx_in, true);
+    start_DMA(tx_in.core, tx_in.transaction_id, NULL);
+
+    // ================================
+    // 4) Wait once for everything to finish
+    // ================================
+    dma_wait_till_inactive(DMA_IDLE_THRESHOLD);
+}
+
+
+ // Deprecated or removed function (kept for reference of old structure)
  // int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length);
  // uint8_t conv_read_output(uint32_t *output, uint32_t output_len);
  // void get_register_status_human_readable(char* buffer);
  
+
+
+
  #ifdef __cplusplus
  }
  #endif

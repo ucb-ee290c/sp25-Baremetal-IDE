@@ -139,6 +139,7 @@ add_subdirectory(driver)
 # add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
+add_subdirectory(dsp-1d-conv-tests)
 
 
 #################################

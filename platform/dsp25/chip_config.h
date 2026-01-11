@@ -20,6 +20,7 @@ extern "C" {
 // ================================
 #include "hal_mmio.h"
 #include "hal_rcc.h"
+#include "hal_i2s.h"
 
 
 // ================================

@@ -1,0 +1,6 @@
+add_subdirectory(sanity-test)
+add_subdirectory(simple-test)
+add_subdirectory(multiple-test)
+add_subdirectory(queue-test)
+add_subdirectory(benchmark-256-wide-test)
+add_subdirectory(benchmark_adjustable_128_2048)

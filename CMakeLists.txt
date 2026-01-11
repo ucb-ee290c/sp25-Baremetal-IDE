@@ -78,8 +78,6 @@ else()
   set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}-${LINKER}.ld")
 endif()
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/platform/${CHIP})
-
 add_compile_options(-O1)
 add_compile_options(-Wall -Wextra)
 add_compile_options(-Wno-error=coverage-mismatch)
@@ -126,6 +124,7 @@ if (PROF_COV)
   add_link_options(-lgcov)
 endif()
 
+add_subdirectory(${CMAKE_SOURCE_DIR}/platform/${CHIP})  # moved to fix linker issue with DMA
 
 #################################
 # Dependencies
@@ -135,7 +134,6 @@ add_subdirectory(driver)
 add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
-add_subdirectory(dsp-1d-conv-tests)
 
 
 #################################

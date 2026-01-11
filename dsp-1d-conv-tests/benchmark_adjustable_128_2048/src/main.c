@@ -82,7 +82,7 @@ void app_main() {
     };
 
     // Test lengths
-    const size_t test_lengths[] = {2, 4, 8, 16, 32, 64, 256, 512, 1024, 2048, 4096 };
+    const size_t test_lengths[] = {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
     const int num_tests = sizeof(test_lengths) / sizeof(test_lengths[0]);
 
     for (int t = 0; t < num_tests; ++t) {

@@ -3,7 +3,9 @@
 ########################################################################################################################
 
 file(GLOB_RECURSE PLATFORM_FILES 
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c )
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c 
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.S     # Added for trap_entry.S
+)
 add_library(chip-config STATIC chip.c ${PLATFORM_FILES})
 
 # set terminal device (printf, scanf, etc.) to HTIF

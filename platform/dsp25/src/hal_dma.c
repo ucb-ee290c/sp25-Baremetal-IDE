@@ -1,4 +1,5 @@
 #include "hal_dma.h"
+#include "hal_mmio.h"
 #include "chip_config.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,7 +65,7 @@ typedef struct Node {
 Node* create_node(uint16_t transaction_id, bool* complete) {
     Node* new_node = (Node*)malloc(sizeof(Node));
     if (!new_node) {
-        printf("Memory allocation failed\n");
+        // printf("Memory allocation failed\n");
         exit(1);
     }
     new_node->transaction_id = transaction_id;
@@ -118,10 +119,10 @@ void free_list(Node* head) {
 void print_status(Node* head) {
     Node* current = head;
     while (current != NULL) {
-        printf("%d %d", *(current->complete), current->transaction_id);
+        // printf("%d %d", *(current->complete), current->transaction_id);
         current = current->next;
     }
-    printf("\n");
+    // printf("\n");
 }
 
 Node* complete_tracker_list = NULL;
@@ -181,7 +182,7 @@ void machine_ext_interrupt_handler() {
         set_complete(&complete_tracker_list, t_id);
     }
     else {
-        printf("[WARNING] No external machine interrupts were serviced.\n");
+        // printf("[WARNING] No external machine interrupts were serviced.\n");
     }
 }
 
@@ -295,36 +296,36 @@ void end_dma() {
 #define PRINT_ON_ERROR 1
 #define NEVER_PRINT 2
 
-#define CHECK_VAL_BODY(bits) \
-{ \
-    unsigned int poll = reg_read##bits(addr); \
-    if (poll != ref) { \
-        if (print == PRINT_ON_ERROR || print == ALWAYS_PRINT) \
-            printf("[Transaction %d] %x does not match reference value %x at addr: [%lx]\n", i, poll, ref, addr); \
-        return 1; \
-    } else { \
-        if (print == ALWAYS_PRINT) \
-            printf("[Transaction %d] Success: (%x)\n", i, ref); \
-    } \
-    return 0; \
-}
+// #define CHECK_VAL_BODY(bits) \
+// { \
+//     unsigned int poll = reg_read##bits(addr); \
+//     if (poll != ref) { \
+//         if (print == PRINT_ON_ERROR || print == ALWAYS_PRINT) \
+//             // printf("[Transaction %d] %x does not match reference value %x at addr: [%lx]\n", i, poll, ref, addr); \
+//         return 1; \
+//     } else { \
+//         if (print == ALWAYS_PRINT) \
+//             // printf("[Transaction %d] Success: (%x)\n", i, ref); \
+//     } \
+//     return 0; \
+// }
 
-bool check_val8(int i, unsigned int ref, long unsigned int addr, int print) {
-    CHECK_VAL_BODY(8)
-}
-bool check_val16(int i, unsigned int ref, long unsigned int addr, int print) {
-    CHECK_VAL_BODY(16)
-}
-bool check_val32(int i, unsigned int ref, long unsigned int addr, int print) {
-    CHECK_VAL_BODY(32)
-}
+// bool check_val8(int i, unsigned int ref, long unsigned int addr, int print) {
+//     CHECK_VAL_BODY(8)
+// }
+// bool check_val16(int i, unsigned int ref, long unsigned int addr, int print) {
+//     CHECK_VAL_BODY(16)
+// }
+// bool check_val32(int i, unsigned int ref, long unsigned int addr, int print) {
+//     CHECK_VAL_BODY(32)
+// }
 bool check_val64(int i, long unsigned int ref, long unsigned int addr, int print) {
     long unsigned int poll = reg_read64(addr);
     if (poll != ref) {
-        if (print == PRINT_ON_ERROR || print == ALWAYS_PRINT) printf("[%d]Hardware result (1) %lx does not match reference value %lx at addr: [%lx]\n", i, poll, ref, addr);
+        // if (print == PRINT_ON_ERROR || print == ALWAYS_PRINT) printf("[%d]Hardware result (1) %lx does not match reference value %lx at addr: [%lx]\n", i, poll, ref, addr);
         return 1;
     } else {
-        if (print == ALWAYS_PRINT) printf("[%d]Success: (%lx)\n", i, ref);
+        // if (print == ALWAYS_PRINT) printf("[%d]Success: (%lx)\n", i, ref);
     }
     return 0;
 }

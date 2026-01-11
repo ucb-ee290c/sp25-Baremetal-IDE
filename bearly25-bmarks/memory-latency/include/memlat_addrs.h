@@ -8,6 +8,10 @@
 #define SCRATCHPAD_SIZE (64UL * 1024UL)
 #endif
 
+#ifndef SCRATCHPAD_BASE
+#define SCRATCHPAD_BASE (0x80000000UL)
+#endif
+
 #ifndef TCM_SIZE
 #define TCM_SIZE (8UL * 1024UL)
 #endif

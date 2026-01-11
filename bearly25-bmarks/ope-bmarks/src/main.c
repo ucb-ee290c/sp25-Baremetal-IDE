@@ -4,8 +4,16 @@
 #include "bench_cache.h"
 #include "bench_sizes.h"
 #include "bench_impl.h"
+#include "chip_config.h"
 
 void app_init(void) {
+
+  UART_InitType UART0_init_config;
+  UART0_init_config.baudrate = 115200;
+  UART0_init_config.mode = UART_MODE_TX_RX;
+  UART0_init_config.stopbits = UART_STOPBITS_2;
+  uart_init(UART0, &UART0_init_config);
+
   printf("DEBUG: app_init() started\n");
   printf("DEBUG: calling bench_cache_init()...\n");
   // bench_cache_init();

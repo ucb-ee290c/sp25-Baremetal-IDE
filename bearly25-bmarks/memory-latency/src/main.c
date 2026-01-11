@@ -9,15 +9,11 @@
 #include "memlat_tests.h"
 
 void app_init(void) {
-//   UART_InitType uart_cfg;
-
-//   uart_cfg.baudrate = 115200;
-//   uart_cfg.mode     = UART_MODE_TX_RX;
-//   uart_cfg.stopbits = UART_STOPBITS_2;
-
-//   uart_init(UART0, &uart_cfg);
-
-//   printf("DEBUG: mem-lat app_init() complete\n");
+  UART_InitType UART0_init_config;
+  UART0_init_config.baudrate = 115200;
+  UART0_init_config.mode = UART_MODE_TX_RX;
+  UART0_init_config.stopbits = UART_STOPBITS_2;
+  uart_init(UART0, &UART0_init_config);
 }
 
 void app_main(void) {

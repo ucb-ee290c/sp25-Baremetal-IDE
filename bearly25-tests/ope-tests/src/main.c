@@ -303,11 +303,11 @@ static int run_unaligned_case(const OpeInputCase *tc) {
 }
 
 void app_init(void) {
-  // UART_InitType UART_init_config;
-  // UART_init_config.baudrate = 115200;
-  // UART_init_config.mode = UART_MODE_TX_RX;
-  // UART_init_config.stopbits = UART_STOPBITS_2;
-  // uart_init(UART0, &UART_init_config);
+  UART_InitType UART0_init_config;
+  UART0_init_config.baudrate = 115200;
+  UART0_init_config.mode = UART_MODE_TX_RX;
+  UART0_init_config.stopbits = UART_STOPBITS_2;
+  uart_init(UART0, &UART0_init_config);
 }
 
 void app_main(void) {

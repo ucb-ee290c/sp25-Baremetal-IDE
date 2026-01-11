@@ -59,7 +59,7 @@ void handle_sigint(int sig) {
 }
 
 void app_main() {
-  char *msg = "Alive";
+  char *msg = "It's January 10th, 2026. I am born :D";
   
   /*for (size_t i = 0; i < strlen(msg); i++) {
     // CORRECT: Wait WHILE the buffer is full (Spin until space opens up)

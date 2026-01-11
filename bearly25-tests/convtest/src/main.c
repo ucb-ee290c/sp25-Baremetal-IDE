@@ -190,6 +190,11 @@ void convolve(int8_t* input, int inputWidth, int inputHeight, int8_t useReLU,
 /* USER CODE BEGIN PUC */
 
 void app_init() {
+    UART_InitType UART0_init_config;
+    UART0_init_config.baudrate = 115200;
+    UART0_init_config.mode = UART_MODE_TX_RX;
+    UART0_init_config.stopbits = UART_STOPBITS_2;
+    uart_init(UART0, &UART0_init_config);
     // Initialize the 2D convolution engine
     // conv2d_init(CONV2D);
     printf("2D Convolution Engine initialized\n");

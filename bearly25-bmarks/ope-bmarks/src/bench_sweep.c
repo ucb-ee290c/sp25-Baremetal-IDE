@@ -19,8 +19,8 @@ typedef struct {
 
 static const Case cases[] = {
   { "sq_57", 57 },
-  // { "sq_64", 64 },
-  // { "sq_96", 96 },
+  { "sq_64", 64 },
+  { "sq_96", 96 },
 };
 
 //---------- RISC-V cycle counter ----------

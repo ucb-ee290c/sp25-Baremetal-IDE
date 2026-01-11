@@ -92,6 +92,7 @@ static inline void OP_EXT_STRIDE(int32_t* arr, int stride_elements, bool transpo
     REG_VAR(rs1, ROCC_RS1_REG_N) = (uint64_t) stride_elements;
     if (transposed) { _OP_EXT_S_T(rs1, rs2);  }
     else { _OP_EXT_S_NT(rs1, rs2); }
+    asm volatile("fence w, r" ::: "memory");
   }
 }
 
@@ -103,7 +104,12 @@ ope_mat8_t* ope_mat8_init(int rows, int cols, ope_mat_init_t init_method) {
   int colsU = ((cols + 7) / 8) * 8;
 
   size_t total_size = sizeof(ope_mat8_t) + rowsU * colsU * sizeof(int8_t);
+  // Ensure size is a multiple of alignment (8)
+  total_size = ((total_size + 7) / 8) * 8;
   ope_mat8_t* mat = (ope_mat8_t*)aligned_alloc(8, total_size);
+  if (!mat) {
+    return NULL;
+  }
 
   mat->rows = rows;
   mat->cols = cols;
@@ -123,7 +129,12 @@ ope_mat32_t* ope_mat32_init(int rows, int cols, ope_mat_init_t init_method) {
   int colsU = ((cols + 7) / 8) * 8;
 
   size_t total_size = sizeof(ope_mat32_t) + rowsU * colsU * sizeof(int32_t);
+  // Ensure size is a multiple of alignment (8)
+  total_size = ((total_size + 7) / 8) * 8;
   ope_mat32_t* mat = (ope_mat32_t*)aligned_alloc(8, total_size);
+  if (!mat) {
+    return NULL;
+  }
 
   mat->rows = rows;
   mat->cols = cols;
@@ -292,9 +303,22 @@ long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
   int kU = A->colsU;
   if (kU == 8) return ope_matmul_8x8(A, B, out);
 
-  int8_t* A_T = aligned_alloc(8, kU * kU * sizeof(int8_t));
+  size_t alloc_size = (size_t)kU * (size_t)kU * sizeof(int8_t);
+  // Ensure size is multiple of 8
+  alloc_size = ((alloc_size + 7) / 8) * 8;
+  
+  int8_t* A_T = aligned_alloc(8, alloc_size);
+  if (!A_T) {
+    return -1;
+  }
+  
+  int8_t* B_remap = aligned_alloc(8, alloc_size);
+  if (!B_remap) {
+    free(A_T);
+    return -1;
+  }
+  
   ope_remap_matrix_A(A, A_T);
-  int8_t* B_remap = aligned_alloc(8, kU * kU * sizeof(int8_t));
   ope_remap_matrix_B(B, B_remap);
 
   unsigned long cycles;
@@ -334,8 +358,23 @@ long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
   }
 
   // Rectangular case
-  int8_t* A_T = aligned_alloc(8, mU * kU * sizeof(int8_t));
-  int8_t* B_remap = aligned_alloc(8, kU * nU * sizeof(int8_t));
+  size_t size_A = (size_t)mU * (size_t)kU * sizeof(int8_t);
+  size_t size_B = (size_t)kU * (size_t)nU * sizeof(int8_t);
+  // Ensure sizes are multiples of 8
+  size_A = ((size_A + 7) / 8) * 8;
+  size_B = ((size_B + 7) / 8) * 8;
+  
+  int8_t* A_T = aligned_alloc(8, size_A);
+  if (!A_T) {
+    return -1;
+  }
+  
+  int8_t* B_remap = aligned_alloc(8, size_B);
+  if (!B_remap) {
+    free(A_T);
+    return -1;
+  }
+  
   ope_remap_matrix_A(A, A_T);
   ope_remap_matrix_B(B, B_remap);
 

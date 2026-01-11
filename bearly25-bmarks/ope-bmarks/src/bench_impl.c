@@ -74,12 +74,26 @@ static int ope_case_ctx_init(ope_case_ctx_t *ctx, const OpeSizeCase *cs) {
   ctx->C = ope_mat32_init(M, N, OPE_MAT_ZERO);
   if (!ctx->A || !ctx->B || !ctx->C) {
     printf("ERROR: ope_mat*_init failed\n");
+    // Clean up any successful allocations
+    if (ctx->A) ope_mat8_free(ctx->A);
+    if (ctx->B) ope_mat8_free(ctx->B);
+    if (ctx->C) ope_mat32_free(ctx->C);
+    ctx->A = ctx->B = NULL;
+    ctx->C = NULL;
+    ctx->C_ref = NULL;
     return -1;
   }
 
   ctx->C_ref = (int32_t *)malloc((size_t)M * (size_t)N * sizeof(int32_t));
   if (!ctx->C_ref) {
     printf("ERROR: malloc C_ref failed\n");
+    // Clean up matrices
+    ope_mat8_free(ctx->A);
+    ope_mat8_free(ctx->B);
+    ope_mat32_free(ctx->C);
+    ctx->A = ctx->B = NULL;
+    ctx->C = NULL;
+    ctx->C_ref = NULL;
     return -1;
   }
 

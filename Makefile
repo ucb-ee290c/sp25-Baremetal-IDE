@@ -12,7 +12,7 @@ TYPE = Release
 
 .PHONY: build
 build:
-	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP)
+	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -D CHIP=$(CHIP)
 	cmake --build ./build/ --target $(TARGET)
 
 .PHONY: ocd
@@ -47,4 +47,11 @@ tsi-run:
 .PHONY: vcs-run
 vcs-run:
 	echo "Running VCS tests within $(CY_DIR)"
-	(cd $(CY_DIR)/sims/vcs && make run-binary CONFIG=$(CONFIG) BINARY=$(BINARY))
+	(cd $(CY_DIR)/sims/vcs && make run-binary CONFIG=$(CONFIG) LOADMEM=1 BINARY=$(BINARY))
+
+BINARY_REL := $(patsubst $(realpath ../../sims/vcs)/%,%,$(abspath $(BINARY)))
+
+.PHONY: run
+run:
+	srun -p ee194 --pty make -C ../../sims/vcs run-binary LOADMEM=1 CONFIG=$(CONFIG) BINARY=$(BINARY_REL)
+# 	(cd $(CY_DIR)/sims/vcs && make run-binary-debug-hex CONFIG=$(CONFIG) LOADMEM=1 BINARY=$(BINARY))

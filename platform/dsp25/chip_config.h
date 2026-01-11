@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "riscv.h"
+// #include "riscv.h"
 #include "clint.h"
 #include "plic.h"
 #include "htif.h"
@@ -24,6 +24,7 @@ extern "C" {
 #include "hal_i2s.h"
 #include "hal_dma.h"
 #include "hal_wavelet.h"
+#include "hal_conv.h"
 
 
 // ================================
@@ -59,6 +60,8 @@ extern "C" {
 #define PWM0_BASE                   (PWM_BASE)
 #define DMA                         ((DMA_Type *)DMA_Base)
 
+// #define CONV_BASE                   0x08800000U
+// #define CONV1D                  ((ConvAccel_Type *)CONV_BASE)
 
 #ifdef __cplusplus
 }

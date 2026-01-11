@@ -320,6 +320,7 @@ void dma_1dConvDriver(
 
 
  // Deprecated or removed function (kept for reference of old structure)
+ // Deprecated or removed functions (kept for reference of old structure)
  // int conv_set_params(uint32_t* input, uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length);
  // uint8_t conv_read_output(uint32_t *output, uint32_t output_len);
  // void get_register_status_human_readable(char* buffer);

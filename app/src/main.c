@@ -87,6 +87,12 @@ int main(int argc, char **argv) {
 
   /* Configure the system clock */
   /* USER CODE BEGIN SysInit */
+  // Initialize UART0 for Serial Monitor
+  UART_InitType UART0_init_config;
+  UART0_init_config.baudrate = 115200;
+  UART0_init_config.mode = UART_MODE_TX_RX;
+  UART0_init_config.stopbits = UART_STOPBITS_2;
+  uart_init(UART0, &UART0_init_config);
 
   /* USER CODE END SysInit */
 

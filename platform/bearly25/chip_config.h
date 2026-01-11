@@ -13,6 +13,7 @@ extern "C" {
 #include "i2c.h"
 #include "uart.h"
 #include "gpio.h"
+#include "pwm.h"
 #include "pll.h"
 
 // ================================
@@ -27,10 +28,10 @@ extern "C" {
 //  System Clock
 // ================================
 // system clock frequency in Hz
-#define SYS_CLK_FREQ   10000000
+#define SYS_CLK_FREQ   50000000
 
 // CLINT time base frequency in Hz
-#define MTIME_FREQ     10000
+#define MTIME_FREQ     50000
 
 
 // ================================
@@ -40,20 +41,16 @@ extern "C" {
 // #define ERROR_DEVICE_BASE       0x00003000U
 // #define BOOTSEL_BASE            0x00004000U
 // #define BOOT_SELECT_BASE        0x00004000U
-#define BOOTROM_BASE             0x00010000U
 // #define LIBIF_ROM_BASE          0x00020000U
 // #define LIBIF_RAW_BASE          0x00030000U
 #define RCC_BASE                 0x00100000U
 #define CLINT_BASE               0x02000000U
 // #define CACHE_CONTROLLER_BASE   0x02010000U
-#define SCRATCHPAD_BASE          0x08000000U
 #define PLIC_BASE                0x0C000000U
 #define GPIO_BASE                0x10010000U
-#define UART_BASE                0x10013000U
+#define UART_BASE                0x10020000U
 #define QSPI_BASE                0x10030000U
 #define I2C_BASE                 0x10040000U
-#define QSPI_FLASH_BASE          0x20000000U
-#define DRAM_BASE                0x80000000U
 // #define TCM_BASE                 0x78000000U
 #define TCM_BASE                 0x08010000U
 

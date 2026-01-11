@@ -1,5 +1,5 @@
 /**
-  * @file bearly25.ld
+  * @file bearly25-dram.ld
   * @brief Linker script to place sections and symbol values. Should be used together
   * with other linker script that defines memory regions FLASH and RAM.
   * It references following symbols, which must be defined in code:
@@ -47,23 +47,21 @@ OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY {
-  LIBIFROM (rwx): ORIGIN = 0x00020000, LENGTH = 64K
-  LIBIFRAM (rwx): ORIGIN = 0x00030000, LENGTH = 64K
   SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 32K
-  FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 128M
-  DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 2048M
+  FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 16M
+  DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 256M
 }
 
 SECTIONS {
   /* Default boot hart */
   PROVIDE(__boot_hart = 0);
   
-  /* Default stack size (1M) */
-  __stack_size = DEFINED(__stack_size) ? __stack_size : 1M;
+  /* Default stack size */
+  __stack_size = DEFINED(__stack_size) ? __stack_size : 4K;
   PROVIDE(__stack_size = __stack_size);
 
-  /* Default heap size (2M) */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 2M;
+  /* Default heap size */
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 4K;
   PROVIDE(__heap_size = __heap_size);
   
   /*
@@ -208,7 +206,10 @@ SECTIONS {
   /* Reserve stack space */
   .stack (NOLOAD) : ALIGN(16) {
     PROVIDE_HIDDEN(__stack_start = .);
-    . += __stack_size * 5; /* Hart 0 */
+    . += __stack_size * 5; /* Hart 0 */ 
+    /* To fill the rest of Scratchpad with the stack (aka to fill any leftover space) 
+    replace "__stack_size * 5" with the last valid memory address of the 
+    memory area (0x8FFFFFFF for DRAM) */
     PROVIDE(_sp = .);
     PROVIDE_HIDDEN(__stack_end = .);
   }> DRAM

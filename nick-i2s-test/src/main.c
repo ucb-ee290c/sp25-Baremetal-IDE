@@ -19,14 +19,15 @@
 #include "rocketcore.h"
 #include <inttypes.h>
 #include <stdbool.h>
+// #include <meep.h>
 
 // I2S at 44kHz -> ~440hz square wave
 #define PULSE_PERIOD_SAMPLES (100) // 44kHz -> 100 samples per 440Hz period
 #define PULSE_WIDTH_SAMPLES (50) // 50% duty cycle
 #define AMPLITUDE (0xEEEEEEEE) // Sample amplitude for 32 bit depth
 
-#define SPEAKER_CHANNEL 2
-#define MIC_CHANNEL 3
+#define SPEAKER_CHANNEL 1
+#define MIC_CHANNEL 2
 
 // TODO: Verify clocks and clockdiv. Stolen from dsp-24 bmarks
 // https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/dsp24-bmarks/i2s-test/src/main.c
@@ -65,14 +66,18 @@ uint64_t target_frequency = 500000000l;
 
 
 void app_init() {
-  configure_pll(PLL, target_frequency/50000000, 0);
-  set_all_clocks(RCC_CLOCK_SELECTOR, 1);
-
   UART_InitType UART_init_config;
   UART_init_config.baudrate = 115200;
   UART_init_config.mode = UART_MODE_TX_RX;
   UART_init_config.stopbits = UART_STOPBITS_2;
   uart_init(UART0, &UART_init_config);
+
+  printf("Configuring PLL\r\n");
+
+  set_all_clocks(RCC_CLOCK_SELECTOR, 0);
+  configure_pll(PLL, target_frequency/50000000, 0);
+  set_all_clocks(RCC_CLOCK_SELECTOR, 1);
+
   UART0->DIV = (target_frequency / 115200) - 1;
 
   printf("I2S params initializing\r\n");
@@ -107,11 +112,15 @@ void i2s_square_wave_test(void) {
 // NOTE: This is from DSP24 Audio
 // https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/audio/app/src/main.c
 void i2s_playback_test(void) {
+  printf("Entered i2s_playback_test\r\n");
   uint64_t counter = 0;
   uint64_t playback = 0;
   uint64_t recording_length = 5; //In Seconds
   uint64_t recording_cycle_length = (recording_length * 44100 / 4);
-  uint64_t recorded_audio[recording_cycle_length];
+  printf("Recording cycle length: %ld \r\n", recording_cycle_length);
+  uint64_t recorded_audio[recording_cycle_length]; // uart_tsi seemingly does not like this line
+
+  printf("In i2s_playback_test, about to enter while loop\r\n");
 
   // For reference: uint64_t target_frequency = 500000000l;
   while (1) {
@@ -185,8 +194,8 @@ void i2s_mic_test(void) {
 void i2s_wav_playback_test(void) {
 
   uint32_t i = 0;
+  // uint16_t* audio = meep_wav;
   uint16_t* audio = NULL;
-
   while (1) {
     uint32_t len = 994704 / 2;
     
@@ -244,6 +253,8 @@ int main(int argc, char **argv) {
   /* USER CODE END Init */
  
   // i2s_square_wave_test();
+
+  printf("About to start test\r\n");
   i2s_feedback_test();
   // i2s_mic_test();
 

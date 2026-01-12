@@ -167,6 +167,39 @@ void ope_mat32_transpose_inplace(ope_mat32_t* mat) {
   }
 }
 
+// ===== Pre-allocated Workspace for Remap Buffers =====
+static int8_t *g_workspace_A = NULL;
+static int8_t *g_workspace_B = NULL;
+static size_t g_workspace_size = 0;
+
+void ope_init_workspace(int max_M, int max_N, int max_K) {
+  // Round up to multiples of 8
+  int mU = ((max_M + 7) / 8) * 8;
+  int nU = ((max_N + 7) / 8) * 8;
+  int kU = ((max_K + 7) / 8) * 8;
+  
+  // Size for A remap: mU * kU, Size for B remap: kU * nU
+  size_t size_A = (size_t)mU * (size_t)kU;
+  size_t size_B = (size_t)kU * (size_t)nU;
+  size_t max_size = (size_A > size_B) ? size_A : size_B;
+  
+  // Ensure multiple of 8 for aligned_alloc
+  max_size = ((max_size + 7) / 8) * 8;
+  
+  if (g_workspace_A) free(g_workspace_A);
+  if (g_workspace_B) free(g_workspace_B);
+  
+  g_workspace_A = aligned_alloc(8, max_size);
+  g_workspace_B = aligned_alloc(8, max_size);
+  g_workspace_size = max_size;
+}
+
+void ope_free_workspace(void) {
+  if (g_workspace_A) { free(g_workspace_A); g_workspace_A = NULL; }
+  if (g_workspace_B) { free(g_workspace_B); g_workspace_B = NULL; }
+  g_workspace_size = 0;
+}
+
 // ===== Matrix Remapping Functions =====
 void ope_remap_matrix_A(const ope_mat8_t* A, int8_t* A_T) {
   int rowsU = A->rowsU;
@@ -307,15 +340,25 @@ long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
   // Ensure size is multiple of 8
   alloc_size = ((alloc_size + 7) / 8) * 8;
   
-  int8_t* A_T = aligned_alloc(8, alloc_size);
-  if (!A_T) {
-    return -1;
-  }
+  // Use pre-allocated workspace if available and large enough
+  int8_t* A_T;
+  int8_t* B_remap;
+  bool use_workspace = (g_workspace_A && g_workspace_B && g_workspace_size >= alloc_size);
   
-  int8_t* B_remap = aligned_alloc(8, alloc_size);
-  if (!B_remap) {
-    free(A_T);
-    return -1;
+  if (use_workspace) {
+    A_T = g_workspace_A;
+    B_remap = g_workspace_B;
+  } else {
+    A_T = aligned_alloc(8, alloc_size);
+    if (!A_T) {
+      return -1;
+    }
+    
+    B_remap = aligned_alloc(8, alloc_size);
+    if (!B_remap) {
+      free(A_T);
+      return -1;
+    }
   }
   
   ope_remap_matrix_A(A, A_T);
@@ -362,8 +405,10 @@ long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
     }
   }
 
-  free(A_T);
-  free(B_remap);
+  if (!use_workspace) {
+    free(A_T);
+    free(B_remap);
+  }
   return cycles;
 }
 
@@ -389,15 +434,27 @@ long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
   size_A = ((size_A + 7) / 8) * 8;
   size_B = ((size_B + 7) / 8) * 8;
   
-  int8_t* A_T = aligned_alloc(8, size_A);
-  if (!A_T) {
-    return -1;
-  }
+  size_t max_size = (size_A > size_B) ? size_A : size_B;
   
-  int8_t* B_remap = aligned_alloc(8, size_B);
-  if (!B_remap) {
-    free(A_T);
-    return -1;
+  // Use pre-allocated workspace if available and large enough
+  int8_t* A_T;
+  int8_t* B_remap;
+  bool use_workspace = (g_workspace_A && g_workspace_B && g_workspace_size >= max_size);
+  
+  if (use_workspace) {
+    A_T = g_workspace_A;
+    B_remap = g_workspace_B;
+  } else {
+    A_T = aligned_alloc(8, size_A);
+    if (!A_T) {
+      return -1;
+    }
+    
+    B_remap = aligned_alloc(8, size_B);
+    if (!B_remap) {
+      free(A_T);
+      return -1;
+    }
   }
   
   ope_remap_matrix_A(A, A_T);
@@ -433,8 +490,10 @@ long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
   asm volatile("fence w, rw" ::: "memory");
   unsigned long t1 = read_cycles();
 
-  free(A_T);
-  free(B_remap);
+  if (!use_workspace) {
+    free(A_T);
+    free(B_remap);
+  }
 
   return t1 - t0;
 }

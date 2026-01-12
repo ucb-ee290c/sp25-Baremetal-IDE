@@ -51,6 +51,7 @@ extern "C" {
 #define UART_BASE                0x10020000U
 #define QSPI_BASE                0x10030000U
 #define I2C_BASE                 0x10040000U
+#define PLL_BASE                 0x00140000U
 // #define TCM_BASE                 0x78000000U
 #define TCM_BASE                 0x08010000U
 
@@ -58,6 +59,8 @@ extern "C" {
 #define CLINT                    ((CLINT_Type *)CLINT_BASE)
 #define PLIC                     ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                  ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))
+
+#define PLL                      ((PLL_Type *)PLL_BASE)
 
 #define UART0_BASE               (UART_BASE)
 #define UART0                    ((UART_Type *)UART0_BASE)

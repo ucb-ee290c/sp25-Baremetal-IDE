@@ -27,7 +27,7 @@ typedef struct {
 // Hardware returns tiles transposed; fix tiles and optionally the whole matrix.
 static void unflip_output(const ope_case_ctx_t *ctx,
                           int32_t *tile_scratch,
-                          int32_t *full_scratch) {
+                          int32_t *full_scratch __attribute__((unused))) {
   const int rowsU = ctx->C->rowsU;
   const int colsU = ctx->C->colsU;
   for (int tr = 0; tr < rowsU; tr += 8) {
@@ -149,18 +149,19 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
 
   printf("\n=== Case: %s | Impl: %s ===\n", cs->name, ope_impl_kind_name(impl));
   printf("Dims: A(%dx%d), B(%dx%d), C(%dx%d)\n", M, K, K, N, M, N);
+  printf("  [1] init...");
 
   ope_case_ctx_t ctx;
   memset(&ctx, 0, sizeof(ctx));
   if (ope_case_ctx_init(&ctx, cs) != 0) {
-    printf("  ERROR: Failed to init case context\n");
+    printf("FAIL\n  ERROR: Failed to init case context\n");
     return;
   }
-
-  int32_t tile_scratch[64];
+  printf("OK [2] OPE...");
+  int32_t tile_scratch[64];  // 8x8 tile for unflip_output
   int32_t *unflip_full_buf = NULL;
 #if OPE_EXT_FLIP == 1
-  size_t unflip_elems = (size_t)ctx.C->rowsU * (size_t)ctx.C->colsU;
+  size_t unflip_elems __attribute__((unused)) = (size_t)ctx.C->rowsU * (size_t)ctx.C->colsU;
 #if OPE_OUT_FULL_TRANSPOSE
   unflip_full_buf = (int32_t *)aligned_alloc(8, unflip_elems * sizeof(int32_t));
   if (!unflip_full_buf) {
@@ -183,17 +184,19 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     uint64_t t1 = rdcycle64();
     sanity_cycles_total = (long)(t1 - t0);
   }
+  printf("OK [3] cmp...");
 
   unflip_output(&ctx, tile_scratch, unflip_full_buf);
   int errors = bench_compare_results(ctx.C->data, ctx.C->colsU, 
                                      ctx.C_ref, N, M, N, 1);
 
   if (errors != 0) {
-    printf("  Correctness run FAILED; Aborting further runs for this case.\n");
+    printf("FAIL\n  Correctness run FAILED; Aborting further runs for this case.\n");
     if (unflip_full_buf) free(unflip_full_buf);
     ope_case_ctx_destroy(&ctx);
     return;
   }
+  printf("OK\n");
 
   printf("  Correctness run PASS. OPE cycles=%ld, total cycles=%ld\n", sanity_cycles_ope, sanity_cycles_total);
 

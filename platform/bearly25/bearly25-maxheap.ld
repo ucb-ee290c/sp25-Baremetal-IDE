@@ -61,7 +61,7 @@ SECTIONS {
   PROVIDE(__stack_size = __stack_size);
 
   /* Default heap size */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 1M;
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 2M;
   PROVIDE(__heap_size = __heap_size);
   
   /*
@@ -196,10 +196,15 @@ SECTIONS {
   PROVIDE(__end = .);
 
   /* Reserve heap space */
+  /* To fill the rest of DRAM with the heap (minus stack space),
+     we calculate the remaining space dynamically */
   .heap (NOLOAD) : ALIGN(8) {
     PROVIDE_HIDDEN(__heap_start = .);
+    /*
     . += __heap_size;
     . = ALIGN(4K);
+    */
+    . = ORIGIN(DRAM) + LENGTH(DRAM) - __stack_size * 5;
     PROVIDE_HIDDEN(__heap_end = .);
   }> DRAM
   

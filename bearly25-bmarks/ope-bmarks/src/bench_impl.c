@@ -190,6 +190,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
 
   if (errors != 0) {
     printf("  Correctness run FAILED; Aborting further runs for this case.\n");
+    if (unflip_full_buf) free(unflip_full_buf);
     ope_case_ctx_destroy(&ctx);
     return;
   }

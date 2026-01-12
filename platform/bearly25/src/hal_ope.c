@@ -332,9 +332,34 @@ long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
     case 64:
       cycles = ope_matmul_64x64(A_T, B_remap, out);
       break;
-    default:
-      assert(0 && "Unsupported square matrix size");
-      cycles = 0;
+    default: {
+      // Generic tiled implementation for sizes > 64
+      // Process in 8x8 output tiles, accumulating K dimension in chunks of 32
+      register int stride = kU;
+      unsigned long t0 = read_cycles();
+
+      for (int i = 0; i < kU / 8; i++) {
+        for (int j = 0; j < kU / 8; j++) {
+          OP_ZERO();
+
+          // Accumulate along K dimension in chunks of up to 32
+          for (int k_ofs = 0, k_rem = kU; k_rem > 0;) {
+            int L = MIN(32, k_rem);
+            OP_ACC_L(A_T + (i * kU * 8) + k_ofs, B_remap + (j * kU * 8) + k_ofs, L);
+            k_rem -= L;
+            k_ofs += L * 8;
+          }
+
+          int32_t* addr = &out->data[(i * 8) * out->colsU + (j * 8)];
+          OP_EXT_STRIDE(addr, stride, OPE_EXT_FLIP);
+        }
+      }
+
+      asm volatile("fence w, rw" ::: "memory");
+      unsigned long t1 = read_cycles();
+      cycles = t1 - t0;
+      break;
+    }
   }
 
   free(A_T);

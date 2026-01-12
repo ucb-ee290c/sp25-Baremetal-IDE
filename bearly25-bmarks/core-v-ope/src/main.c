@@ -9,12 +9,20 @@
 #include "bench_impl.h"
 #include "chip_config.h"
 
+uint64_t target_frequency = 500000000l;
+
 void app_init(void) {
   UART_InitType UART0_init_config;
   UART0_init_config.baudrate = 115200;
   UART0_init_config.mode = UART_MODE_TX_RX;
   UART0_init_config.stopbits = UART_STOPBITS_2;
   uart_init(UART0, &UART0_init_config);
+
+  // set_all_clocks(RCC_CLOCK_SELECTOR, 0);
+  // configure_pll(PLL, 10, 0);
+  // set_all_clocks(RCC_CLOCK_SELECTOR, 1);
+
+  // UART0->DIV = (target_frequency / 115200) - 1;
 }
 
 static void print_config(void) {

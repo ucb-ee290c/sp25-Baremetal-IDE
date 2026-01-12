@@ -11,6 +11,12 @@ void bench_fill_int8_small(int8_t *data, int rows, int cols, int stride);
 void bench_fill_int32_zero(int32_t *data, int rows, int cols, int stride);
 void bench_fill_int8_zero(int8_t *data, int rows, int cols, int stride);
 
+// Pack B matrix for vecnn int8_qgemm: prepend zero bias row
+// B_src: K x N, row-major with stride ld_src
+// B_packed: (K+1) x N, row-major with stride N (row 0 = zeros)
+void bench_pack_B_with_zero_bias(const int8_t *B_src, int K, int N, int ld_src,
+                                 int8_t *B_packed);
+
 void bench_ref_gemm_i8_i8_i32(const int8_t *A, const int8_t *B,
                               int32_t *C,
                               int M, int N, int K,

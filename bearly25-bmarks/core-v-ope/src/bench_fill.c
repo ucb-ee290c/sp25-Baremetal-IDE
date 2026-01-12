@@ -27,6 +27,20 @@ void bench_fill_int8_small(int8_t *data, int rows, int cols, int stride) {
   }
 }
 
+void bench_pack_B_with_zero_bias(const int8_t *B_src, int K, int N, int ld_src,
+                                 int8_t *B_packed) {
+  // vecnn int8_qgemm expects: row 0 = bias (zeros), rows 1..K = weights
+  // B_packed layout: (K+1) x N, row-major, stride = N
+  // Row 0: zeros (bias)
+  memset(B_packed, 0, (size_t)N * sizeof(int8_t));
+  // Rows 1..K: copy from B_src
+  for (int k = 0; k < K; ++k) {
+    for (int n = 0; n < N; ++n) {
+      B_packed[(k + 1) * N + n] = B_src[k * ld_src + n];
+    }
+  }
+}
+
 void bench_fill_int32_zero(int32_t *data, int rows, int cols, int stride) {
   for (int i = 0; i < rows; ++i) {
     memset(&data[i * stride], 0, (size_t)cols * sizeof(int32_t));

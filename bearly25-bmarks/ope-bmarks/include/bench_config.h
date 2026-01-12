@@ -20,11 +20,11 @@
 
 // How many repetitions per matrix size for each cache regime
 #ifndef BENCH_RUNS_COLD
-#define BENCH_RUNS_COLD 1
+#define BENCH_RUNS_COLD 3
 #endif
 
 #ifndef BENCH_RUNS_HOT
-#define BENCH_RUNS_HOT 1
+#define BENCH_RUNS_HOT 5
 #endif
 
 // Toggle which implementation families we actually run

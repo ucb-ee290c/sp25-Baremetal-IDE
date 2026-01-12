@@ -5,6 +5,7 @@
 #include "bench_sizes.h"
 
 const OuterSizeCase CORE_V_OPE_CASES[] = {
+  {"sq_8", 8, 8, 8},
   {"sq_16", 16, 16, 16},
   {"sq_32", 32, 32, 32},
   {"sq_64", 64, 64, 64},

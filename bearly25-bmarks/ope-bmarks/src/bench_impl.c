@@ -149,7 +149,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
 
   printf("\n=== Case: %s | Impl: %s ===\n", cs->name, ope_impl_kind_name(impl));
   printf("Dims: A(%dx%d), B(%dx%d), C(%dx%d)\n", M, K, K, N, M, N);
-  printf("  [1] init...");
+  // printf("  [1] init...");
 
   ope_case_ctx_t ctx;
   memset(&ctx, 0, sizeof(ctx));
@@ -157,7 +157,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     printf("FAIL\n  ERROR: Failed to init case context\n");
     return;
   }
-  printf("OK [2] OPE...");
+  // printf("OK [2] OPE...");
   int32_t tile_scratch[64];  // 8x8 tile for unflip_output
   int32_t *unflip_full_buf = NULL;
 #if OPE_EXT_FLIP == 1
@@ -172,7 +172,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
 #endif
 #endif
 
-  // bench_cache_flush();
+  bench_cache_flush();
   bench_fill_int32_zero(ctx.C->data, ctx.C->rows, ctx.C->colsU, ctx.C->colsU);
 
   long sanity_cycles_ope = 0;
@@ -184,7 +184,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
     uint64_t t1 = rdcycle64();
     sanity_cycles_total = (long)(t1 - t0);
   }
-  printf("OK [3] cmp...");
+  // printf("OK [3] cmp...");
 
   unflip_output(&ctx, tile_scratch, unflip_full_buf);
   int errors = bench_compare_results(ctx.C->data, ctx.C->colsU, 
@@ -206,7 +206,7 @@ void bench_run_case(const OpeSizeCase *cs, ope_impl_kind_t impl) {
   int cold_runs = 0;
 
   for (int r = 0; r < BENCH_RUNS_COLD; ++r) {
-    // bench_cache_flush();
+    bench_cache_flush();
     bench_fill_int32_zero(ctx.C->data, ctx.C->rows, ctx.C->colsU, ctx.C->colsU);
 
     uint64_t t0 = rdcycle64();

@@ -23,10 +23,12 @@ target_link_libraries(core-v-conv PRIVATE
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
 
-if(BUILD_VECNN)
-  target_link_libraries(core-v-conv PRIVATE vecnn)
-  target_compile_definitions(core-v-conv PRIVATE BENCH_HAS_VECNN=1)
+if(NOT TARGET vecnn)
+  add_subdirectory(${CMAKE_SOURCE_DIR}/vec-nn ${CMAKE_BINARY_DIR}/vec-nn)
 endif()
+
+target_link_libraries(core-v-conv PRIVATE vecnn)
+target_compile_definitions(core-v-conv PRIVATE BENCH_HAS_VECNN=1)
 
 if (PROF_COV)
   target_link_libraries(core-v-conv PRIVATE gcov)

@@ -256,6 +256,43 @@ static void run_vec_once(bench_case_ctx_t *ctx, requantization_params_t rqp) {
 }
 #endif
 
+// Run scalar reference GEMM and return cycles
+static uint64_t run_scalar_ref_once(bench_case_ctx_t *ctx, int32_t *C_out) {
+  const int8_t *ref_A = NULL;
+  const int8_t *ref_B = NULL;
+  int ldA = 0;
+  int ldB = 0;
+
+#if BENCH_HAS_VECNN && BENCH_ENABLE_VEC
+  if (ctx->vec_A && ctx->vec_B) {
+    ref_A = ctx->vec_A;
+    ref_B = ctx->vec_B;
+    ldA = ctx->K;
+    ldB = ctx->N;
+  }
+#endif
+
+#if BENCH_ENABLE_OPE
+  if (!ref_A && ctx->ope_A && ctx->ope_B) {
+    ref_A = ctx->ope_A->data;
+    ref_B = ctx->ope_B->data;
+    ldA = ctx->ope_A->colsU;
+    ldB = ctx->ope_B->colsU;
+  }
+#endif
+
+  if (!ref_A || !ref_B) {
+    return 0;
+  }
+
+  uint64_t t0 = rdcycle64();
+  bench_ref_gemm_i8_i8_i32(ref_A, ref_B, C_out,
+                           ctx->M, ctx->N, ctx->K,
+                           ldA, ldB, ctx->N);
+  uint64_t t1 = rdcycle64();
+  return t1 - t0;
+}
+
 void bench_run_case(const OuterSizeCase *cs) {
   printf("\n=== Case: %s ===\n", cs->name);
   printf("Dims: A(%dx%d) * B(%dx%d) => C(%dx%d)\n",
@@ -265,6 +302,35 @@ void bench_run_case(const OuterSizeCase *cs) {
   if (bench_case_ctx_init(&ctx, cs) != 0) {
     printf("  ERROR: Failed to init case context\n");
     return;
+  }
+
+  // Scalar reference benchmark
+  {
+    bench_stats_t scalar_stats;
+    bench_stats_init(&scalar_stats);
+    
+    // Allocate temporary buffer for scalar output
+    int32_t *scalar_C = (int32_t *)malloc((size_t)ctx.M * (size_t)ctx.N * sizeof(int32_t));
+    if (scalar_C) {
+      for (int r = 0; r < BENCH_RUNS; ++r) {
+        memset(scalar_C, 0, (size_t)ctx.M * (size_t)ctx.N * sizeof(int32_t));
+        uint64_t cycles = run_scalar_ref_once(&ctx, scalar_C);
+        if (cycles > 0) {
+          bench_stats_update(&scalar_stats, cycles);
+        }
+      }
+      free(scalar_C);
+      
+      if (scalar_stats.runs > 0) {
+        uint64_t avg_scalar = scalar_stats.sum / (uint64_t)scalar_stats.runs;
+        printf("  SCALAR: runs=%d, best=%llu, avg=%llu\n",
+               scalar_stats.runs,
+               (unsigned long long)scalar_stats.best,
+               (unsigned long long)avg_scalar);
+      }
+    } else {
+      printf("  SCALAR: skipped (malloc failed)\n");
+    }
   }
 
 #if BENCH_ENABLE_OPE

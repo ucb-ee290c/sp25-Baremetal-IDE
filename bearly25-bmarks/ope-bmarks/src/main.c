@@ -36,15 +36,15 @@ void app_init() {
   UART0_init_config.stopbits = UART_STOPBITS_2;
   uart_init(UART0, &UART0_init_config);
 
-  // set_all_clocks(RCC_CLOCK_SELECTOR, 0);
-  // configure_pll(PLL, 10, 0);
-  // set_all_clocks(RCC_CLOCK_SELECTOR, 1);
+  set_all_clocks(RCC_CLOCK_SELECTOR, 0);
+  configure_pll(PLL, 10, 0);
+  set_all_clocks(RCC_CLOCK_SELECTOR, 1);
   
-  // UART0->DIV = (target_frequency / 115200) - 1;
+  UART0->DIV = (target_frequency / 115200) - 1;
 
   printf("DEBUG: app_init() started\n");
   printf("DEBUG: calling bench_cache_init()...\n");
-  // bench_cache_init();
+  bench_cache_init();
   printf("DEBUG: bench_cache_init() completed\n");
 }
 

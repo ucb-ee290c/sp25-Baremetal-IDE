@@ -43,7 +43,7 @@ extern "C" {
 // #define BOOT_SELECT_BASE        0x00004000U
 // #define LIBIF_ROM_BASE          0x00020000U
 // #define LIBIF_RAW_BASE          0x00030000U
-#define RCC_BASE                 0x00100000U
+#define RCC_BASE                 0x00130000U
 #define CLINT_BASE               0x02000000U
 // #define CACHE_CONTROLLER_BASE   0x02010000U
 #define PLIC_BASE                0x0C000000U
@@ -55,7 +55,7 @@ extern "C" {
 // #define TCM_BASE                 0x78000000U
 #define TCM_BASE                 0x08010000U
 
-#define RCC_CLOCK_SELECTOR       ((ClockSel_Type*)(RCC_BASE + 0x30000))
+#define RCC_CLOCK_SELECTOR       ((ClockSel_Type*)(RCC_BASE))
 #define CLINT                    ((CLINT_Type *)CLINT_BASE)
 #define PLIC                     ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                  ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))

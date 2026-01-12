@@ -30,17 +30,17 @@ static void print_heap_usage(void) {
 }
 
 void app_init() {
-  // configure_pll(PLL, target_frequency/50000000, 0);
-  // set_all_clocks(RCC_CLOCK_SELECTOR, 1);
-
   UART_InitType UART0_init_config;
   UART0_init_config.baudrate = 115200;
   UART0_init_config.mode = UART_MODE_TX_RX;
   UART0_init_config.stopbits = UART_STOPBITS_2;
   uart_init(UART0, &UART0_init_config);
 
-  // configure_pll(PLL, target_frequency/50000000, 0);
+  // set_all_clocks(RCC_CLOCK_SELECTOR, 0);
+  // configure_pll(PLL, 10, 0);
   // set_all_clocks(RCC_CLOCK_SELECTOR, 1);
+  
+  // UART0->DIV = (target_frequency / 115200) - 1;
 
   printf("DEBUG: app_init() started\n");
   printf("DEBUG: calling bench_cache_init()...\n");

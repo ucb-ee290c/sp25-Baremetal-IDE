@@ -160,7 +160,11 @@ static void run_one_test(int test_id, size_t N, uint32_t *kernel_buf) {
     printf("Test %d (N=%u): Cycles = %" PRIu64 "\n", test_id + 1, (unsigned)N, cycles);
 
     // 4. Run Software Golden
+    uint32_t naive_cycles = read_cycles();
     compute_golden_full_conv(input_buf, N, kernel_buf, KERNEL_ELEMENTS, 1, golden_buf);
+    uint32_t naive_end = read_cycles();
+
+    printf("  Software Golden Cycles = %d\n", naive_end - naive_cycles);
 
     // 5. Compare
     // Now that SW is aligned to the "ramp up", we expect a perfect 1-to-1 match.

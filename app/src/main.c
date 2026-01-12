@@ -51,6 +51,14 @@ int count = 0;
 /* USER CODE BEGIN PUC */
 
 void app_init() {
+
+  // set_all_clocks(RCC_CLOCK_SELECTOR, 0);
+  // configure_pll(PLL, 10, 0);
+  // set_all_clocks(RCC_CLOCK_SELECTOR, 1);
+
+  // UART0->DIV = (500000000 / 115200) - 1;
+  // UART0->DIV = (900000000 / 115200) - 1;
+
 }
 
 void handle_sigint(int sig) {
@@ -73,7 +81,7 @@ void app_main() {
   puts(msg);
   printf("%d\n", count);
   count++;
-  msleep(1000);
+  // msleep(1000);
 }
 /* USER CODE END PUC */
 

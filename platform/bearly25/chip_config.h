@@ -51,6 +51,7 @@ extern "C" {
 #define UART_BASE                0x10020000U
 #define QSPI_BASE                0x10030000U
 #define I2C_BASE                 0x10040000U
+#define PLL_BASE                 0x00140000U
 // #define TCM_BASE                 0x78000000U
 #define TCM_BASE                 0x08010000U
 
@@ -74,6 +75,7 @@ extern "C" {
 #define I2C0_BASE               (I2C_BASE)
 #define I2C0                    ((I2C_Type *)I2C0_BASE)
 
+#define PLL                     ((PLL_Type *)PLL_BASE)
 
 #ifdef __cplusplus
 }

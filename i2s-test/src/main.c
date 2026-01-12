@@ -66,7 +66,7 @@ uint64_t target_frequency = 500000000l;
 
 
 void app_init() {
-  configure_pll(PLL, target_frequency/50000000, 0);
+  configure_pll(PLL, target_frequency/5000000, 0);
   set_all_clocks(RCC_CLOCK_SELECTOR, 1);
 
   UART_InitType UART_init_config;

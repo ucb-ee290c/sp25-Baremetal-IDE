@@ -62,7 +62,7 @@ i2s_params_t i2s_params_speaker = {
 };
 
 // PLL target frequency = 500 MHz; different than system clock of 50 MHz
-uint64_t target_frequency = 500000000l;
+uint64_t target_frequency = 500000000;
 
 
 void app_init() {
@@ -74,11 +74,11 @@ void app_init() {
 
   printf("Configuring PLL\r\n");
 
-  set_all_clocks(RCC_CLOCK_SELECTOR, 0);
-  configure_pll(PLL, target_frequency/50000000, 0);
-  set_all_clocks(RCC_CLOCK_SELECTOR, 1);
+  //set_all_clocks(RCC_CLOCK_SELECTOR, 0);
+  //configure_pll(PLL, target_frequency/SYS_CLK_FREQ, 0);
+  //set_all_clocks(RCC_CLOCK_SELECTOR, 1);
 
-  UART0->DIV = (target_frequency / 115200) - 1;
+  //UART0->DIV = (target_frequency / 115200) - 1;
 
   printf("I2S params initializing\r\n");
 
@@ -222,11 +222,12 @@ void i2s_feedback_test(void) {
   uint64_t mic_output;
   int32_t* samples = &mic_output;
   while (1) {
+    printf("reading mic_output");
     mic_output = read_I2S_rx(MIC_CHANNEL, I2S_LEFT);
 
     // uint64_t speaker_output = ((uint64_t)(samples[1] << 1) << 32) | ((uint64_t)(samples[0] << 2));
 
-
+    printf("sending output to speaker");
     write_I2S_tx(SPEAKER_CHANNEL, I2S_LEFT, mic_output);
     write_I2S_tx(SPEAKER_CHANNEL, I2S_RIGHT, mic_output);
   }
@@ -249,13 +250,14 @@ int main(int argc, char **argv) {
 
   /* Initialize all configured peripherals */  
   /* USER CODE BEGIN Init */
+  //printf("About to start app init\r\n");
   app_init();
   /* USER CODE END Init */
  
-  // i2s_square_wave_test();
+  i2s_square_wave_test();
 
-  printf("About to start test\r\n");
-  i2s_feedback_test();
+  // printf("About to start test\r\n");
+  // i2s_feedback_test();
   // i2s_mic_test();
 
   return 0;

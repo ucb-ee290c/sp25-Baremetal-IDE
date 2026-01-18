@@ -12,7 +12,7 @@ TYPE = Release
 
 .PHONY: build
 build:
-	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP) $(if $(VECNN), -D BUILD_VECNN=$(VECNN),) $(if $(RVV), -D ENABLE_RVV=$(RVV),) $(if $(THREAD_LIB), -D THREAD_LIB=$(THREAD_LIB),) $(if $(BMARK_LIB), -D BMARK_LIB=$(BMARK_LIB),)
+	cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP) $(if $(PLATFORM), -D PLATFORM=$(PLATFORM),) $(if $(VECNN), -D BUILD_VECNN=$(VECNN),) $(if $(RVV), -D ENABLE_RVV=$(RVV),) $(if $(THREAD_LIB), -D THREAD_LIB=$(THREAD_LIB),) $(if $(BMARK_LIB), -D BMARK_LIB=$(BMARK_LIB),)
 	cmake --build ./build/ --target $(TARGET)
 
 .PHONY: ocd

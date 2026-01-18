@@ -24,10 +24,12 @@
 // I2S at 44kHz -> ~440hz square wave
 #define PULSE_PERIOD_SAMPLES (100) // 44kHz -> 100 samples per 440Hz period
 #define PULSE_WIDTH_SAMPLES (50) // 50% duty cycle
-#define AMPLITUDE (0xEEEEEEEE) // Sample amplitude for 32 bit depth
+#define AMPLITUDE_32 (0xEEEEEEEE) // Sample amplitude for 32 bit depth
+#define AMPLITUDE_16 (0xEEEE) // Sample amplitude for 16 bit depth
+
 
 #define SPEAKER_CHANNEL 1
-#define MIC_CHANNEL 2
+#define MIC_CHANNEL 0
 
 // TODO: Verify clocks and clockdiv. Stolen from dsp-24 bmarks
 // https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/dsp24-bmarks/i2s-test/src/main.c
@@ -39,7 +41,7 @@ i2s_params_t i2s_params_mic = {
     .clkgen      = 1,
     .dacen       = 0,
     .ws_len      = 3,
-    .clkdiv      = 88,
+    .clkdiv      = 8,
     .tx_fp       = 0,
     .rx_fp       = 0,
     .tx_force_left = 0,
@@ -54,7 +56,8 @@ i2s_params_t i2s_params_speaker = {
   .clkgen      = 1,
   .dacen       = 1,
   .ws_len      = 3,
-  .clkdiv      = 88,
+  .clkdiv      = 8,
+  // .clkdiv      = 4, # terrible greasy nasty sound
   .tx_fp       = 0,
   .rx_fp       = 0,
   .tx_force_left = 0,
@@ -88,10 +91,11 @@ void app_init() {
   printf("Init done\r\n");
 }
 
+// TLDR: Plays a constant tone -- doesn't use mic
 void i2s_square_wave_test(void) {
 
   uint32_t counter = 0;
-  uint32_t sample[2] = {AMPLITUDE, AMPLITUDE};
+  uint32_t sample[2] = {AMPLITUDE_32, AMPLITUDE_32};
   while (1) {
     // Divide by 2 because 2 samples fit in one 64 bit transaction
     uint64_t data;
@@ -109,36 +113,8 @@ void i2s_square_wave_test(void) {
 }
 
 
-// NOTE: This is from DSP24 Audio
-// https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/audio/app/src/main.c
-void i2s_playback_test(void) {
-  printf("Entered i2s_playback_test\r\n");
-  uint64_t counter = 0;
-  uint64_t playback = 0;
-  uint64_t recording_length = 5; //In Seconds
-  uint64_t recording_cycle_length = (recording_length * 44100 / 4);
-  printf("Recording cycle length: %ld \r\n", recording_cycle_length);
-  uint64_t recorded_audio[recording_cycle_length]; // uart_tsi seemingly does not like this line
-
-  printf("In i2s_playback_test, about to enter while loop\r\n");
-
-  // For reference: uint64_t target_frequency = 500000000l;
-  while (1) {
-    printf("Recording!\r\n");
-    while (counter < recording_cycle_length) {
-      recorded_audio[counter] = read_I2S_rx(MIC_CHANNEL, I2S_LEFT);
-      counter++;
-    }
-    printf("Playing!\r\n");
-    while (playback < counter) {
-      write_I2S_tx(SPEAKER_CHANNEL, I2S_LEFT, recorded_audio[playback]);
-      playback += 2; // Not sure why we increment by 2 here
-    }
-	}
-
-}
-
-void i2s_mic_test(void) {
+// TLDR: Records live audio (certain length) and plays it back with a time delay
+void i2s_parrot_test(void) {
   printf("Entered i2s_mic_test\r\n");
   uint64_t counter = 0;
   uint64_t playback = 0;
@@ -151,17 +127,17 @@ void i2s_mic_test(void) {
   // const uint64_t recording_cycle_length = (uint64_t) 0.1 * 44100 / 2;
   // static uint64_t recorded_audio[(uint64_t) (0.1 * 44100 / 2)];
 
-  const uint64_t recording_cycle_length = 2048;
-  static uint64_t recorded_audio[2048];
+  const uint64_t recording_cycle_length = 44000;
+  static uint64_t recorded_audio[44000];
   
   // For reference: uint64_t target_frequency = 500000000l;
   while (1) {
-    // printf("Recording!\r\n");
+    printf("Recording!\r\n");
     while (counter < recording_cycle_length) {
       recorded_audio[counter] = read_I2S_rx(MIC_CHANNEL, I2S_LEFT);
       counter++;
     }
-    // printf("Playing!\r\n");
+    printf("Playing!\r\n");
     while (playback < counter) {
       // int32_t* audio_ptr = &recorded_audio;
       // int16_t sample1 = (int16_t)(audio_ptr[playback*4    ] >> 16);
@@ -191,6 +167,7 @@ void i2s_mic_test(void) {
 
 }
 
+// TLDR: Plays a wav file
 void i2s_wav_playback_test(void) {
 
   uint32_t i = 0;
@@ -218,16 +195,17 @@ void i2s_wav_playback_test(void) {
 
 }
 
-void i2s_feedback_test(void) {
+// TLDR: Plays live audio from mic through output (no time delay)
+void i2s_live_feedback_test(void) {
   uint64_t mic_output;
   int32_t* samples = &mic_output;
   while (1) {
-    printf("reading mic_output");
+    // printf("reading mic_output");
     mic_output = read_I2S_rx(MIC_CHANNEL, I2S_LEFT);
 
     // uint64_t speaker_output = ((uint64_t)(samples[1] << 1) << 32) | ((uint64_t)(samples[0] << 2));
 
-    printf("sending output to speaker");
+    // printf("sending output to speaker");
     write_I2S_tx(SPEAKER_CHANNEL, I2S_LEFT, mic_output);
     write_I2S_tx(SPEAKER_CHANNEL, I2S_RIGHT, mic_output);
   }
@@ -254,11 +232,11 @@ int main(int argc, char **argv) {
   app_init();
   /* USER CODE END Init */
  
-  i2s_square_wave_test();
-
-  // printf("About to start test\r\n");
-  // i2s_feedback_test();
-  // i2s_mic_test();
+  
+  printf("About to start test\r\n");
+  // i2s_live_feedback_test();
+  // i2s_square_wave_test();
+  i2s_parrot_test();
 
   return 0;
 }

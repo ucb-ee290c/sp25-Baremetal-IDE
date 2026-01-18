@@ -1,5 +1,5 @@
 /*
- * main_zerocopy.c - MobileNetV2 ImageNet Demo (Zero-Copy Weights)
+ * main_zerocopy.c - MobileNetV2 ImageNet Demo
  *
  * Entry point for running MobileNetV2 inference on the Bearly25 chip.
  * Uses the onnx2c-generated model with zero-copy weight access.
@@ -35,7 +35,7 @@ static int argmax(const float *arr, int n) {
 }
 
 int main(void) {
-    printf("MobileNetV2 ImageNet Demo (Zero-Copy Weights)\n");
+    printf("MobileNetV2 ImageNet Demo\n");
     printf("==============================================\n\n");
 
     /* Select input based on which image is enabled */

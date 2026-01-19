@@ -585,6 +585,21 @@ void vec_conv_c_code_stride2_relu(
     } while (cols != 0);
 }
 
+void print_int8_matrix_(int8_t *arr, size_t rows, size_t cols)
+{
+    printf("matrix: \n");
+
+    for (size_t r = 0; r < rows; r++) {
+        printf("  [");
+        for (size_t c = 0; c < cols; c++) {
+            int idx = r * cols + c;
+            printf("%4d", arr[idx]);
+            if (c + 1 < cols) printf(", ");
+        }
+        printf("]\n");
+    }
+}
+
 void dwconv_3x3_int8_VCO(
     size_t input_rows, size_t input_cols,
     size_t stride, size_t padding,
@@ -614,6 +629,8 @@ void dwconv_3x3_int8_VCO(
         int8_t *a_ch = input + ch * a_channel_size;
         int8_t *b_ch = output + ch * b_channel_size;
 
+        // print_int8_matrix_(k_ch, 1, 9);
+
         if (padding) {
             pad_input_channel(input_cols, input_rows, padding, padding, (const int8_t*) a_ch, (int8_t*) in_conv_buf);
             in_conv = (int8_t*) in_conv_buf; 
@@ -626,6 +643,8 @@ void dwconv_3x3_int8_VCO(
         } else if (stride == 2) {
             vec_conv_c_code_stride2(rows, cols, a_stride + 2*padding, b_stride, k_ch, in_conv, b_ch, ((const int32_t*) weights)[ch], requant_params.zero_point, requant_params.scale[ch]);
         }
+
+        // print_int8_matrix_(b_ch, rows, cols);
     }
 }
 

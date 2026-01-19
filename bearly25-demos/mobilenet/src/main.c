@@ -13,12 +13,37 @@
 #include "../include/model_params_self.h"
 #include "../include/inputs.h"
 #include "layers.h"
+#include "compare.h"
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
 void print_int8_matrix(int8_t *arr, size_t rows, size_t cols)
+{
+    printf("matrix: \n");
+
+    for (size_t r = 0; r < rows; r++) {
+        printf("  [");
+        for (size_t c = 0; c < cols; c++) {
+            int idx = r * cols + c;
+            printf("%4d", arr[idx]);
+            if (c + 1 < cols) printf(", ");
+        }
+        printf("]\n");
+    }
+}
+
+void compare(int8_t* arr1, int8_t* arr2, size_t len) {
+    for (int i = 0; i < len; i ++) {
+        if (arr1[i] != arr2[i]) {
+            printf("Error at index: %d, Expected: %d, But got, %d \n", i, arr1[i], arr2[i]);
+            // exit(1);
+        }
+    }
+}
+
+void print_int32_matrix(int32_t *arr, size_t rows, size_t cols)
 {
     printf("matrix: \n");
 
@@ -123,6 +148,7 @@ static void run_block(
 {
     const size_t hidden_ch = (cfg->expand == 0 ? in_ch : in_ch * cfg->expand);
     const int has_expand = (cfg->expand > 1);
+    printf("has expand: %d \n", has_expand);
 
     /* 1) Expansion 1x1 (optional), output scale = rq_expand */
     int8_t *after_expand = input;
@@ -154,6 +180,13 @@ static void run_block(
                    : (requantization_params_t){ .scale = NULL, .zero_point = 0 });
     relu6_apply_int8(buf1, hidden_ch, dw_out_h, dw_out_w, cfg->rq_dw);
 
+    print_int8_matrix(buf1, dw_out_h, dw_out_w);
+    // print_int8_matrix(buf1 + dw_out_h * dw_out_w, dw_out_h, dw_out_w);
+    // print_int8_matrix(buf1 + 2*dw_out_h * dw_out_w, dw_out_h, dw_out_w);
+    // print_int8_matrix(buf1 + 3*dw_out_h * dw_out_w, dw_out_h, dw_out_w);
+    
+    // // print_int32_matrix((int32_t*) cfg->w_pw, 1, cfg->out_ch);
+    // print_int8_matrix(cfg->w_pw + (cfg->out_ch * 4), cfg->out_ch, hidden_ch);
     /* 3) Pointwise projection 1x1, output scale = rq_pw */
     pointwise_conv1x1_int8(
         dw_out_h, dw_out_w,
@@ -161,6 +194,11 @@ static void run_block(
         cfg->w_pw,
         buf1, buf0,
         cfg->rq_pw);
+
+    print_int8_matrix(buf0, dw_out_h, dw_out_w);
+    // print_int8_matrix(buf0 + 1*dw_out_h*dw_out_w, dw_out_h, dw_out_w);
+    // print_int8_matrix(buf0 + 2*dw_out_h*dw_out_w, dw_out_h, dw_out_w);
+    
     relu6_apply_int8(buf0, cfg->out_ch, dw_out_h, dw_out_w, cfg->rq_pw);
 
     /* 4) Residual add (if used)
@@ -231,6 +269,8 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
         buf0,
         qp_input);
 
+    // print_int8_matrix(buf0 + 2*h*w, h, w);
+
     /* ------------------------------------------------------------------ */
     /* Stem: DW 3x3 s2 SAME (3->3) then PW 1x1 (3->32)                    */
     /* conv names: stem.0.0 (DW), stem.1.0 (PW) → rq_stem_0_0, rq_stem_1_0 */
@@ -249,7 +289,12 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
         buf1,
         /* relu */ 0,
         rq_stem_0_0);
+    compare(COMPARE0, buf1, COMPARE0_LEN);
     relu6_apply_int8(buf1, ch, stem_h, stem_w, &rq_stem_0_0);
+
+    // print_int8_matrix(buf1, h/2, w/2);
+    // print_int8_matrix(buf1 + h*w/4, h/2, w/2);
+    // print_int8_matrix(buf1 + h*w/2, h/2, w/2);
 
     /* PW stem */
     pointwise_conv1x1_int8(
@@ -258,7 +303,13 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
         stem_1_0_wb_q,
         buf1, buf0,
         &rq_stem_1_0);
+    compare(COMPARE1, buf0, COMPARE1_LEN);
     relu6_apply_int8(buf0, 32, stem_h, stem_w, &rq_stem_1_0);
+
+    // print_int8_matrix(buf0, stem_h, stem_w);
+    // print_int8_matrix(buf0 + stem_h * stem_w, stem_h, stem_w);
+    // print_int8_matrix(buf0 + 2*stem_h * stem_w, stem_h, stem_w);
+    // print_int8_matrix(buf0 + 3*stem_h * stem_w, stem_h, stem_w);
 
     h = stem_h;
     w = stem_w;
@@ -423,45 +474,49 @@ void mobilenet_forward(const float *input_f32, float *logits_f32)
                   buf1,
                   &out,
                   &h, &w, &ch);
+        if (i < 5) {
+            printf("i: %d\n", i);
+            print_int8_matrix(out, h, w);
+        }
         cur = out;
     }
 
-    printf("Mobilenet forward checkpoint 2 (after blocks): h=%zu w=%zu ch=%zu\n", h, w, ch);
+    // printf("Mobilenet forward checkpoint 2 (after blocks): h=%zu w=%zu ch=%zu\n", h, w, ch);
 
-    /* ------------------------------------------------------------------ */
-    /* Head: 1x1 320->1280, conv name: head.0.0 → rq_head_0_0             */
-    /* ------------------------------------------------------------------ */
-    pointwise_conv1x1_int8(
-        h, w,
-        ch, 1280,
-        head_0_wb_q,
-        cur, buf0,
-        &rq_head_0);
-    relu6_apply_int8(buf0, 1280, h, w, &rq_head_0);
-    cur = buf0;
-    ch  = 1280;
+    // /* ------------------------------------------------------------------ */
+    // /* Head: 1x1 320->1280, conv name: head.0.0 → rq_head_0_0             */
+    // /* ------------------------------------------------------------------ */
+    // pointwise_conv1x1_int8(
+    //     h, w,
+    //     ch, 1280,
+    //     head_0_wb_q,
+    //     cur, buf0,
+    //     &rq_head_0);
+    // relu6_apply_int8(buf0, 1280, h, w, &rq_head_0);
+    // cur = buf0;
+    // ch  = 1280;
 
-    /* Global average pool 7x7 -> 1x1 (doesn't change scale) */
-    avgpool_global_7x7_int8(cur, ch, h, w, pooled);
+    // /* Global average pool 7x7 -> 1x1 (doesn't change scale) */
+    // avgpool_global_7x7_int8(cur, ch, h, w, pooled);
 
-    /* FC 1280 -> 10, rq_fc is generated for 'fc' layer */
-    quant_fully_connected_int8(
-        1280,
-        10,
-        BATCHES,
-        pooled,
-        (const void *)fc_wb_q,
-        logits_q,
-        /* relu */ 0,
-        /* bias32 */ 0,
-        rq_fc);
+    // /* FC 1280 -> 10, rq_fc is generated for 'fc' layer */
+    // quant_fully_connected_int8(
+    //     1280,
+    //     10,
+    //     BATCHES,
+    //     pooled,
+    //     (const void *)fc_wb_q,
+    //     logits_q,
+    //     /* relu */ 0,
+    //     /* bias32 */ 0,
+    //     rq_fc);
 
-    /* Dequantize logits for host-side consumption using qp_logits */
-    dequant_f32(
-        10 * BATCHES,
-        logits_q,
-        logits_f32,
-        qp_logits);
+    // /* Dequantize logits for host-side consumption using qp_logits */
+    // dequant_f32(
+    //     10 * BATCHES,
+    //     logits_q,
+    //     logits_f32,
+    //     qp_logits);
 }
 
 int main(void)

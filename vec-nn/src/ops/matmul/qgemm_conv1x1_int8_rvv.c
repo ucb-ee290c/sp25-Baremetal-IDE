@@ -3,6 +3,23 @@
 #include <stdint.h>
 #include <riscv_vector.h> 
 
+void print_vint32_m4(vint32m4_t vec, size_t n) {
+    // Configure VL (vector length) for 32-bit elements, LMUL=4
+    size_t vl = __riscv_vsetvl_e32m4(n);
+
+    // Temporary buffer to hold vector contents (C99 VLA)
+    int32_t buffer[vl];
+
+    // Store vector elements into the buffer
+    __riscv_vse32_v_i32m4(buffer, vec, vl);
+
+    // Print each element
+    for (size_t i = 0; i < vl; ++i) {
+        printf("%d ", buffer[i]);
+    }
+    printf("\n");
+}
+
 void qgemm_i8_i32_7xm4_int32_conv1x1 (
     size_t mr,        // number of rows to process (1..7)
     size_t nc,        // number of columns to process
@@ -108,6 +125,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     a5 -= kc;
     a6 -= kc;
 
+    // print_vint32_m4(vacc0, vl);
     vfloat32m4_t vfacc0 = __riscv_vfcvt_f_x_v_f32m4(vacc0, vl);
     vfacc0 = __riscv_vfmul_vf_f32m4(vfacc0, row0_scale, vl);
     vfacc0 = __riscv_vfmax_vf_f32m4(vfacc0, output_min_less_zero_point, vl);
@@ -118,6 +136,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     __riscv_vse8_v_i8m1(c0, vout80, vl);
     c0 += vl;
 
+    // print_vint32_m4(vacc1, vl);
     vfloat32m4_t vfacc1 = __riscv_vfcvt_f_x_v_f32m4(vacc1, vl);
     vfacc1 = __riscv_vfmul_vf_f32m4(vfacc1, row1_scale, vl);
     vfacc1 = __riscv_vfmax_vf_f32m4(vfacc1, output_min_less_zero_point, vl);
@@ -128,6 +147,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     __riscv_vse8_v_i8m1(c1, vout81, vl);
     c1 += vl;
 
+    // print_vint32_m4(vacc2, vl);
     vfloat32m4_t vfacc2 = __riscv_vfcvt_f_x_v_f32m4(vacc2, vl);
     vfacc2 = __riscv_vfmul_vf_f32m4(vfacc2, row2_scale, vl);
     vfacc2 = __riscv_vfmax_vf_f32m4(vfacc2, output_min_less_zero_point, vl);
@@ -138,6 +158,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     __riscv_vse8_v_i8m1(c2, vout82, vl);
     c2 += vl;
 
+    // print_vint32_m4(vacc3, vl);
     vfloat32m4_t vfacc3 = __riscv_vfcvt_f_x_v_f32m4(vacc3, vl);
     vfacc3 = __riscv_vfmul_vf_f32m4(vfacc3, row3_scale, vl);
     vfacc3 = __riscv_vfmax_vf_f32m4(vfacc3, output_min_less_zero_point, vl);
@@ -148,6 +169,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     __riscv_vse8_v_i8m1(c3, vout83, vl);
     c3 += vl;
 
+    // print_vint32_m4(vacc4, vl);
     vfloat32m4_t vfacc4 = __riscv_vfcvt_f_x_v_f32m4(vacc4, vl);
     vfacc4 = __riscv_vfmul_vf_f32m4(vfacc4, row4_scale, vl);
     vfacc4 = __riscv_vfmax_vf_f32m4(vfacc4, output_min_less_zero_point, vl);
@@ -158,6 +180,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     __riscv_vse8_v_i8m1(c4, vout84, vl);
     c4 += vl;
 
+    // print_vint32_m4(vacc5, vl);
     vfloat32m4_t vfacc5 = __riscv_vfcvt_f_x_v_f32m4(vacc5, vl);
     vfacc5 = __riscv_vfmul_vf_f32m4(vfacc5, row5_scale, vl);
     vfacc5 = __riscv_vfmax_vf_f32m4(vfacc5, output_min_less_zero_point, vl);
@@ -168,6 +191,7 @@ void qgemm_i8_i32_7xm4_int32_conv1x1 (
     __riscv_vse8_v_i8m1(c5, vout85, vl);
     c5 += vl;
 
+    // print_vint32_m4(vacc6, vl);
     vfloat32m4_t vfacc6 = __riscv_vfcvt_f_x_v_f32m4(vacc6, vl);
     vfacc6 = __riscv_vfmul_vf_f32m4(vfacc6, row6_scale, vl);
     vfacc6 = __riscv_vfmax_vf_f32m4(vfacc6, output_min_less_zero_point, vl);

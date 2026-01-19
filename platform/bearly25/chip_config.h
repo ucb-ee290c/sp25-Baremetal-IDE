@@ -56,6 +56,7 @@ extern "C" {
 #define TCM_BASE                 0x08010000U
 
 #define RCC_CLOCK_SELECTOR       ((ClockSel_Type*)(RCC_BASE))
+#define CLOCK_SELECTOR          ((ClockSel_Type*)RCC_CLOCK_SELECTOR)
 #define CLINT                    ((CLINT_Type *)CLINT_BASE)
 #define PLIC                     ((PLIC_Type *)PLIC_BASE)
 #define PLIC_CC                  ((PLIC_ContextControl_Type *)(PLIC_BASE + 0x00200000U))

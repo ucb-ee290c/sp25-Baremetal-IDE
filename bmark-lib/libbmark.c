@@ -1,4 +1,7 @@
 #include "libbmark.h"
+#include "pll.h"
+#include "gpio.h"
+#include "chip_config.h"
 #include <stdbool.h>
 
 #define BMARK_GPIO_PIN GPIO_PIN_1
@@ -36,7 +39,7 @@ test_info init_test(UART_Type *UARTx) {
     CLOCK_SELECTOR->CLKTAP = 0; //Ensure we are using the non PLL clock
 
     UART_InitType UART_init_config;
-    // UART_init_config.baudrate = 115200;
+    UART_init_config.baudrate = 115200;
     UART_init_config.mode = UART_MODE_TX_RX;
     UART_init_config.stopbits = UART_STOPBITS_2;
     uart_init(debug_uart, &UART_init_config);
@@ -109,27 +112,27 @@ test_info init_test(UART_Type *UARTx) {
   return t;
 }
 
-// void start_roi() {
-//   char start_char = 7;
-//   uart_transmit(debug_uart, &start_char, 1, 0);
-//   gpio_write_pin(GPIOC, BMARK_GPIO_PIN, 0);
-// }
+void start_roi() {
+  char start_char = 7;
+  uart_transmit(debug_uart, &start_char, 1, 0);
+  gpio_write_pin(GPIOC, BMARK_GPIO_PIN, 0);
+}
 
-// void end_roi() {
-//   gpio_write_pin(GPIOC, BMARK_GPIO_PIN, 1);
-//   char end_char = 23;
-//   uart_transmit(debug_uart, &end_char, 1, 0);
-// }
+void end_roi() {
+  gpio_write_pin(GPIOC, BMARK_GPIO_PIN, 1);
+  char end_char = 23;
+  uart_transmit(debug_uart, &end_char, 1, 0);
+}
 
-// void xmit_payload_packet(void* data, size_t size) {
-//   uart_transmit(debug_uart, &size, 4, 0);
-//   if (size != 0 && data != NULL) {
-//     uart_transmit(debug_uart, data, size, 0);
-//   }
-// }
+void xmit_payload_packet(void* data, size_t size) {
+  uart_transmit(debug_uart, &size, 4, 0);
+  if (size != 0 && data != NULL) {
+    uart_transmit(debug_uart, data, size, 0);
+  }
+}
 
-// void clean_test(test_info t) {
-//   if (t.payload_buffer != NULL) {
-//     free(t.payload_buffer);
-//   }
-// }
+void clean_test(test_info t) {
+  if (t.payload_buffer != NULL) {
+    free(t.payload_buffer);
+  }
+}

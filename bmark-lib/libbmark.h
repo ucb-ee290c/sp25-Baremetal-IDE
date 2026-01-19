@@ -24,13 +24,13 @@ typedef struct {
 
 test_info init_test(UART_Type *UARTx);
 
-// void start_roi();
+void start_roi();
 
-// void end_roi();
+void end_roi();
 
-// void xmit_payload_packet(void* data, size_t size);
+void xmit_payload_packet(void* data, size_t size);
 
-// void clean_test(test_info t);
+void clean_test(test_info t);
 
 #ifdef __cplusplus
 }

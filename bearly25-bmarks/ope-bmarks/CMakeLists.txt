@@ -11,10 +11,12 @@ add_executable(ope-bmarks
   src/bench_fill.c
   src/bench_impl.c
   src/bench_sizes.c
+  ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 
 # Header Files
 target_include_directories(ope-bmarks PUBLIC include)
+target_include_directories(ope-bmarks PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 #################################
 # Dependencies

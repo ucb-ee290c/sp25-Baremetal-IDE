@@ -37,11 +37,13 @@ option(USE_PGO                      "Build with profile guided optimization"  OF
 option(OPT_INFO                     "Build with optimization information"     OFF )
 
 option(USE_FREERTOS                 "Build with FreeRTOS"                     OFF )
-option(ENABLE_RVV                   "Build for RVV targets"                   OFF)
+option(ENABLE_RVV                   "Build for RVV targets"                   ON)
 option(BUILD_VECNN                  "Build vec-nn library"                    OFF)
 option(THREAD_LIB                   "Build thread-lib library"                OFF)
 option(BMARK_LIB                    "Build bmark-lib library"                 OFF)
 
+# Specify whether we are trying to run on the physical chip or in sims/spike
+set(PLATFORM                        "CHIP" CACHE STRING "Runtime platform: CHIP or SIMS")
 
 # Define the variable with a default empty value
 set(AFDO_PATH "" CACHE STRING "Path to autofdo profile data")

@@ -16,8 +16,8 @@
 #include "simple_setup.h"
 
 // Hardcoded mailbox address in scratchpad memory (uncached, avoids coherency issues)
-// Scratchpad base = 0x08000000, using offset 0x10000 (64KB) to avoid conflicts
-#define MAILBOX_ADDR 0x08010000UL
+// Scratchpad: 0x08000000-0x0800FFFF (64KB total), mailbox at 4KB offset
+#define MAILBOX_ADDR 0x08001000UL
 
 #define MBOX_MAGIC 0x4D424F58u
 
@@ -105,7 +105,7 @@ int main(void) {
     // Wait for READY with a new seq
     // Read status first, then fence, then read other fields
     if (g_mbox.status != MBOX_READY || g_mbox.seq == last_seq) {
-      tiny_delay(20000);
+      tiny_delay(2000);
       continue;
     }
 

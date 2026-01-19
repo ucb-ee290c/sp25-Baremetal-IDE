@@ -21,7 +21,7 @@ Options:
       --guard      Guard bytes after stack top (default: 0x100000 = 1MB)
       --align      Alignment for DRAM buffers (default: 0x1000 = 4KB)
       --slot       Which ping-pong buffer to use: 0 or 1 (default: alternates by seq)
-      --mailbox    Mailbox base address (hex). Default: 0x08010000 (scratchpad)
+      --mailbox    Mailbox base address (hex). Default: 0x08001000 (scratchpad)
       --no-check   Skip size check of input.bin (default checks for 0x93000)
       --wait       Poll mailbox status/result after kicking (best-effort)
       --reset-seq  Reset sequence counter to 0 (use after chip reset)
@@ -193,8 +193,9 @@ input1 = align_up(input0 + bin_bytes, align)
 img_addr = input0 if slot == 0 else input1
 
 # Mailbox address - use scratchpad (uncached) to avoid cache coherency issues
-# This matches MAILBOX_ADDR in main_int8.c (0x08010000)
-mbox_addr = 0x08010000
+# Scratchpad: 0x08000000-0x0800FFFF (64KB), mailbox at 4KB offset
+# This matches MAILBOX_ADDR in main_int8.c (0x08001000)
+mbox_addr = 0x08001000
 
 print(f"STACK_TOP=0x{stack_top:08x}")
 print(f"SAFE_BASE=0x{safe_base:08x}")

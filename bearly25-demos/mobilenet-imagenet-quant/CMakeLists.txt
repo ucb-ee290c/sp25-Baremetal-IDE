@@ -8,10 +8,12 @@
 # Source Files
 add_executable(mobilenet-imagenet-quant
   src/main_int8.c
+  ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 
 # Header Files
 target_include_directories(mobilenet-imagenet-quant PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(mobilenet-imagenet-quant PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 # Optimization flags
 target_compile_options(mobilenet-imagenet-quant PRIVATE

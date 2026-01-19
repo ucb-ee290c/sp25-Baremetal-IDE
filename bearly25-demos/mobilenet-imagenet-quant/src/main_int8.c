@@ -105,7 +105,7 @@ int main(void) {
     // Wait for READY with a new seq
     // Read status first, then fence, then read other fields
     if (g_mbox.status != MBOX_READY || g_mbox.seq == last_seq) {
-      tiny_delay(2000);
+      tiny_delay(5000);
       continue;
     }
 

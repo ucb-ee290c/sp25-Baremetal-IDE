@@ -24,6 +24,7 @@ Options:
       --mailbox    Mailbox base address (hex). Default: 0x8F000000 (high DRAM)
       --no-check   Skip size check of input.bin (default checks for 0x93000)
       --wait       Poll mailbox status/result after kicking (best-effort)
+      --reset-seq  Reset sequence counter to 0 (use after chip reset)
 
 What it does:
   1) preprocess_fast.py -> input.bin (float32 NCHW 1x3x224x224, expected 0x93000 bytes)
@@ -44,6 +45,7 @@ SLOT=""
 MAILBOX=""
 NO_CHECK=0
 WAIT=0
+RESET_SEQ=0
 
 ELF=""
 TTY=""
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --mailbox) MAILBOX="$2"; shift 2;;
     --no-check) NO_CHECK=1; shift 1;;
     --wait) WAIT=1; shift 1;;
+    --reset-seq) RESET_SEQ=1; shift 1;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown arg: $1"; usage; exit 1;;
   esac
@@ -127,6 +130,10 @@ fi
 echo "[2/5] Computing safe DRAM addresses from ELF (nm symbols)"
 
 SEQ_FILE="$OUTDIR/.mbox_seq"
+if [[ $RESET_SEQ -eq 1 ]]; then
+  echo "  Resetting sequence counter to 0"
+  echo "0" > "$SEQ_FILE"
+fi
 if [[ -f "$SEQ_FILE" ]]; then
   SEQ=$(cat "$SEQ_FILE")
 else
@@ -290,7 +297,7 @@ w32() {
   local val="$2"
   local addr=$(printf "0x%08x" $((MBOX_DEC + offset)))
   echo "  Writing $val to $addr (offset +0x$(printf '%02x' $offset))"
-  uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_write="${addr}:${val}" /dev/null 2>/dev/null || true
+  uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_write="${addr}:${val}" /dev/null
 }
 
 # Write fields (status last to ensure atomicity)

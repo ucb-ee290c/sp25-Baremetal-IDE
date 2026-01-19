@@ -297,7 +297,7 @@ w32() {
   local val="$2"
   local addr=$(printf "0x%08x" $((MBOX_DEC + offset)))
   echo "  Writing $val to $addr (offset +0x$(printf '%02x' $offset))"
-  uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_write="${addr}:${val}" /dev/null
+  uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_write="${addr}:${val}" none
 }
 
 # Write fields (status last to ensure atomicity)
@@ -335,7 +335,7 @@ if [[ $WAIT -eq 1 ]]; then
     local offset="$1"
     local addr=$(printf "0x%08x" $((MBOX_DEC + offset)))
     echo -n "  [$addr]: "
-    uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_read="${addr}" /dev/null 2>/dev/null || echo "(read failed)"
+    uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_read="${addr}" none 2>/dev/null || echo "(read failed)"
   }
   
   echo "Status (0x04 - expect 3 for DONE):"

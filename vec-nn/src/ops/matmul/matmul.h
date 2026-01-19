@@ -17,6 +17,13 @@ void f32_gemm_relu(
   float* C, size_t c_row_stride,
   size_t c_col_stride);
 
+void f32_gemm_nobias(
+  size_t M, size_t N, size_t K,
+  const float* A, size_t a_row_stride,
+  const float* B,
+  float* C, size_t c_row_stride,
+  size_t c_col_stride);
+
 void int8_qgemm_int32bias_conv1x1(
     size_t M, size_t N, size_t K,
     const void* A, size_t a_row_stride,

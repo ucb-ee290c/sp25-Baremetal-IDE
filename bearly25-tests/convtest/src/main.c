@@ -28,6 +28,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include "layers.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -200,12 +201,68 @@ void app_init() {
     printf("2D Convolution Engine initialized\n");
 }
 
-void app_main() {
-    // Perform 2D convolution using the wrapper function
-    printf("\nInput Image is size %d by %d\n", HEIGHT, WIDTH);
-    printf("Starting 2D convolution...\n");
+void matmul(float* xout, float* x, float* w, int n, int d) {
+    // W (d,n) @ x (n,) -> xout (d,)
+    // by far the most amount of time is spent inside this little function
+    int i;
+    for (i = 0; i < d; i++) {
+        float val = 0.0f;
+        for (int j = 0; j < n; j++) {
+            val += w[i * n + j] * x[j];
+        }
+        xout[i] = val;
+    }
+}
 
-    convolve((int8_t*) &testImage, WIDTH, HEIGHT, 0, kernel, (int16_t*) &expectedOutputImage);
+void matmul_test(float* xout, float* x, float* w, int n, int d) {
+    fully_connected_f32_nobias(
+        (size_t)n,          // input_size
+        (size_t)1,          // output_size
+        (size_t)d,          // batches
+        x,                  // input
+        (const float*)w,    // weights_with_bias (see NOTE below)
+        xout,               // output
+        0                   // relu off
+    );
+}
+
+int n = 4;
+int d = 3;
+
+void app_main() {
+
+    float W[] = {
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12
+    };
+
+    float x[] = { 1, 1, 1, 1 };
+
+    float y_ref[d];
+    float y_fc[d];
+
+    // Clear outputs
+    for (int i = 0; i < d; i++) {
+        y_ref[i] = 0.0f;
+        y_fc[i]  = 0.0f;
+    }
+
+    matmul(y_ref, x, W, n, d);
+    matmul_test(y_fc, x, W, n, d);
+
+    printf("Reference vs FC output:\n");
+    for (int i = 0; i < d; i++) {
+        printf("i=%d  ref=%df  fc=%df\n",
+               i, y_ref[i], y_fc[i]);
+    }
+
+    return 0;
+    // Perform 2D convolution using the wrapper function
+    // printf("\nInput Image is size %d by %d\n", HEIGHT, WIDTH);
+    // printf("Starting 2D convolution...\n");
+
+    // convolve((int8_t*) &testImage, WIDTH, HEIGHT, 0, kernel, (int16_t*) &expectedOutputImage);
     // perform_convolution(
     //     (uint64_t)input_image,   // Source address
     //     (uint64_t)output_image,  // Destination address
@@ -235,7 +292,7 @@ void app_main() {
     //     return;
     // }
     
-    printf("2D convolution complete!\n");
+    // printf("2D convolution complete!\n");
     
     // Print the result
     // printf("Convolution result:\n");
@@ -246,32 +303,29 @@ void app_main() {
     //     printf("\n");
     // }
 
-    puts("testing puts");
+    // puts("testing puts");
 
-    uint8_t status = perform_convolution((uint64_t)&testImage, (uint64_t)&outputImage, HEIGHT, WIDTH, (uint8_t*)kernel, KERNEL_SIZE, (uint8_t)USE_RELU, STRIDE);
+    // uint8_t status = perform_convolution((uint64_t)&testImage, (uint64_t)&outputImage, HEIGHT, WIDTH, (uint8_t*)kernel, KERNEL_SIZE, (uint8_t)USE_RELU, STRIDE);
 
-    if (status != 0x0) {
-        printf("Error Status: %p\n", status);
-    }
-    printf("Check status: %p\n", status);
+    // if (/f("Check status: %p\n", status);
     // printf("outputImage: %p\n", outputImage);
     // printImage(&outputImage, HEIGHT-2, WIDTH-2, INT16);
 
 
 
     // Compare hardware output to software output
-    puts("Comparing hardware output to expected output...");
-    if (memcmp(outputImage, expectedOutputImage, sizeof(outputImage)) == 0) {
-        printf("Convolution output matches expected result.\n");
-    } else {
-        printf("Test failed: Mismatch in convolution output.\n");
-    }
+    // puts("Comparing hardware output to expected output...");
+    // if (memcmp(outputImage, expectedOutputImage, sizeof(outputImage)) == 0) {
+    //     printf("Convolution output matches expected result.\n");
+    // } else {
+    //     printf("Test failed: Mismatch in convolution output.\n");
+    // }
 
-    printf("expectedOutputImage: %p\n", expectedOutputImage);
-    printImage(&expectedOutputImage, HEIGHT-2, WIDTH-2, INT16);
+    // printf("expectedOutputImage: %p\n", expectedOutputImage);
+    // printImage(&expectedOutputImage, HEIGHT-2, WIDTH-2, INT16);
     //Print outputImage
-    printf("outputImage: %p\n", outputImage);
-    printImage(&outputImage, HEIGHT-2, WIDTH-2, INT16);
+    // printf("outputImage: %p\n", outputImage);
+    // printImage(&outputImage, HEIGHT-2, WIDTH-2, INT16);
 
 }
 

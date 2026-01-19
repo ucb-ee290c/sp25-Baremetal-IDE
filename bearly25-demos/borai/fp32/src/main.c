@@ -216,12 +216,12 @@ void softmax(float* x, int size) {
 // }
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
-    fully_connected_f32(
+    fully_connected_f32_nobias(
         (size_t)n,          // input_size
-        (size_t)d,          // output_size
-        (size_t)1,          // batches
-        x,                  // input
-        (const float*)w,    // weights_with_bias (see NOTE below)
+        (size_t)1,          // output_size
+        (size_t)d,          // batches
+        w,                  // input
+        (const float*)x,    // weights_with_bias (see NOTE below)
         xout,               // output
         0                   // relu off
     );

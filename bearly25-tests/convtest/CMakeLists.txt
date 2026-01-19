@@ -22,6 +22,10 @@ target_link_libraries(convtest PRIVATE
   chip-config
 )
 
+if(BUILD_VECNN)
+  target_link_libraries(convtest PRIVATE vecnn)
+endif()
+
 if (PROF_COV)
   target_link_libraries(convtest PRIVATE gcov)
 endif()

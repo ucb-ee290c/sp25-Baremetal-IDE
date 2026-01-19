@@ -27,6 +27,22 @@ void fully_connected_f32 (
     }
 }
 
+void fully_connected_f32_nobias (
+    size_t input_size, 
+    size_t output_size, 
+    size_t batches, 
+    float* input, 
+    const float* weights_with_bias,
+    float* output, 
+    int relu
+) {
+    f32_gemm_nobias(
+        batches, output_size, input_size, 
+        input, input_size, 
+        weights_with_bias, 
+        output, output_size, 1);
+}
+
 void quant_fully_connected_int8 (
     size_t input_size, 
     size_t output_size, 

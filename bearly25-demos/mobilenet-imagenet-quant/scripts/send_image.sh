@@ -224,10 +224,30 @@ echo "  Using SEQ=$SEQ SLOT=$SLOT IMG_ADDR=$IMG_ADDR MAILBOX=$MAILBOX"
 # ---------------------------
 echo "[3/5] Building data-only ELF payload for DRAM address $IMG_ADDR"
 
+PAYLOAD_OBJ="$OUTDIR/input_payload.o"
+PAYLOAD_LD="$OUTDIR/payload.ld"
 PAYLOAD_ELF="$OUTDIR/input_payload.elf"
-riscv64-unknown-elf-objcopy -I binary -O elf64-littleriscv -B riscv "$BIN" "$PAYLOAD_ELF"
-# Place .data at IMG_ADDR
-riscv64-unknown-elf-objcopy --change-section-address .data="$IMG_ADDR" "$PAYLOAD_ELF"
+
+# Step 1: Convert binary to relocatable object file
+riscv64-unknown-elf-objcopy -I binary -O elf64-littleriscv -B riscv "$BIN" "$PAYLOAD_OBJ"
+
+# Step 2: Create minimal linker script to place data at IMG_ADDR and produce executable
+cat > "$PAYLOAD_LD" << EOF
+OUTPUT_FORMAT("elf64-littleriscv")
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+
+SECTIONS {
+  . = $IMG_ADDR;
+  .data : { *(.data) }
+  /DISCARD/ : { *(*) }
+}
+EOF
+
+# Step 3: Link into an executable ELF (uart_tsi requires ET_EXEC, not ET_REL)
+riscv64-unknown-elf-ld -T "$PAYLOAD_LD" "$PAYLOAD_OBJ" -o "$PAYLOAD_ELF"
+
+echo "  Created executable payload ELF at $PAYLOAD_ELF"
 
 # ---------------------------
 # 4) Load payload ELF into DRAM without rebooting core

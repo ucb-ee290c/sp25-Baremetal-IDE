@@ -95,6 +95,13 @@ int main(void) {
   uint32_t last_seq = 0;
 
   while (1) {
+    // Debug: print status periodically
+    static uint32_t debug_counter = 0;
+    if (debug_counter++ % 1000000 == 0) {  // Print every ~1M iterations
+      printf("Polling... status=%u seq=%u last_seq=%u\n", 
+             (unsigned)g_mbox.status, (unsigned)g_mbox.seq, (unsigned)last_seq);
+    }
+    
     // Wait for READY with a new seq
     // Read status first, then fence, then read other fields
     if (g_mbox.status != MBOX_READY || g_mbox.seq == last_seq) {

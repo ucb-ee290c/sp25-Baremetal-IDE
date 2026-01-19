@@ -3,8 +3,8 @@
  *
  * Host workflow:
  *  1) Write input.bin (float32 NCHW 1x3x224x224, 0x93000 bytes) into DRAM at img_addr
- *  2) Write mailbox fields in TCM (g_mbox)
- *  3) Set g_mbox.status = READY
+ *  2) Write mailbox fields at MAILBOX_ADDR (0x8F000000) in DRAM
+ *  3) Set g_mbox->status = READY
  *
  * Firmware polls g_mbox, runs entry(), writes result_top1, sets status DONE.
  */
@@ -14,6 +14,10 @@
 #include "model_int8.c"
 #include "imagenet_labels.h"
 #include "simple_setup.h"
+
+// Hardcoded mailbox address in high DRAM (240MB offset, well above firmware)
+// This avoids needing a special linker section
+#define MAILBOX_ADDR 0x8F000000UL
 
 #define MBOX_MAGIC 0x4D424F58u
 
@@ -42,9 +46,8 @@ typedef struct __attribute__((packed, aligned(64))) {
   volatile uint32_t err_code;   // 0x24
 } mailbox_t;
 
-/* Place mailbox into linker section .mailbox (mapped to TCM in bearly25-test.ld edits) */
-__attribute__((section(".mailbox")))
-volatile mailbox_t g_mbox;
+// Pointer to mailbox at fixed DRAM address (no linker section needed)
+#define g_mbox (*(volatile mailbox_t*)MAILBOX_ADDR)
 
 static inline void fence_rw(void) {
   asm volatile("fence rw, rw" ::: "memory");
@@ -76,7 +79,7 @@ int main(void) {
   printf("Expect host to provide:\n");
   printf("  - input tensor: float32 [1,3,224,224] (NCHW), %u bytes (0x%x)\n",
          (unsigned)IMG_BYTES_F32_1x3x224x224, (unsigned)IMG_BYTES_F32_1x3x224x224);
-  printf("  - mailbox in TCM via .mailbox section\n\n");
+  printf("  - mailbox at DRAM address 0x%lx\n\n", (unsigned long)MAILBOX_ADDR);
 
   // Initialize mailbox
   g_mbox.magic = MBOX_MAGIC;

@@ -16,7 +16,7 @@ Required:
 
 Options:
   -b, --baud       UART baudrate (default: 921600)
-  -p, --preprocess Path to preprocess.py (default: <script_dir>/preprocess.py)
+  -p, --preprocess Path to preprocess_fast.py (default: <script_dir>/preprocess_fast.py)
   -o, --outdir     Output directory (default: <script_dir>/bin)
       --guard      Guard bytes after stack top (default: 0x100000 = 1MB)
       --align      Alignment for DRAM buffers (default: 0x1000 = 4KB)
@@ -26,7 +26,7 @@ Options:
       --wait       Poll mailbox status/result after kicking (best-effort)
 
 What it does:
-  1) preprocess.py -> input.bin (float32 NCHW 1x3x224x224, expected 0x93000 bytes)
+  1) preprocess_fast.py -> input.bin (float32 NCHW 1x3x224x224, expected 0x93000 bytes)
   2) choose safe DRAM buffer address above firmware stack (from nm symbols)
   3) objcopy input.bin -> input_payload.elf placed at chosen DRAM address
   4) uart_tsi +no_hart0_msip loads input_payload.elf (writes DRAM only)
@@ -36,7 +36,7 @@ EOF
 }
 
 BAUD=921600
-PREPROCESS="$SCRIPT_DIR/preprocess.py"
+PREPROCESS="$SCRIPT_DIR/preprocess_fast.py"
 OUTDIR="$SCRIPT_DIR/bin"
 GUARD="0x100000"
 ALIGN="0x1000"
@@ -101,7 +101,7 @@ mkdir -p "$OUTDIR"
 # 1) Preprocess image -> input.bin
 # ---------------------------
 echo "[1/5] Preprocessing image -> input.bin"
-# preprocess.py expects: preprocess.py <image_path> <output_file_path>
+# preprocess_fast.py expects: preprocess_fast.py <image_path> <output_file_path>
 BIN="$OUTDIR/input.bin"
 python3 "$PREPROCESS" "$IMAGE" "$BIN"
 

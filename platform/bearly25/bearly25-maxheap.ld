@@ -46,8 +46,8 @@ OUTPUT_ARCH("riscv")
 /* Entry point */
 ENTRY(_start)
 
-MEMORY {
-  SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 32K
+MEMORY {s
+  SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 64K
   FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 16M
   DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 256M
 }

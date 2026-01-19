@@ -21,7 +21,7 @@ Options:
       --guard      Guard bytes after stack top (default: 0x100000 = 1MB)
       --align      Alignment for DRAM buffers (default: 0x1000 = 4KB)
       --slot       Which ping-pong buffer to use: 0 or 1 (default: alternates by seq)
-      --mailbox    Mailbox base address (hex). Default: 0x8F000000 (high DRAM)
+      --mailbox    Mailbox base address (hex). Default: 0x08010000 (scratchpad)
       --no-check   Skip size check of input.bin (default checks for 0x93000)
       --wait       Poll mailbox status/result after kicking (best-effort)
       --reset-seq  Reset sequence counter to 0 (use after chip reset)
@@ -192,9 +192,9 @@ input0 = safe_base
 input1 = align_up(input0 + bin_bytes, align)
 img_addr = input0 if slot == 0 else input1
 
-# Mailbox address - use hardcoded high DRAM address
-# This matches MAILBOX_ADDR in main_int8.c (0x8F000000)
-mbox_addr = 0x8F000000
+# Mailbox address - use scratchpad (uncached) to avoid cache coherency issues
+# This matches MAILBOX_ADDR in main_int8.c (0x08010000)
+mbox_addr = 0x08010000
 
 print(f"STACK_TOP=0x{stack_top:08x}")
 print(f"SAFE_BASE=0x{safe_base:08x}")
@@ -275,7 +275,7 @@ uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip "$PAYLOAD_ELF"
 #   +0x20 result_top1 (optional clear)
 #   +0x24 err_code    (optional clear)
 # ---------------------------
-echo "[5/5] Writing mailbox fields at $MAILBOX (TCM/scratch) and setting READY last"
+echo "[5/5] Writing mailbox fields at $MAILBOX (scratchpad/uncached) and setting READY last"
 
 # Convert IMG_ADDR to 64-bit low/high (bash arithmetic is 64-bit on most modern shells)
 IMG_ADDR_DEC=$((IMG_ADDR))

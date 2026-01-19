@@ -15,9 +15,9 @@
 #include "imagenet_labels.h"
 #include "simple_setup.h"
 
-// Hardcoded mailbox address in high DRAM (240MB offset, well above firmware)
-// This avoids needing a special linker section
-#define MAILBOX_ADDR 0x8F000000UL
+// Hardcoded mailbox address in scratchpad memory (uncached, avoids coherency issues)
+// Scratchpad base = 0x08000000, using offset 0x10000 (64KB) to avoid conflicts
+#define MAILBOX_ADDR 0x08010000UL
 
 #define MBOX_MAGIC 0x4D424F58u
 
@@ -79,7 +79,7 @@ int main(void) {
   printf("Expect host to provide:\n");
   printf("  - input tensor: float32 [1,3,224,224] (NCHW), %u bytes (0x%x)\n",
          (unsigned)IMG_BYTES_F32_1x3x224x224, (unsigned)IMG_BYTES_F32_1x3x224x224);
-  printf("  - mailbox at DRAM address 0x%lx\n\n", (unsigned long)MAILBOX_ADDR);
+  printf("  - mailbox at scratchpad address 0x%lx (uncached)\n\n", (unsigned long)MAILBOX_ADDR);
 
   // Initialize mailbox
   g_mbox.magic = MBOX_MAGIC;

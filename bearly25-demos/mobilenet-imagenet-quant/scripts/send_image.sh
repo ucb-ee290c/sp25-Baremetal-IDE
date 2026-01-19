@@ -21,7 +21,7 @@ Options:
       --guard      Guard bytes after stack top (default: 0x100000 = 1MB)
       --align      Alignment for DRAM buffers (default: 0x1000 = 4KB)
       --slot       Which ping-pong buffer to use: 0 or 1 (default: alternates by seq)
-      --mailbox    Mailbox base address (hex). If omitted, tries g_mbox/__mailbox_start, else 0x08010000
+      --mailbox    Mailbox base address (hex). Default: 0x8F000000 (high DRAM)
       --no-check   Skip size check of input.bin (default checks for 0x93000)
       --wait       Poll mailbox status/result after kicking (best-effort)
 
@@ -185,14 +185,9 @@ input0 = safe_base
 input1 = align_up(input0 + bin_bytes, align)
 img_addr = input0 if slot == 0 else input1
 
-# Mailbox address choice
-mbox_addr = None
-if "g_mbox" in sym:
-    mbox_addr = sym["g_mbox"]
-elif "__mailbox_start" in sym:
-    mbox_addr = sym["__mailbox_start"]
-else:
-    mbox_addr = 0x08010000  # fallback TCM base used in prior discussion
+# Mailbox address - use hardcoded high DRAM address
+# This matches MAILBOX_ADDR in main_int8.c (0x8F000000)
+mbox_addr = 0x8F000000
 
 print(f"STACK_TOP=0x{stack_top:08x}")
 print(f"SAFE_BASE=0x{safe_base:08x}")

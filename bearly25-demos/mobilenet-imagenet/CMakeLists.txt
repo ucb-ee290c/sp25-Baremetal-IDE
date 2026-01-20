@@ -12,10 +12,12 @@
 add_executable(mobilenet-imagenet
   src/main.c
   src/model.c
+  ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 
 # Header Files
 target_include_directories(mobilenet-imagenet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(mobilenet-imagenet PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 # Optimization flags for the large model file
 # -O3 and -ffast-math match the original Makefile settings

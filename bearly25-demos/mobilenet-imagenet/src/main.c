@@ -11,7 +11,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include "model.c"
+#include "model.h"
 #include "imagenet_labels.h"
 #include "simple_setup.h"
 

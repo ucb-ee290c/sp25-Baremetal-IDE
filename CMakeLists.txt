@@ -136,6 +136,7 @@ add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
 add_subdirectory(nick-i2s-test)
+add_subdirectory(convrev-demo)
 
 #################################
 # Build Target Directories

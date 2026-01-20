@@ -234,9 +234,9 @@ int main(int argc, char **argv) {
  
   
   printf("About to start test\r\n");
-  // i2s_live_feedback_test();
+  i2s_live_feedback_test();
   // i2s_square_wave_test();
-  i2s_parrot_test();
+  // i2s_parrot_test();
 
   return 0;
 }

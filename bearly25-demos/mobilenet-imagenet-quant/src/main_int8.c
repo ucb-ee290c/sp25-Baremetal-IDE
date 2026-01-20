@@ -161,7 +161,12 @@ int main(void) {
            (unsigned)((uint64_t)img_addr & 0xffffffffu));
 
     // Run inference
+    uint64_t start_cycles = rdcycle();
     entry(input[0], output);
+    uint64_t end_cycles = rdcycle();
+    printf("[SEQ %u] Inference cycles: %llu\n",
+           (unsigned)seq,
+           (unsigned long long)(end_cycles - start_cycles));
 
     // Result
     int predicted = argmax(output[0], 1000);

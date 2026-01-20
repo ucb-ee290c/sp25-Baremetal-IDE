@@ -1,0 +1,774 @@
+(base) [nicorakela@bwrc-lab03 scripts]$ ./send_image.sh -e /tools/scratch/yash.kodali/sp25-chips/software/baremetal-ide/build/bearly25-demos/mobilenet-imagenet-quant/mobilenet-imagenet-quant.elf -t /dev/ttyUSB1 -i ../images/test_cat.jpg --reset-seq
+[1/5] Preprocessing image -> input.bin
+Original size: (1200, 1198)
+Tensor shape: (1, 3, 224, 224) (NCHW)
+Tensor dtype: float32
+Value range: [-2.084, 2.309]
+✅ Saved preprocessed tensor to /tools/scratch/nicorakela/sp25-chips/software/baremetal-ide/bearly25-demos/mobilenet-imagenet-quant/scripts/bin/input.bin
+   File size: 602112 bytes (expected: 602112)
+  input.bin size: 602112 bytes
+[2/5] Computing safe DRAM addresses from ELF (nm symbols)
+  Resetting sequence counter to 0
+STACK_TOP=0x81aa2000
+SAFE_BASE=0x81ba2000
+INPUT0_ADDR=0x81ba2000
+INPUT1_ADDR=0x81c35000
+IMG_ADDR=0x81ba2000
+MAILBOX_ADDR=0x08010000
+  Using SEQ=1 SLOT=0 IMG_ADDR=0x81ba2000 MAILBOX=0x08010000
+[3/5] Building data-only ELF payload for DRAM address 0x81ba2000
+riscv64-unknown-elf-ld: warning: cannot find entry symbol _start; not setting start address
+  Created executable payload ELF at /tools/scratch/nicorakela/sp25-chips/software/baremetal-ide/bearly25-demos/mobilenet-imagenet-quant/scripts/bin/input_payload.elf
+[4/5] Loading payload ELF into DRAM via uart_tsi (+no_hart0_msip)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+UART-TSI: Loading program
+UART-TSI: Loading ELF 81ba2000-81ba2400 ... Done
+UART-TSI: Loading ELF 81ba2400-81ba2800 ... Done
+UART-TSI: Loading ELF 81ba2800-81ba2c00 ... Done
+UART-TSI: Loading ELF 81ba2c00-81ba3000 ... Done
+UART-TSI: Loading ELF 81ba3000-81ba3400 ... Done
+UART-TSI: Loading ELF 81ba3400-81ba3800 ... Done
+UART-TSI: Loading ELF 81ba3800-81ba3c00 ... Done
+UART-TSI: Loading ELF 81ba3c00-81ba4000 ... Done
+UART-TSI: Loading ELF 81ba4000-81ba4400 ... Done
+UART-TSI: Loading ELF 81ba4400-81ba4800 ... Done
+UART-TSI: Loading ELF 81ba4800-81ba4c00 ... Done
+UART-TSI: Loading ELF 81ba4c00-81ba5000 ... Done
+UART-TSI: Loading ELF 81ba5000-81ba5400 ... Done
+UART-TSI: Loading ELF 81ba5400-81ba5800 ... Done
+UART-TSI: Loading ELF 81ba5800-81ba5c00 ... Done
+UART-TSI: Loading ELF 81ba5c00-81ba6000 ... Done
+UART-TSI: Loading ELF 81ba6000-81ba6400 ... Done
+UART-TSI: Loading ELF 81ba6400-81ba6800 ... Done
+UART-TSI: Loading ELF 81ba6800-81ba6c00 ... Done
+UART-TSI: Loading ELF 81ba6c00-81ba7000 ... Done
+UART-TSI: Loading ELF 81ba7000-81ba7400 ... Done
+UART-TSI: Loading ELF 81ba7400-81ba7800 ... Done
+UART-TSI: Loading ELF 81ba7800-81ba7c00 ... Done
+UART-TSI: Loading ELF 81ba7c00-81ba8000 ... Done
+UART-TSI: Loading ELF 81ba8000-81ba8400 ... Done
+UART-TSI: Loading ELF 81ba8400-81ba8800 ... Done
+UART-TSI: Loading ELF 81ba8800-81ba8c00 ... Done
+UART-TSI: Loading ELF 81ba8c00-81ba9000 ... Done
+UART-TSI: Loading ELF 81ba9000-81ba9400 ... Done
+UART-TSI: Loading ELF 81ba9400-81ba9800 ... Done
+UART-TSI: Loading ELF 81ba9800-81ba9c00 ... Done
+UART-TSI: Loading ELF 81ba9c00-81baa000 ... Done
+UART-TSI: Loading ELF 81baa000-81baa400 ... Done
+UART-TSI: Loading ELF 81baa400-81baa800 ... Done
+UART-TSI: Loading ELF 81baa800-81baac00 ... Done
+UART-TSI: Loading ELF 81baac00-81bab000 ... Done
+UART-TSI: Loading ELF 81bab000-81bab400 ... Done
+UART-TSI: Loading ELF 81bab400-81bab800 ... Done
+UART-TSI: Loading ELF 81bab800-81babc00 ... Done
+UART-TSI: Loading ELF 81babc00-81bac000 ... Done
+UART-TSI: Loading ELF 81bac000-81bac400 ... Done
+UART-TSI: Loading ELF 81bac400-81bac800 ... Done
+UART-TSI: Loading ELF 81bac800-81bacc00 ... Done
+UART-TSI: Loading ELF 81bacc00-81bad000 ... Done
+UART-TSI: Loading ELF 81bad000-81bad400 ... Done
+UART-TSI: Loading ELF 81bad400-81bad800 ... Done
+UART-TSI: Loading ELF 81bad800-81badc00 ... Done
+UART-TSI: Loading ELF 81badc00-81bae000 ... Done
+UART-TSI: Loading ELF 81bae000-81bae400 ... Done
+UART-TSI: Loading ELF 81bae400-81bae800 ... Done
+UART-TSI: Loading ELF 81bae800-81baec00 ... Done
+UART-TSI: Loading ELF 81baec00-81baf000 ... Done
+UART-TSI: Loading ELF 81baf000-81baf400 ... Done
+UART-TSI: Loading ELF 81baf400-81baf800 ... Done
+UART-TSI: Loading ELF 81baf800-81bafc00 ... Done
+UART-TSI: Loading ELF 81bafc00-81bb0000 ... Done
+UART-TSI: Loading ELF 81bb0000-81bb0400 ... Done
+UART-TSI: Loading ELF 81bb0400-81bb0800 ... Done
+UART-TSI: Loading ELF 81bb0800-81bb0c00 ... Done
+UART-TSI: Loading ELF 81bb0c00-81bb1000 ... Done
+UART-TSI: Loading ELF 81bb1000-81bb1400 ... Done
+UART-TSI: Loading ELF 81bb1400-81bb1800 ... Done
+UART-TSI: Loading ELF 81bb1800-81bb1c00 ... Done
+UART-TSI: Loading ELF 81bb1c00-81bb2000 ... Done
+UART-TSI: Loading ELF 81bb2000-81bb2400 ... Done
+UART-TSI: Loading ELF 81bb2400-81bb2800 ... Done
+UART-TSI: Loading ELF 81bb2800-81bb2c00 ... Done
+UART-TSI: Loading ELF 81bb2c00-81bb3000 ... Done
+UART-TSI: Loading ELF 81bb3000-81bb3400 ... Done
+UART-TSI: Loading ELF 81bb3400-81bb3800 ... Done
+UART-TSI: Loading ELF 81bb3800-81bb3c00 ... Done
+UART-TSI: Loading ELF 81bb3c00-81bb4000 ... Done
+UART-TSI: Loading ELF 81bb4000-81bb4400 ... Done
+UART-TSI: Loading ELF 81bb4400-81bb4800 ... Done
+UART-TSI: Loading ELF 81bb4800-81bb4c00 ... Done
+UART-TSI: Loading ELF 81bb4c00-81bb5000 ... Done
+UART-TSI: Loading ELF 81bb5000-81bb5400 ... Done
+UART-TSI: Loading ELF 81bb5400-81bb5800 ... Done
+UART-TSI: Loading ELF 81bb5800-81bb5c00 ... Done
+UART-TSI: Loading ELF 81bb5c00-81bb6000 ... Done
+UART-TSI: Loading ELF 81bb6000-81bb6400 ... Done
+UART-TSI: Loading ELF 81bb6400-81bb6800 ... Done
+UART-TSI: Loading ELF 81bb6800-81bb6c00 ... Done
+UART-TSI: Loading ELF 81bb6c00-81bb7000 ... Done
+UART-TSI: Loading ELF 81bb7000-81bb7400 ... Done
+UART-TSI: Loading ELF 81bb7400-81bb7800 ... Done
+UART-TSI: Loading ELF 81bb7800-81bb7c00 ... Done
+UART-TSI: Loading ELF 81bb7c00-81bb8000 ... Done
+UART-TSI: Loading ELF 81bb8000-81bb8400 ... Done
+UART-TSI: Loading ELF 81bb8400-81bb8800 ... Done
+UART-TSI: Loading ELF 81bb8800-81bb8c00 ... Done
+UART-TSI: Loading ELF 81bb8c00-81bb9000 ... Done
+UART-TSI: Loading ELF 81bb9000-81bb9400 ... Done
+UART-TSI: Loading ELF 81bb9400-81bb9800 ... Done
+UART-TSI: Loading ELF 81bb9800-81bb9c00 ... Done
+UART-TSI: Loading ELF 81bb9c00-81bba000 ... Done
+UART-TSI: Loading ELF 81bba000-81bba400 ... Done
+UART-TSI: Loading ELF 81bba400-81bba800 ... Done
+UART-TSI: Loading ELF 81bba800-81bbac00 ... Done
+UART-TSI: Loading ELF 81bbac00-81bbb000 ... Done
+UART-TSI: Loading ELF 81bbb000-81bbb400 ... Done
+UART-TSI: Loading ELF 81bbb400-81bbb800 ... Done
+UART-TSI: Loading ELF 81bbb800-81bbbc00 ... Done
+UART-TSI: Loading ELF 81bbbc00-81bbc000 ... Done
+UART-TSI: Loading ELF 81bbc000-81bbc400 ... Done
+UART-TSI: Loading ELF 81bbc400-81bbc800 ... Done
+UART-TSI: Loading ELF 81bbc800-81bbcc00 ... Done
+UART-TSI: Loading ELF 81bbcc00-81bbd000 ... Done
+UART-TSI: Loading ELF 81bbd000-81bbd400 ... Done
+UART-TSI: Loading ELF 81bbd400-81bbd800 ... Done
+UART-TSI: Loading ELF 81bbd800-81bbdc00 ... Done
+UART-TSI: Loading ELF 81bbdc00-81bbe000 ... Done
+UART-TSI: Loading ELF 81bbe000-81bbe400 ... Done
+UART-TSI: Loading ELF 81bbe400-81bbe800 ... Done
+UART-TSI: Loading ELF 81bbe800-81bbec00 ... Done
+UART-TSI: Loading ELF 81bbec00-81bbf000 ... Done
+UART-TSI: Loading ELF 81bbf000-81bbf400 ... Done
+UART-TSI: Loading ELF 81bbf400-81bbf800 ... Done
+UART-TSI: Loading ELF 81bbf800-81bbfc00 ... Done
+UART-TSI: Loading ELF 81bbfc00-81bc0000 ... Done
+UART-TSI: Loading ELF 81bc0000-81bc0400 ... Done
+UART-TSI: Loading ELF 81bc0400-81bc0800 ... Done
+UART-TSI: Loading ELF 81bc0800-81bc0c00 ... Done
+UART-TSI: Loading ELF 81bc0c00-81bc1000 ... Done
+UART-TSI: Loading ELF 81bc1000-81bc1400 ... Done
+UART-TSI: Loading ELF 81bc1400-81bc1800 ... Done
+UART-TSI: Loading ELF 81bc1800-81bc1c00 ... Done
+UART-TSI: Loading ELF 81bc1c00-81bc2000 ... Done
+UART-TSI: Loading ELF 81bc2000-81bc2400 ... Done
+UART-TSI: Loading ELF 81bc2400-81bc2800 ... Done
+UART-TSI: Loading ELF 81bc2800-81bc2c00 ... Done
+UART-TSI: Loading ELF 81bc2c00-81bc3000 ... Done
+UART-TSI: Loading ELF 81bc3000-81bc3400 ... Done
+UART-TSI: Loading ELF 81bc3400-81bc3800 ... Done
+UART-TSI: Loading ELF 81bc3800-81bc3c00 ... Done
+UART-TSI: Loading ELF 81bc3c00-81bc4000 ... Done
+UART-TSI: Loading ELF 81bc4000-81bc4400 ... Done
+UART-TSI: Loading ELF 81bc4400-81bc4800 ... Done
+UART-TSI: Loading ELF 81bc4800-81bc4c00 ... Done
+UART-TSI: Loading ELF 81bc4c00-81bc5000 ... Done
+UART-TSI: Loading ELF 81bc5000-81bc5400 ... Done
+UART-TSI: Loading ELF 81bc5400-81bc5800 ... Done
+UART-TSI: Loading ELF 81bc5800-81bc5c00 ... Done
+UART-TSI: Loading ELF 81bc5c00-81bc6000 ... Done
+UART-TSI: Loading ELF 81bc6000-81bc6400 ... Done
+UART-TSI: Loading ELF 81bc6400-81bc6800 ... Done
+UART-TSI: Loading ELF 81bc6800-81bc6c00 ... Done
+UART-TSI: Loading ELF 81bc6c00-81bc7000 ... Done
+UART-TSI: Loading ELF 81bc7000-81bc7400 ... Done
+UART-TSI: Loading ELF 81bc7400-81bc7800 ... Done
+UART-TSI: Loading ELF 81bc7800-81bc7c00 ... Done
+UART-TSI: Loading ELF 81bc7c00-81bc8000 ... Done
+UART-TSI: Loading ELF 81bc8000-81bc8400 ... Done
+UART-TSI: Loading ELF 81bc8400-81bc8800 ... Done
+UART-TSI: Loading ELF 81bc8800-81bc8c00 ... Done
+UART-TSI: Loading ELF 81bc8c00-81bc9000 ... Done
+UART-TSI: Loading ELF 81bc9000-81bc9400 ... Done
+UART-TSI: Loading ELF 81bc9400-81bc9800 ... Done
+UART-TSI: Loading ELF 81bc9800-81bc9c00 ... Done
+UART-TSI: Loading ELF 81bc9c00-81bca000 ... Done
+UART-TSI: Loading ELF 81bca000-81bca400 ... Done
+UART-TSI: Loading ELF 81bca400-81bca800 ... Done
+UART-TSI: Loading ELF 81bca800-81bcac00 ... Done
+UART-TSI: Loading ELF 81bcac00-81bcb000 ... Done
+UART-TSI: Loading ELF 81bcb000-81bcb400 ... Done
+UART-TSI: Loading ELF 81bcb400-81bcb800 ... Done
+UART-TSI: Loading ELF 81bcb800-81bcbc00 ... Done
+UART-TSI: Loading ELF 81bcbc00-81bcc000 ... Done
+UART-TSI: Loading ELF 81bcc000-81bcc400 ... Done
+UART-TSI: Loading ELF 81bcc400-81bcc800 ... Done
+UART-TSI: Loading ELF 81bcc800-81bccc00 ... Done
+UART-TSI: Loading ELF 81bccc00-81bcd000 ... Done
+UART-TSI: Loading ELF 81bcd000-81bcd400 ... Done
+UART-TSI: Loading ELF 81bcd400-81bcd800 ... Done
+UART-TSI: Loading ELF 81bcd800-81bcdc00 ... Done
+UART-TSI: Loading ELF 81bcdc00-81bce000 ... Done
+UART-TSI: Loading ELF 81bce000-81bce400 ... Done
+UART-TSI: Loading ELF 81bce400-81bce800 ... Done
+UART-TSI: Loading ELF 81bce800-81bcec00 ... Done
+UART-TSI: Loading ELF 81bcec00-81bcf000 ... Done
+UART-TSI: Loading ELF 81bcf000-81bcf400 ... Done
+UART-TSI: Loading ELF 81bcf400-81bcf800 ... Done
+UART-TSI: Loading ELF 81bcf800-81bcfc00 ... Done
+UART-TSI: Loading ELF 81bcfc00-81bd0000 ... Done
+UART-TSI: Loading ELF 81bd0000-81bd0400 ... Done
+UART-TSI: Loading ELF 81bd0400-81bd0800 ... Done
+UART-TSI: Loading ELF 81bd0800-81bd0c00 ... Done
+UART-TSI: Loading ELF 81bd0c00-81bd1000 ... Done
+UART-TSI: Loading ELF 81bd1000-81bd1400 ... Done
+UART-TSI: Loading ELF 81bd1400-81bd1800 ... Done
+UART-TSI: Loading ELF 81bd1800-81bd1c00 ... Done
+UART-TSI: Loading ELF 81bd1c00-81bd2000 ... Done
+UART-TSI: Loading ELF 81bd2000-81bd2400 ... Done
+UART-TSI: Loading ELF 81bd2400-81bd2800 ... Done
+UART-TSI: Loading ELF 81bd2800-81bd2c00 ... Done
+UART-TSI: Loading ELF 81bd2c00-81bd3000 ... Done
+UART-TSI: Loading ELF 81bd3000-81bd3400 ... Done
+UART-TSI: Loading ELF 81bd3400-81bd3800 ... Done
+UART-TSI: Loading ELF 81bd3800-81bd3c00 ... Done
+UART-TSI: Loading ELF 81bd3c00-81bd4000 ... Done
+UART-TSI: Loading ELF 81bd4000-81bd4400 ... Done
+UART-TSI: Loading ELF 81bd4400-81bd4800 ... Done
+UART-TSI: Loading ELF 81bd4800-81bd4c00 ... Done
+UART-TSI: Loading ELF 81bd4c00-81bd5000 ... Done
+UART-TSI: Loading ELF 81bd5000-81bd5400 ... Done
+UART-TSI: Loading ELF 81bd5400-81bd5800 ... Done
+UART-TSI: Loading ELF 81bd5800-81bd5c00 ... Done
+UART-TSI: Loading ELF 81bd5c00-81bd6000 ... Done
+UART-TSI: Loading ELF 81bd6000-81bd6400 ... Done
+UART-TSI: Loading ELF 81bd6400-81bd6800 ... Done
+UART-TSI: Loading ELF 81bd6800-81bd6c00 ... Done
+UART-TSI: Loading ELF 81bd6c00-81bd7000 ... Done
+UART-TSI: Loading ELF 81bd7000-81bd7400 ... Done
+UART-TSI: Loading ELF 81bd7400-81bd7800 ... Done
+UART-TSI: Loading ELF 81bd7800-81bd7c00 ... Done
+UART-TSI: Loading ELF 81bd7c00-81bd8000 ... Done
+UART-TSI: Loading ELF 81bd8000-81bd8400 ... Done
+UART-TSI: Loading ELF 81bd8400-81bd8800 ... Done
+UART-TSI: Loading ELF 81bd8800-81bd8c00 ... Done
+UART-TSI: Loading ELF 81bd8c00-81bd9000 ... Done
+UART-TSI: Loading ELF 81bd9000-81bd9400 ... Done
+UART-TSI: Loading ELF 81bd9400-81bd9800 ... Done
+UART-TSI: Loading ELF 81bd9800-81bd9c00 ... Done
+UART-TSI: Loading ELF 81bd9c00-81bda000 ... Done
+UART-TSI: Loading ELF 81bda000-81bda400 ... Done
+UART-TSI: Loading ELF 81bda400-81bda800 ... Done
+UART-TSI: Loading ELF 81bda800-81bdac00 ... Done
+UART-TSI: Loading ELF 81bdac00-81bdb000 ... Done
+UART-TSI: Loading ELF 81bdb000-81bdb400 ... Done
+UART-TSI: Loading ELF 81bdb400-81bdb800 ... Done
+UART-TSI: Loading ELF 81bdb800-81bdbc00 ... Done
+UART-TSI: Loading ELF 81bdbc00-81bdc000 ... Done
+UART-TSI: Loading ELF 81bdc000-81bdc400 ... Done
+UART-TSI: Loading ELF 81bdc400-81bdc800 ... Done
+UART-TSI: Loading ELF 81bdc800-81bdcc00 ... Done
+UART-TSI: Loading ELF 81bdcc00-81bdd000 ... Done
+UART-TSI: Loading ELF 81bdd000-81bdd400 ... Done
+UART-TSI: Loading ELF 81bdd400-81bdd800 ... Done
+UART-TSI: Loading ELF 81bdd800-81bddc00 ... Done
+UART-TSI: Loading ELF 81bddc00-81bde000 ... Done
+UART-TSI: Loading ELF 81bde000-81bde400 ... Done
+UART-TSI: Loading ELF 81bde400-81bde800 ... Done
+UART-TSI: Loading ELF 81bde800-81bdec00 ... Done
+UART-TSI: Loading ELF 81bdec00-81bdf000 ... Done
+UART-TSI: Loading ELF 81bdf000-81bdf400 ... Done
+UART-TSI: Loading ELF 81bdf400-81bdf800 ... Done
+UART-TSI: Loading ELF 81bdf800-81bdfc00 ... Done
+UART-TSI: Loading ELF 81bdfc00-81be0000 ... Done
+UART-TSI: Loading ELF 81be0000-81be0400 ... Done
+UART-TSI: Loading ELF 81be0400-81be0800 ... Done
+UART-TSI: Loading ELF 81be0800-81be0c00 ... Done
+UART-TSI: Loading ELF 81be0c00-81be1000 ... Done
+UART-TSI: Loading ELF 81be1000-81be1400 ... Done
+UART-TSI: Loading ELF 81be1400-81be1800 ... Done
+UART-TSI: Loading ELF 81be1800-81be1c00 ... Done
+UART-TSI: Loading ELF 81be1c00-81be2000 ... Done
+UART-TSI: Loading ELF 81be2000-81be2400 ... Done
+UART-TSI: Loading ELF 81be2400-81be2800 ... Done
+UART-TSI: Loading ELF 81be2800-81be2c00 ... Done
+UART-TSI: Loading ELF 81be2c00-81be3000 ... Done
+UART-TSI: Loading ELF 81be3000-81be3400 ... Done
+UART-TSI: Loading ELF 81be3400-81be3800 ... Done
+UART-TSI: Loading ELF 81be3800-81be3c00 ... Done
+UART-TSI: Loading ELF 81be3c00-81be4000 ... Done
+UART-TSI: Loading ELF 81be4000-81be4400 ... Done
+UART-TSI: Loading ELF 81be4400-81be4800 ... Done
+UART-TSI: Loading ELF 81be4800-81be4c00 ... Done
+UART-TSI: Loading ELF 81be4c00-81be5000 ... Done
+UART-TSI: Loading ELF 81be5000-81be5400 ... Done
+UART-TSI: Loading ELF 81be5400-81be5800 ... Done
+UART-TSI: Loading ELF 81be5800-81be5c00 ... Done
+UART-TSI: Loading ELF 81be5c00-81be6000 ... Done
+UART-TSI: Loading ELF 81be6000-81be6400 ... Done
+UART-TSI: Loading ELF 81be6400-81be6800 ... Done
+UART-TSI: Loading ELF 81be6800-81be6c00 ... Done
+UART-TSI: Loading ELF 81be6c00-81be7000 ... Done
+UART-TSI: Loading ELF 81be7000-81be7400 ... Done
+UART-TSI: Loading ELF 81be7400-81be7800 ... Done
+UART-TSI: Loading ELF 81be7800-81be7c00 ... Done
+UART-TSI: Loading ELF 81be7c00-81be8000 ... Done
+UART-TSI: Loading ELF 81be8000-81be8400 ... Done
+UART-TSI: Loading ELF 81be8400-81be8800 ... Done
+UART-TSI: Loading ELF 81be8800-81be8c00 ... Done
+UART-TSI: Loading ELF 81be8c00-81be9000 ... Done
+UART-TSI: Loading ELF 81be9000-81be9400 ... Done
+UART-TSI: Loading ELF 81be9400-81be9800 ... Done
+UART-TSI: Loading ELF 81be9800-81be9c00 ... Done
+UART-TSI: Loading ELF 81be9c00-81bea000 ... Done
+UART-TSI: Loading ELF 81bea000-81bea400 ... Done
+UART-TSI: Loading ELF 81bea400-81bea800 ... Done
+UART-TSI: Loading ELF 81bea800-81beac00 ... Done
+UART-TSI: Loading ELF 81beac00-81beb000 ... Done
+UART-TSI: Loading ELF 81beb000-81beb400 ... Done
+UART-TSI: Loading ELF 81beb400-81beb800 ... Done
+UART-TSI: Loading ELF 81beb800-81bebc00 ... Done
+UART-TSI: Loading ELF 81bebc00-81bec000 ... Done
+UART-TSI: Loading ELF 81bec000-81bec400 ... Done
+UART-TSI: Loading ELF 81bec400-81bec800 ... Done
+UART-TSI: Loading ELF 81bec800-81becc00 ... Done
+UART-TSI: Loading ELF 81becc00-81bed000 ... Done
+UART-TSI: Loading ELF 81bed000-81bed400 ... Done
+UART-TSI: Loading ELF 81bed400-81bed800 ... Done
+UART-TSI: Loading ELF 81bed800-81bedc00 ... Done
+UART-TSI: Loading ELF 81bedc00-81bee000 ... Done
+UART-TSI: Loading ELF 81bee000-81bee400 ... Done
+UART-TSI: Loading ELF 81bee400-81bee800 ... Done
+UART-TSI: Loading ELF 81bee800-81beec00 ... Done
+UART-TSI: Loading ELF 81beec00-81bef000 ... Done
+UART-TSI: Loading ELF 81bef000-81bef400 ... Done
+UART-TSI: Loading ELF 81bef400-81bef800 ... Done
+UART-TSI: Loading ELF 81bef800-81befc00 ... Done
+UART-TSI: Loading ELF 81befc00-81bf0000 ... Done
+UART-TSI: Loading ELF 81bf0000-81bf0400 ... Done
+UART-TSI: Loading ELF 81bf0400-81bf0800 ... Done
+UART-TSI: Loading ELF 81bf0800-81bf0c00 ... Done
+UART-TSI: Loading ELF 81bf0c00-81bf1000 ... Done
+UART-TSI: Loading ELF 81bf1000-81bf1400 ... Done
+UART-TSI: Loading ELF 81bf1400-81bf1800 ... Done
+UART-TSI: Loading ELF 81bf1800-81bf1c00 ... Done
+UART-TSI: Loading ELF 81bf1c00-81bf2000 ... Done
+UART-TSI: Loading ELF 81bf2000-81bf2400 ... Done
+UART-TSI: Loading ELF 81bf2400-81bf2800 ... Done
+UART-TSI: Loading ELF 81bf2800-81bf2c00 ... Done
+UART-TSI: Loading ELF 81bf2c00-81bf3000 ... Done
+UART-TSI: Loading ELF 81bf3000-81bf3400 ... Done
+UART-TSI: Loading ELF 81bf3400-81bf3800 ... Done
+UART-TSI: Loading ELF 81bf3800-81bf3c00 ... Done
+UART-TSI: Loading ELF 81bf3c00-81bf4000 ... Done
+UART-TSI: Loading ELF 81bf4000-81bf4400 ... Done
+UART-TSI: Loading ELF 81bf4400-81bf4800 ... Done
+UART-TSI: Loading ELF 81bf4800-81bf4c00 ... Done
+UART-TSI: Loading ELF 81bf4c00-81bf5000 ... Done
+UART-TSI: Loading ELF 81bf5000-81bf5400 ... Done
+UART-TSI: Loading ELF 81bf5400-81bf5800 ... Done
+UART-TSI: Loading ELF 81bf5800-81bf5c00 ... Done
+UART-TSI: Loading ELF 81bf5c00-81bf6000 ... Done
+UART-TSI: Loading ELF 81bf6000-81bf6400 ... Done
+UART-TSI: Loading ELF 81bf6400-81bf6800 ... Done
+UART-TSI: Loading ELF 81bf6800-81bf6c00 ... Done
+UART-TSI: Loading ELF 81bf6c00-81bf7000 ... Done
+UART-TSI: Loading ELF 81bf7000-81bf7400 ... Done
+UART-TSI: Loading ELF 81bf7400-81bf7800 ... Done
+UART-TSI: Loading ELF 81bf7800-81bf7c00 ... Done
+UART-TSI: Loading ELF 81bf7c00-81bf8000 ... Done
+UART-TSI: Loading ELF 81bf8000-81bf8400 ... Done
+UART-TSI: Loading ELF 81bf8400-81bf8800 ... Done
+UART-TSI: Loading ELF 81bf8800-81bf8c00 ... Done
+UART-TSI: Loading ELF 81bf8c00-81bf9000 ... Done
+UART-TSI: Loading ELF 81bf9000-81bf9400 ... Done
+UART-TSI: Loading ELF 81bf9400-81bf9800 ... Done
+UART-TSI: Loading ELF 81bf9800-81bf9c00 ... Done
+UART-TSI: Loading ELF 81bf9c00-81bfa000 ... Done
+UART-TSI: Loading ELF 81bfa000-81bfa400 ... Done
+UART-TSI: Loading ELF 81bfa400-81bfa800 ... Done
+UART-TSI: Loading ELF 81bfa800-81bfac00 ... Done
+UART-TSI: Loading ELF 81bfac00-81bfb000 ... Done
+UART-TSI: Loading ELF 81bfb000-81bfb400 ... Done
+UART-TSI: Loading ELF 81bfb400-81bfb800 ... Done
+UART-TSI: Loading ELF 81bfb800-81bfbc00 ... Done
+UART-TSI: Loading ELF 81bfbc00-81bfc000 ... Done
+UART-TSI: Loading ELF 81bfc000-81bfc400 ... Done
+UART-TSI: Loading ELF 81bfc400-81bfc800 ... Done
+UART-TSI: Loading ELF 81bfc800-81bfcc00 ... Done
+UART-TSI: Loading ELF 81bfcc00-81bfd000 ... Done
+UART-TSI: Loading ELF 81bfd000-81bfd400 ... Done
+UART-TSI: Loading ELF 81bfd400-81bfd800 ... Done
+UART-TSI: Loading ELF 81bfd800-81bfdc00 ... Done
+UART-TSI: Loading ELF 81bfdc00-81bfe000 ... Done
+UART-TSI: Loading ELF 81bfe000-81bfe400 ... Done
+UART-TSI: Loading ELF 81bfe400-81bfe800 ... Done
+UART-TSI: Loading ELF 81bfe800-81bfec00 ... Done
+UART-TSI: Loading ELF 81bfec00-81bff000 ... Done
+UART-TSI: Loading ELF 81bff000-81bff400 ... Done
+UART-TSI: Loading ELF 81bff400-81bff800 ... Done
+UART-TSI: Loading ELF 81bff800-81bffc00 ... Done
+UART-TSI: Loading ELF 81bffc00-81c00000 ... Done
+UART-TSI: Loading ELF 81c00000-81c00400 ... Done
+UART-TSI: Loading ELF 81c00400-81c00800 ... Done
+UART-TSI: Loading ELF 81c00800-81c00c00 ... Done
+UART-TSI: Loading ELF 81c00c00-81c01000 ... Done
+UART-TSI: Loading ELF 81c01000-81c01400 ... Done
+UART-TSI: Loading ELF 81c01400-81c01800 ... Done
+UART-TSI: Loading ELF 81c01800-81c01c00 ... Done
+UART-TSI: Loading ELF 81c01c00-81c02000 ... Done
+UART-TSI: Loading ELF 81c02000-81c02400 ... Done
+UART-TSI: Loading ELF 81c02400-81c02800 ... Done
+UART-TSI: Loading ELF 81c02800-81c02c00 ... Done
+UART-TSI: Loading ELF 81c02c00-81c03000 ... Done
+UART-TSI: Loading ELF 81c03000-81c03400 ... Done
+UART-TSI: Loading ELF 81c03400-81c03800 ... Done
+UART-TSI: Loading ELF 81c03800-81c03c00 ... Done
+UART-TSI: Loading ELF 81c03c00-81c04000 ... Done
+UART-TSI: Loading ELF 81c04000-81c04400 ... Done
+UART-TSI: Loading ELF 81c04400-81c04800 ... Done
+UART-TSI: Loading ELF 81c04800-81c04c00 ... Done
+UART-TSI: Loading ELF 81c04c00-81c05000 ... Done
+UART-TSI: Loading ELF 81c05000-81c05400 ... Done
+UART-TSI: Loading ELF 81c05400-81c05800 ... Done
+UART-TSI: Loading ELF 81c05800-81c05c00 ... Done
+UART-TSI: Loading ELF 81c05c00-81c06000 ... Done
+UART-TSI: Loading ELF 81c06000-81c06400 ... Done
+UART-TSI: Loading ELF 81c06400-81c06800 ... Done
+UART-TSI: Loading ELF 81c06800-81c06c00 ... Done
+UART-TSI: Loading ELF 81c06c00-81c07000 ... Done
+UART-TSI: Loading ELF 81c07000-81c07400 ... Done
+UART-TSI: Loading ELF 81c07400-81c07800 ... Done
+UART-TSI: Loading ELF 81c07800-81c07c00 ... Done
+UART-TSI: Loading ELF 81c07c00-81c08000 ... Done
+UART-TSI: Loading ELF 81c08000-81c08400 ... Done
+UART-TSI: Loading ELF 81c08400-81c08800 ... Done
+UART-TSI: Loading ELF 81c08800-81c08c00 ... Done
+UART-TSI: Loading ELF 81c08c00-81c09000 ... Done
+UART-TSI: Loading ELF 81c09000-81c09400 ... Done
+UART-TSI: Loading ELF 81c09400-81c09800 ... Done
+UART-TSI: Loading ELF 81c09800-81c09c00 ... Done
+UART-TSI: Loading ELF 81c09c00-81c0a000 ... Done
+UART-TSI: Loading ELF 81c0a000-81c0a400 ... Done
+UART-TSI: Loading ELF 81c0a400-81c0a800 ... Done
+UART-TSI: Loading ELF 81c0a800-81c0ac00 ... Done
+UART-TSI: Loading ELF 81c0ac00-81c0b000 ... Done
+UART-TSI: Loading ELF 81c0b000-81c0b400 ... Done
+UART-TSI: Loading ELF 81c0b400-81c0b800 ... Done
+UART-TSI: Loading ELF 81c0b800-81c0bc00 ... Done
+UART-TSI: Loading ELF 81c0bc00-81c0c000 ... Done
+UART-TSI: Loading ELF 81c0c000-81c0c400 ... Done
+UART-TSI: Loading ELF 81c0c400-81c0c800 ... Done
+UART-TSI: Loading ELF 81c0c800-81c0cc00 ... Done
+UART-TSI: Loading ELF 81c0cc00-81c0d000 ... Done
+UART-TSI: Loading ELF 81c0d000-81c0d400 ... Done
+UART-TSI: Loading ELF 81c0d400-81c0d800 ... Done
+UART-TSI: Loading ELF 81c0d800-81c0dc00 ... Done
+UART-TSI: Loading ELF 81c0dc00-81c0e000 ... Done
+UART-TSI: Loading ELF 81c0e000-81c0e400 ... Done
+UART-TSI: Loading ELF 81c0e400-81c0e800 ... Done
+UART-TSI: Loading ELF 81c0e800-81c0ec00 ... Done
+UART-TSI: Loading ELF 81c0ec00-81c0f000 ... Done
+UART-TSI: Loading ELF 81c0f000-81c0f400 ... Done
+UART-TSI: Loading ELF 81c0f400-81c0f800 ... Done
+UART-TSI: Loading ELF 81c0f800-81c0fc00 ... Done
+UART-TSI: Loading ELF 81c0fc00-81c10000 ... Done
+UART-TSI: Loading ELF 81c10000-81c10400 ... Done
+UART-TSI: Loading ELF 81c10400-81c10800 ... Done
+UART-TSI: Loading ELF 81c10800-81c10c00 ... Done
+UART-TSI: Loading ELF 81c10c00-81c11000 ... Done
+UART-TSI: Loading ELF 81c11000-81c11400 ... Done
+UART-TSI: Loading ELF 81c11400-81c11800 ... Done
+UART-TSI: Loading ELF 81c11800-81c11c00 ... Done
+UART-TSI: Loading ELF 81c11c00-81c12000 ... Done
+UART-TSI: Loading ELF 81c12000-81c12400 ... Done
+UART-TSI: Loading ELF 81c12400-81c12800 ... Done
+UART-TSI: Loading ELF 81c12800-81c12c00 ... Done
+UART-TSI: Loading ELF 81c12c00-81c13000 ... Done
+UART-TSI: Loading ELF 81c13000-81c13400 ... Done
+UART-TSI: Loading ELF 81c13400-81c13800 ... Done
+UART-TSI: Loading ELF 81c13800-81c13c00 ... Done
+UART-TSI: Loading ELF 81c13c00-81c14000 ... Done
+UART-TSI: Loading ELF 81c14000-81c14400 ... Done
+UART-TSI: Loading ELF 81c14400-81c14800 ... Done
+UART-TSI: Loading ELF 81c14800-81c14c00 ... Done
+UART-TSI: Loading ELF 81c14c00-81c15000 ... Done
+UART-TSI: Loading ELF 81c15000-81c15400 ... Done
+UART-TSI: Loading ELF 81c15400-81c15800 ... Done
+UART-TSI: Loading ELF 81c15800-81c15c00 ... Done
+UART-TSI: Loading ELF 81c15c00-81c16000 ... Done
+UART-TSI: Loading ELF 81c16000-81c16400 ... Done
+UART-TSI: Loading ELF 81c16400-81c16800 ... Done
+UART-TSI: Loading ELF 81c16800-81c16c00 ... Done
+UART-TSI: Loading ELF 81c16c00-81c17000 ... Done
+UART-TSI: Loading ELF 81c17000-81c17400 ... Done
+UART-TSI: Loading ELF 81c17400-81c17800 ... Done
+UART-TSI: Loading ELF 81c17800-81c17c00 ... Done
+UART-TSI: Loading ELF 81c17c00-81c18000 ... Done
+UART-TSI: Loading ELF 81c18000-81c18400 ... Done
+UART-TSI: Loading ELF 81c18400-81c18800 ... Done
+UART-TSI: Loading ELF 81c18800-81c18c00 ... Done
+UART-TSI: Loading ELF 81c18c00-81c19000 ... Done
+UART-TSI: Loading ELF 81c19000-81c19400 ... Done
+UART-TSI: Loading ELF 81c19400-81c19800 ... Done
+UART-TSI: Loading ELF 81c19800-81c19c00 ... Done
+UART-TSI: Loading ELF 81c19c00-81c1a000 ... Done
+UART-TSI: Loading ELF 81c1a000-81c1a400 ... Done
+UART-TSI: Loading ELF 81c1a400-81c1a800 ... Done
+UART-TSI: Loading ELF 81c1a800-81c1ac00 ... Done
+UART-TSI: Loading ELF 81c1ac00-81c1b000 ... Done
+UART-TSI: Loading ELF 81c1b000-81c1b400 ... Done
+UART-TSI: Loading ELF 81c1b400-81c1b800 ... Done
+UART-TSI: Loading ELF 81c1b800-81c1bc00 ... Done
+UART-TSI: Loading ELF 81c1bc00-81c1c000 ... Done
+UART-TSI: Loading ELF 81c1c000-81c1c400 ... Done
+UART-TSI: Loading ELF 81c1c400-81c1c800 ... Done
+UART-TSI: Loading ELF 81c1c800-81c1cc00 ... Done
+UART-TSI: Loading ELF 81c1cc00-81c1d000 ... Done
+UART-TSI: Loading ELF 81c1d000-81c1d400 ... Done
+UART-TSI: Loading ELF 81c1d400-81c1d800 ... Done
+UART-TSI: Loading ELF 81c1d800-81c1dc00 ... Done
+UART-TSI: Loading ELF 81c1dc00-81c1e000 ... Done
+UART-TSI: Loading ELF 81c1e000-81c1e400 ... Done
+UART-TSI: Loading ELF 81c1e400-81c1e800 ... Done
+UART-TSI: Loading ELF 81c1e800-81c1ec00 ... Done
+UART-TSI: Loading ELF 81c1ec00-81c1f000 ... Done
+UART-TSI: Loading ELF 81c1f000-81c1f400 ... Done
+UART-TSI: Loading ELF 81c1f400-81c1f800 ... Done
+UART-TSI: Loading ELF 81c1f800-81c1fc00 ... Done
+UART-TSI: Loading ELF 81c1fc00-81c20000 ... Done
+UART-TSI: Loading ELF 81c20000-81c20400 ... Done
+UART-TSI: Loading ELF 81c20400-81c20800 ... Done
+UART-TSI: Loading ELF 81c20800-81c20c00 ... Done
+UART-TSI: Loading ELF 81c20c00-81c21000 ... Done
+UART-TSI: Loading ELF 81c21000-81c21400 ... Done
+UART-TSI: Loading ELF 81c21400-81c21800 ... Done
+UART-TSI: Loading ELF 81c21800-81c21c00 ... Done
+UART-TSI: Loading ELF 81c21c00-81c22000 ... Done
+UART-TSI: Loading ELF 81c22000-81c22400 ... Done
+UART-TSI: Loading ELF 81c22400-81c22800 ... Done
+UART-TSI: Loading ELF 81c22800-81c22c00 ... Done
+UART-TSI: Loading ELF 81c22c00-81c23000 ... Done
+UART-TSI: Loading ELF 81c23000-81c23400 ... Done
+UART-TSI: Loading ELF 81c23400-81c23800 ... Done
+UART-TSI: Loading ELF 81c23800-81c23c00 ... Done
+UART-TSI: Loading ELF 81c23c00-81c24000 ... Done
+UART-TSI: Loading ELF 81c24000-81c24400 ... Done
+UART-TSI: Loading ELF 81c24400-81c24800 ... Done
+UART-TSI: Loading ELF 81c24800-81c24c00 ... Done
+UART-TSI: Loading ELF 81c24c00-81c25000 ... Done
+UART-TSI: Loading ELF 81c25000-81c25400 ... Done
+UART-TSI: Loading ELF 81c25400-81c25800 ... Done
+UART-TSI: Loading ELF 81c25800-81c25c00 ... Done
+UART-TSI: Loading ELF 81c25c00-81c26000 ... Done
+UART-TSI: Loading ELF 81c26000-81c26400 ... Done
+UART-TSI: Loading ELF 81c26400-81c26800 ... Done
+UART-TSI: Loading ELF 81c26800-81c26c00 ... Done
+UART-TSI: Loading ELF 81c26c00-81c27000 ... Done
+UART-TSI: Loading ELF 81c27000-81c27400 ... Done
+UART-TSI: Loading ELF 81c27400-81c27800 ... Done
+UART-TSI: Loading ELF 81c27800-81c27c00 ... Done
+UART-TSI: Loading ELF 81c27c00-81c28000 ... Done
+UART-TSI: Loading ELF 81c28000-81c28400 ... Done
+UART-TSI: Loading ELF 81c28400-81c28800 ... Done
+UART-TSI: Loading ELF 81c28800-81c28c00 ... Done
+UART-TSI: Loading ELF 81c28c00-81c29000 ... Done
+UART-TSI: Loading ELF 81c29000-81c29400 ... Done
+UART-TSI: Loading ELF 81c29400-81c29800 ... Done
+UART-TSI: Loading ELF 81c29800-81c29c00 ... Done
+UART-TSI: Loading ELF 81c29c00-81c2a000 ... Done
+UART-TSI: Loading ELF 81c2a000-81c2a400 ... Done
+UART-TSI: Loading ELF 81c2a400-81c2a800 ... Done
+UART-TSI: Loading ELF 81c2a800-81c2ac00 ... Done
+UART-TSI: Loading ELF 81c2ac00-81c2b000 ... Done
+UART-TSI: Loading ELF 81c2b000-81c2b400 ... Done
+UART-TSI: Loading ELF 81c2b400-81c2b800 ... Done
+UART-TSI: Loading ELF 81c2b800-81c2bc00 ... Done
+UART-TSI: Loading ELF 81c2bc00-81c2c000 ... Done
+UART-TSI: Loading ELF 81c2c000-81c2c400 ... Done
+UART-TSI: Loading ELF 81c2c400-81c2c800 ... Done
+UART-TSI: Loading ELF 81c2c800-81c2cc00 ... Done
+UART-TSI: Loading ELF 81c2cc00-81c2d000 ... Done
+UART-TSI: Loading ELF 81c2d000-81c2d400 ... Done
+UART-TSI: Loading ELF 81c2d400-81c2d800 ... Done
+UART-TSI: Loading ELF 81c2d800-81c2dc00 ... Done
+UART-TSI: Loading ELF 81c2dc00-81c2e000 ... Done
+UART-TSI: Loading ELF 81c2e000-81c2e400 ... Done
+UART-TSI: Loading ELF 81c2e400-81c2e800 ... Done
+UART-TSI: Loading ELF 81c2e800-81c2ec00 ... Done
+UART-TSI: Loading ELF 81c2ec00-81c2f000 ... Done
+UART-TSI: Loading ELF 81c2f000-81c2f400 ... Done
+UART-TSI: Loading ELF 81c2f400-81c2f800 ... Done
+UART-TSI: Loading ELF 81c2f800-81c2fc00 ... Done
+UART-TSI: Loading ELF 81c2fc00-81c30000 ... Done
+UART-TSI: Loading ELF 81c30000-81c30400 ... Done
+UART-TSI: Loading ELF 81c30400-81c30800 ... Done
+UART-TSI: Loading ELF 81c30800-81c30c00 ... Done
+UART-TSI: Loading ELF 81c30c00-81c31000 ... Done
+UART-TSI: Loading ELF 81c31000-81c31400 ... Done
+UART-TSI: Loading ELF 81c31400-81c31800 ... Done
+UART-TSI: Loading ELF 81c31800-81c31c00 ... Done
+UART-TSI: Loading ELF 81c31c00-81c32000 ... Done
+UART-TSI: Loading ELF 81c32000-81c32400 ... Done
+UART-TSI: Loading ELF 81c32400-81c32800 ... Done
+UART-TSI: Loading ELF 81c32800-81c32c00 ... Done
+UART-TSI: Loading ELF 81c32c00-81c33000 ... Done
+UART-TSI: Loading ELF 81c33000-81c33400 ... Done
+UART-TSI: Loading ELF 81c33400-81c33800 ... Done
+UART-TSI: Loading ELF 81c33800-81c33c00 ... Done
+UART-TSI: Loading ELF 81c33c00-81c34000 ... Done
+UART-TSI: Loading ELF 81c34000-81c34400 ... Done
+UART-TSI: Loading ELF 81c34400-81c34800 ... Done
+UART-TSI: Loading ELF 81c34800-81c34c00 ... Done
+UART-TSI: Loading ELF 81c34c00-81c35000 ... Done
+warning: tohost and fromhost symbols not in ELF; can't communicate with target
+UART-TSI: Done loading program
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+[5/5] Writing mailbox fields at 0x08010000 (scratchpad/uncached) and setting READY last
+  Writing 0x4D424F58 to 0x08010000 (offset +0x00)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010000 with 4d424f58
+Done writing 8010000 with 4d424f58
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x81ba2000 to 0x08010010 (offset +0x10)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010010 with 81ba2000
+Done writing 8010010 with 81ba2000
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00000000 to 0x08010014 (offset +0x14)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010014 with 0
+Done writing 8010014 with 0
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00093000 to 0x0801000c (offset +0x0c)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 801000c with 93000
+Done writing 801000c with 93000
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00000001 to 0x08010018 (offset +0x18)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010018 with 1
+Done writing 8010018 with 1
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00000001 to 0x08010008 (offset +0x08)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010008 with 1
+Done writing 8010008 with 1
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00000000 to 0x08010020 (offset +0x20)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010020 with 0
+Done writing 8010020 with 0
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00000000 to 0x08010024 (offset +0x24)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010024 with 0
+Done writing 8010024 with 0
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+  Writing 0x00000001 to 0x08010004 (offset +0x04)
+UART-TSI: Starting UART-based TSI
+UART-TSI: Usage: ./uart_tsi +tty=/dev/pts/xx <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  <PLUSARGS> <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_write=0x80000000:0xdeadbeef none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +no_hart0_msip +init_read=0x80000000 none
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +selfcheck <bin>
+UART-TSI:        ./uart_tsi +tty=/dev/ttyxx  +baudrate=921600 <bin>
+UART-TSI: Attempting to open TTY at /dev/ttyUSB1
+UART-TSI: Warning: You selected a non-standard baudrate. This will only work if the HW was configured with this baud-rate
+UART-TSI: Checking connection status with /dev/ttyUSB1
+UART-TSI: Connection succeeded
+Writing 8010004 with 1
+Done writing 8010004 with 1
+UART-TSI: Done, shutting down, flushing UART
+UART-TSI: WARNING: You should probably reset the target before running this program again
+Done. Firmware should now pick up SEQ=1 and run inference.
+
+

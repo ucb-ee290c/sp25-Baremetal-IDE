@@ -19,7 +19,8 @@
 #include "rocketcore.h"
 #include <inttypes.h>
 #include <stdbool.h>
-// #include <meep.h>
+#include <meep.h>
+#include <roll.h>
 
 // I2S at 44kHz -> ~440hz square wave
 #define PULSE_PERIOD_SAMPLES (100) // 44kHz -> 100 samples per 440Hz period
@@ -36,8 +37,8 @@
 i2s_params_t i2s_params_mic = {
     .tx_en       = 1,
     .rx_en       = 1,
-    .bitdepth_tx = I2S_BITDEPTH_32,
-    .bitdepth_rx = I2S_BITDEPTH_32,
+    .bitdepth_tx = I2S_BITDEPTH_16,
+    .bitdepth_rx = I2S_BITDEPTH_16,
     .clkgen      = 1,
     .dacen       = 0,
     .ws_len      = 3,
@@ -51,8 +52,8 @@ i2s_params_t i2s_params_mic = {
 i2s_params_t i2s_params_speaker = {
   .tx_en       = 1,
   .rx_en       = 1,
-  .bitdepth_tx = I2S_BITDEPTH_32,
-  .bitdepth_rx = I2S_BITDEPTH_32,
+  .bitdepth_tx = I2S_BITDEPTH_16,
+  .bitdepth_rx = I2S_BITDEPTH_16,
   .clkgen      = 1,
   .dacen       = 1,
   .ws_len      = 3,
@@ -172,7 +173,8 @@ void i2s_wav_playback_test(void) {
 
   uint32_t i = 0;
   // uint16_t* audio = meep_wav;
-  uint16_t* audio = NULL;
+  uint16_t* audio = roll_wav;
+  // uint16_t* audio = NULL;
   while (1) {
     uint32_t len = 994704 / 2;
     
@@ -211,6 +213,24 @@ void i2s_live_feedback_test(void) {
   }
 }
 
+// TLDR: 
+void i2s_live_convrev_test(void) {
+  uint64_t mic_output;
+  int32_t* samples = &mic_output;
+  while (1) {
+    // printf("reading mic_output");
+    mic_output = read_I2S_rx(MIC_CHANNEL, I2S_LEFT);
+
+
+
+    // uint64_t speaker_output = ((uint64_t)(samples[1] << 1) << 32) | ((uint64_t)(samples[0] << 2));
+
+    // printf("sending output to speaker");
+    write_I2S_tx(SPEAKER_CHANNEL, I2S_LEFT, mic_output);
+    write_I2S_tx(SPEAKER_CHANNEL, I2S_RIGHT, mic_output);
+  }
+}
+
 
 /**
   * @brief  The application entry point.
@@ -234,9 +254,10 @@ int main(int argc, char **argv) {
  
   
   printf("About to start test\r\n");
-  i2s_live_feedback_test();
+  // i2s_live_feedback_test();
   // i2s_square_wave_test();
   // i2s_parrot_test();
+  i2s_wav_playback_test();
 
   return 0;
 }

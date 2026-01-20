@@ -30,6 +30,9 @@
 #include "main.h"
 #include "pll.h"
 #include "layers.h"
+#include "simple_setup.h"
+
+uint64_t target_frequency = 500000000l;
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -64,8 +67,6 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN PUC */
-
-uint64_t target_frequency = 500000000l;
 
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
@@ -953,17 +954,18 @@ void app_main() {
   */
 int main(int argc, char **argv) {
   /* MCU Configuration--------------------------------------------------------*/
-  configure_pll(PLL, target_frequency/50000000, 0);
-  set_all_clocks(CLOCK_SELECTOR, 1);
+//   configure_pll(PLL, target_frequency/50000000, 0);
+//   set_all_clocks(CLOCK_SELECTOR, 1);
 
-//   /* USER CODE BEGIN SysInit */
-//   // Initialize UART0 for Serial Monitor
-  UART_InitType UART0_init_config;
-  UART0_init_config.baudrate = 115200;
-  UART0_init_config.mode = UART_MODE_TX_RX;
-  UART0_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0, &UART0_init_config);
-  UART0->DIV = (target_frequency / 115200) - 1;
+// //   /* USER CODE BEGIN SysInit */
+// //   // Initialize UART0 for Serial Monitor
+//   UART_InitType UART0_init_config;
+//   UART0_init_config.baudrate = 115200;
+//   UART0_init_config.mode = UART_MODE_TX_RX;
+//   UART0_init_config.stopbits = UART_STOPBITS_2;
+//   uart_init(UART0, &UART0_init_config);
+//   UART0->DIV = (target_frequency / 115200) - 1;
+  init_test(target_frequency);
 
 // #ifdef ENABLE_BORAVOICE_INTEG
 //   // Initialize UART1 for BoraVoice

@@ -61,7 +61,7 @@ const unsigned char *ASCII_BEL = (const unsigned char *) "\a";
 
 // int32_t GS = 64; // group size global for quantization of the weights
 
-uint64_t target_frequency = 800000000l;
+uint64_t target_frequency = 500000000l;
 
 // #ifdef ENABLE_DMA_MATVEC
 // int32_t GS_MATVEC_BOUND = 0;

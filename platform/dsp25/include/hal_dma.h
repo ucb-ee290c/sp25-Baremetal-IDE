@@ -18,7 +18,7 @@
  #include "metal.h"
  #include <stdbool.h>
  #include <stdint.h>
- #include <encoding.h>
+ #include <riscv-pk/encoding.h>
 
   typedef struct {
     // ==========================================

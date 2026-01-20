@@ -13,6 +13,7 @@ extern "C" {
 #include "i2c.h"
 #include "uart.h"
 #include "gpio.h"
+#include "pwm.h"
 #include "pll.h"
 
 // ================================
@@ -21,6 +22,9 @@ extern "C" {
 #include "hal_mmio.h"
 #include "hal_rcc.h"
 #include "hal_i2s.h"
+#include "hal_dma.h"
+#include "hal_wavelet.h"
+#include "hal_conv.h"
 
 
 // ================================
@@ -59,6 +63,8 @@ extern "C" {
 #define GPIOA                       ((GPIO_Type *)GPIOA_BASE)
 #define GPIOB                       ((GPIO_Type *)GPIOB_BASE)
 
+// #define CONV_BASE                   0x08800000U
+// #define CONV1D                  ((ConvAccel_Type *)CONV_BASE)
 
 #ifdef __cplusplus
 }

@@ -39,3 +39,31 @@ uint64_t reg_read64(unsigned long addr) {
 	volatile uint64_t *ptr = (volatile uint64_t *) addr;
 	return *ptr;
 }
+
+
+uint32_t reg_amo_swap32(uintptr_t addr, uint32_t data) {
+    uint32_t old_val;
+
+    __asm__ volatile (
+        "amoswap.w %0, %2, (%1)"
+        : "=r" (old_val)            
+        : "r" (addr), "r" (data)
+        : "memory"
+    );
+
+    return old_val;
+}
+
+uint64_t reg_amo_swap64(unsigned long addr, uint64_t data) {
+    uint64_t old_val;
+
+    __asm__ volatile (
+        "amoswap.d %0, %2, (%1)"
+        : "=r" (old_val)
+        : "r" (addr), "r" (data)
+        : "memory"
+    );
+
+    return old_val;
+}
+

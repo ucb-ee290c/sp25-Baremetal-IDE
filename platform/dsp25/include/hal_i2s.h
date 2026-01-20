@@ -242,6 +242,8 @@ void set_I2S_fp(int channel, int tx_fp, int rx_fp);
  */
 void set_I2S_force_left(int channel, int tx_force_left, int rx_force_left);
 
+void set_I2S_sample_freq(int channel, uint64_t sys_clk_freq, uint64_t target_sample_freq, uint8_t bits_per_sample);
+
 // ===================================
 //  DMA Functions (Work In Progress)
 // ===================================

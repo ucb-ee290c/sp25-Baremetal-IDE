@@ -1,3 +1,4 @@
+// cmake -S ./ -B ./build/ -D CMAKE_BUILD_TYPE=$(TYPE) -D CMAKE_C_FLAGS="-mcmodel=medany" -D CMAKE_ASM_FLAGS="-mcmodel=medany" -D CMAKE_TOOLCHAIN_FILE=./riscv-gcc.cmake -DCHIP=$(CHIP)
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
@@ -21,6 +22,8 @@
 #include <stdbool.h>
 #include <meep.h>
 #include <roll.h>
+#include <stdint.h>
+#include <string.h>
 
 // I2S at 44kHz -> ~440hz square wave
 #define PULSE_PERIOD_SAMPLES (100) // 44kHz -> 100 samples per 440Hz period
@@ -31,6 +34,11 @@
 
 #define SPEAKER_CHANNEL 1
 #define MIC_CHANNEL 0
+
+#define BLOCK_SIZE      32      // Number of samples to process per batch
+#define KERNEL_SIZE     16      // Hardware limit: 8 or 16
+#define DILATION        1       // Standard convolution
+#define CONV_OUT_SIZE   (BLOCK_SIZE + KERNEL_SIZE) 
 
 // TODO: Verify clocks and clockdiv. Stolen from dsp-24 bmarks
 // https://github.com/ucb-bar/sp24-Baremetal-IDE/blob/dsp24-bmarks/i2s-test/src/main.c
@@ -231,6 +239,66 @@ void i2s_live_convrev_test(void) {
   }
 }
 
+//================================convrev=========================================
+// Conversion Helpers
+static inline float s32_to_float(int32_t sample) {
+    return (float)sample / 2147483648.0f; // Normalize to -1.0 to 1.0
+}
+
+static inline int32_t float_to_s32(float sample) {
+    if (sample > 1.0f) sample = 1.0f;
+    if (sample < -1.0f) sample = -1.0f;
+    return (int32_t)(sample * 2147483647.0f);
+}
+
+void i2s_convolution_reverb_demo(void) {
+    uint32_t input_buffer[BLOCK_SIZE];  
+    uint32_t output_buffer[CONV_OUT_SIZE]; 
+
+    float tail_buffer[KERNEL_SIZE]; 
+    memset(tail_buffer, 0, sizeof(tail_buffer)); // Clear tail initially
+
+    float kernel_float[KERNEL_SIZE] = {
+        1.0f, 0.8f, 0.64f, 0.51f, 0.41f, 0.33f, 0.26f, 0.21f,
+        0.17f, 0.13f, 0.10f, 0.08f, 0.06f, 0.05f, 0.04f, 0.03f
+    };
+
+    uint32_t* kernel_ptr = (uint32_t*)kernel_float;
+
+    while (1) {
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            uint64_t rx_data = read_I2S_rx(MIC_CHANNEL, I2S_LEFT);
+            int32_t sample_l = (int32_t)(rx_data & 0xFFFFFFFF);
+            ((float*)input_buffer)[i] = s32_to_float(sample_l);
+        }
+
+        perform_convolution_1D(
+            input_buffer, 
+            BLOCK_SIZE, 
+            kernel_ptr, 
+            KERNEL_SIZE, 
+            output_buffer, 
+            DILATION
+        );
+        
+        float* out_f = (float*)output_buffer;
+
+        for (int k = 0; k < KERNEL_SIZE; k++) {
+            out_f[k] += tail_buffer[k];
+        }
+
+        for (int k = 0; k < KERNEL_SIZE; k++) {
+            tail_buffer[k] = out_f[BLOCK_SIZE + k];
+        }
+
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            int32_t final_sample = float_to_s32(out_f[i]);
+            uint64_t tx_data = ((uint64_t)final_sample << 32) | (uint32_t)final_sample;
+            write_I2S_tx(SPEAKER_CHANNEL, I2S_LEFT, tx_data);
+        }
+    }
+}
+//================================convrev=========================================
 
 /**
   * @brief  The application entry point.
@@ -257,7 +325,8 @@ int main(int argc, char **argv) {
   // i2s_live_feedback_test();
   // i2s_square_wave_test();
   // i2s_parrot_test();
-  i2s_wav_playback_test();
+  // i2s_wav_playback_test();
+  i2s_convolution_reverb_demo();
 
   return 0;
 }

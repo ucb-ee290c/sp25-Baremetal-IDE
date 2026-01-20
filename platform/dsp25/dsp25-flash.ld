@@ -1,5 +1,5 @@
 /**
-  * @file dsp25.ld
+  * @file dsp25-flash.ld
   * @brief Linker script to place sections and symbol values. Should be used together
   * with other linker script that defines memory regions FLASH and RAM.
   * It references following symbols, which must be defined in code:

@@ -39,7 +39,10 @@
 //     printf("  Expected class: %d (%s)\n", expected_class, imagenet_labels[expected_class]);
     
 //     // Run inference - the INT8 model handles quant/dequant internally
+//     uint64_t start_cycles = rdcycle();
 //     entry((const float(*)[3][224][224])input, output);
+//     uint64_t end_cycles = rdcycle();
+//     printf("  Inference cycles: %llu\n", (unsigned long long)(end_cycles - start_cycles));
     
 //     // Find predicted class
 //     int predicted = argmax(output[0], 1000);

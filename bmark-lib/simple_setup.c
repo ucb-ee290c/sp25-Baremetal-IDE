@@ -20,3 +20,9 @@ void init_test(uint64_t target_frequency) {
 
   UART0->DIV = (uint32_t)((target_frequency / UART_BAUDRATE) - 1u);
 }
+
+uint64_t rdcycle(void) {
+  uint64_t cycles;
+  asm volatile("rdcycle %0" : "=r"(cycles));
+  return cycles;
+}

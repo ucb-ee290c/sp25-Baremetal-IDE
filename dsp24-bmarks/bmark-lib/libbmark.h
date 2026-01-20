@@ -3,9 +3,6 @@
 
 #include "uart.h"
 #include "hal_rcc.h"
-#include "pll.h"
-#include "gpio.h"
-#include "chip_config.h"
 #include <stdlib.h>
 
 #ifdef __cplusplus

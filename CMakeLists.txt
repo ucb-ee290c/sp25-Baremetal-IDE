@@ -145,6 +145,7 @@ add_subdirectory(driver)
 add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
+add_subdirectory(bmark-lib)
 
 if(BUILD_VECNN)
   add_subdirectory(vec-nn)

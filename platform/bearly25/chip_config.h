@@ -48,6 +48,7 @@ extern "C" {
 // #define CACHE_CONTROLLER_BASE   0x02010000U
 #define PLIC_BASE                0x0C000000U
 #define GPIO_BASE                0x10010000U
+#define GPIOC_BASE                0x10012000U
 #define UART_BASE                0x10020000U
 #define QSPI_BASE                0x10030000U
 #define I2C_BASE                 0x10040000U
@@ -65,12 +66,16 @@ extern "C" {
 
 #define UART0_BASE               (UART_BASE)
 #define UART0                    ((UART_Type *)UART0_BASE)
+#define UART1_BASE               0x10021000U
+#define UART1                    ((UART_Type *)UART1_BASE)
 
 #define CONV2D_BASE              0x08808000U
 #define CONV2D                   ((Conv2D_Accel_Type *)CONV2D_BASE)
 
 #define GPIOA_BASE              (GPIO_BASE)
 #define GPIOA                   ((GPIO_Type *)GPIOA_BASE)
+// #define GPIOC_BASE              (GPIOC_BASE)
+#define GPIOC                   ((GPIO_Type *)GPIOC_BASE)
 
 #define QSPI0_BASE              (QSPI_BASE)
 #define QSPI0                   ((QSPI_Type *)QSPI0_BASE)

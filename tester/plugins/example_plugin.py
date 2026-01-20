@@ -25,7 +25,7 @@ class HelloTest(ShmooTest):
 
 # Define the tests here:
 ShmooTestHarness.register_test_suite(TestSuite("hello",
-    "build/dsp24-bmarks/example-bmark/example-bmark.elf",
+    "build/bearly25-bmarks/example-bmark/example-bmark.elf",
 
     # ShmooConstantTest can be used for a deterministic send/receive.
     ShmooConstantTest("Hello World Test", 0x1,

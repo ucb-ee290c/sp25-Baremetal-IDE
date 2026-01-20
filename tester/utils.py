@@ -104,7 +104,8 @@ class PSU:
     Wrapper class for all PyVisa PSU commands and data acquisition management.
     """
 
-    IDN = 'Keysight Technologies,E36312A,MY57010726,1.0.4-1.0.0-1.04'
+    #IDN = 'Keysight Technologies,E36312A,MY57010726,1.0.4-1.0.0-1.04'
+    IDN = 'Keysight Technologies,E3648A,MY52180032,1.7-5.0-1.0'
     """
     Identification string to check for valid equipment setup.
     """
@@ -119,7 +120,8 @@ class PSU:
     Defines the default voltage limit for the SourceMeter.
     """
 
-    VISA_PATH = 'TCPIP::169.254.201.77::lan0::INSTR'
+    # VISA_PATH = 'TCPIP::169.254.201.77::lan0::INSTR'
+    VISA_PATH = 'TCPIP::192.168.192.38::lan0::INSTR'
     """
     Defines the default path to use for communication with the SourceMeter.
     """

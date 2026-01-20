@@ -328,21 +328,3 @@ w32 0x24 "0x00000000"
 w32 0x04 "0x00000001"
 
 echo "Done. Firmware should now pick up SEQ=$SEQ and run inference."
-
-if [[ $WAIT -eq 1 ]]; then
-  echo "Polling status/result (best-effort)..."
-  # Read helper
-  r32() {
-    local offset="$1"
-    local addr=$(printf "0x%08x" $((MBOX_DEC + offset)))
-    echo -n "  [$addr]: "
-    uart_tsi +tty="$TTY" +baudrate="$BAUD" +no_hart0_msip +init_read="${addr}" none 2>/dev/null || echo "(read failed)"
-  }
-  
-  echo "Status (0x04 - expect 3 for DONE):"
-  r32 0x04
-  echo "Result top1 (0x20):"
-  r32 0x20
-  echo "Error code (0x24 - expect 0):"
-  r32 0x24
-fi

@@ -221,7 +221,7 @@ static void run_block(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Scalar global average pool (H×W → 1) per channel                           */
+/* Scalar global average pool (HxW → 1) per channel                           */
 /* -------------------------------------------------------------------------- */
 void avgpool_global_7x7_int8(
     const int8_t *input,

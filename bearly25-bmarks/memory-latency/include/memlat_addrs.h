@@ -1,31 +1,26 @@
 /*
- * memlat_addrs.h - Address helpers for DRAM, scratchpad, and TCM regions.
- */
+ * memlat_addrs.h - Memory region addresses for Bearly25.
+ *
+ * From the generated DTS / memmap:
+ *   memory@8000000   -> scratchpad  64 KB on MBUS
+ *   memory@8010000   -> Core 0 TCM   8 KB  (2 banks)
+ *   memory@8012000   -> Core 1 TCM   8 KB  (2 banks)
+ *   memory@80000000  -> DRAM
+*/
+
 #ifndef MEMLAT_ADDRS_H
 #define MEMLAT_ADDRS_H
 
 #include <stdint.h>
-#include "chip_config.h"
 
-#ifndef SCRATCHPAD_SIZE
-#define SCRATCHPAD_SIZE (64UL * 1024UL)
-#endif
+#define DRAM_BASE               0x80000000UL
 
-#ifndef SCRATCHPAD_BASE
-#define SCRATCHPAD_BASE (0x80000000UL)
-#endif
+#define SCRATCHPAD_BASE         0x08000000UL
+#define SCRATCHPAD_SIZE         (64UL * 1024UL)   /* 64 KB */
 
-#ifndef TCM_SIZE
-#define TCM_SIZE (8UL * 1024UL)
-#endif
+#define CORE0_TCM_BASE          0x08010000UL
+#define CORE0_TCM_SIZE          0x2000UL          /* 8 KB */
+#define CORE1_TCM_BASE          0x08012000UL
+#define CORE1_TCM_SIZE          0x2000UL          /* 8 KB */
 
-#define DRAM_PTR(base_offset_bytes) \
-    ((volatile uint32_t *)((uintptr_t)DRAM_BASE + (uintptr_t)(base_offset_bytes)))
-
-#define SCRATCHPAD_PTR(base_offset_bytes) \
-    ((volatile uint32_t *)((uintptr_t)SCRATCHPAD_BASE + (uintptr_t)(base_offset_bytes)))
-
-#define TCM_PTR(base_offset_bytes) \
-    ((volatile uint32_t *)((uintptr_t)TCM_BASE + (uintptr_t)(base_offset_bytes)))
-
-#endif // MEMLAT_ADDRS_H
+#endif /* MEMLAT_ADDRS_H */

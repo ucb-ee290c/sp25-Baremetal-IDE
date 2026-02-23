@@ -1,6 +1,7 @@
 /*
  * memlat_patterns.c - Streaming access patterns for cache/DRAM conditioning.
  */
+ 
 #include "memlat_patterns.h"
 
 // Walk a region on with a fixed stride

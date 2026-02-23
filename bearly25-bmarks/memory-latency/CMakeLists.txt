@@ -9,8 +9,6 @@ add_executable(memory-latency
   src/main.c
   src/memlat_core.c
   src/memlat_l1_l2_dram.c
-  src/memlat_noc_bg.c
-  src/memlat_patterns.c
   src/memlat_scratch_tcm.c
 )
 

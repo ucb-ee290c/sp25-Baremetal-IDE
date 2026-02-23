@@ -1,16 +1,12 @@
 #include <stdio.h>
 #include <stdint.h>
 
-//I ran this directly in main before, might need some editing now it is its own file
-
-// ---------- RISC-V cycle counter ---------- 
 static inline uint64_t rdcycle64(void) {
   uint64_t cycles;
   asm volatile ("rdcycle %0" : "=r"(cycles));
   return cycles;
 }
 
-// ---------- Config ----------
 #define MAX_BYTES   (1u << 20)   /* 1 MB */
 #define MIN_BYTES   (1u << 10)   /* 1 KB */
 
@@ -19,7 +15,6 @@ typedef uint32_t elem_t;
 #define MAX_ELEMS   (MAX_BYTES / sizeof(elem_t))
 static elem_t buffer[MAX_ELEMS];
 
-//Simple LCG PRNG for deterministic-ish randomness per size 
 static uint32_t lcg_state;
 
 static void lcg_seed(uint32_t seed) {
@@ -32,7 +27,6 @@ static uint32_t lcg_next(void) {
   return lcg_state;
 }
 
-//Build a RANDOM pointer-chase ring over n_elems entries 
 static void build_random_ring(elem_t *buf, uint32_t n_elems) {
   static uint32_t perm[MAX_ELEMS];
 
@@ -52,7 +46,6 @@ static void build_random_ring(elem_t *buf, uint32_t n_elems) {
   }
 }
 
-//Run a pointer chase for `steps` steps starting at index 0 
 static uint64_t run_pointer_chase(elem_t *buf, uint64_t steps) {
   uint32_t idx = 0;
   uint64_t start = rdcycle64();
@@ -61,15 +54,11 @@ static uint64_t run_pointer_chase(elem_t *buf, uint64_t steps) {
   }
   uint64_t end = rdcycle64();
 
-  /* prevent optimization away */
   asm volatile ("" :: "r"(idx));
 
   return end - start;
 }
 
-/* =========================
-   Public entry (no params)
-   ========================= */
 void run_ring_chaser_bench(void) {
   printf("=== CACHE / MEMORY ACCESS TEST (RANDOM pointer chase, short runs) ===\n");
 
@@ -77,13 +66,13 @@ void run_ring_chaser_bench(void) {
     uint32_t n_elems = bytes / sizeof(elem_t);
     if (n_elems == 0 || n_elems > MAX_ELEMS) continue;
 
-    /* Seed PRNG based on size so each size is repeatable-ish */
+    // Seed PRNG based on size so each size is repeatable-ish
     lcg_seed(bytes ^ 0x12345678u);
 
-    /* Build random pointer-chase ring for this working-set size */
+    // Build random pointer-chase ring for this working-set size
     build_random_ring(buffer, n_elems);
 
-    /* Steps schedule: n_elems*4 clamped to [2000, 20000] */
+    // Steps schedule: n_elems*4 clamped to [2000, 20000]
     uint64_t steps = (uint64_t)n_elems * 4;
     if (steps < 2000ull)  steps = 2000ull;
     if (steps > 20000ull) steps = 20000ull;

@@ -1,77 +1,68 @@
 /*
- * memlat_l1_l2_dram.c - L1 hit and DRAM cold-miss latency tests.
+ * memlat_l1_l2_dram.c - L1 hit, L2 local/remote hit, and DRAM latency tests.
  *
- * Also stubs for L2 local/remote hit measurements.
  */
-#include <stdio.h>
-#include "memlat_tests.h"
-#include "memlat_patterns.h"
-#include "memlat_addrs.h"
+
+#include <stdint.h>
+#include "memlat_core.h"
 #include "memlat_config.h"
+#include "memlat_addrs.h"
 
-// Buffer that lives in DRAM
-static volatile uint32_t dram_region[MEMLAT_DRAM_REGION_BYTES / sizeof(uint32_t)]
-    __attribute__((aligned(64)));
+static uint8_t dram_pool[DRAM_POOL_BYTES]
+    __attribute__((aligned(128)));
 
-void memlat_run_l1_hit_test(int core_id)
-{
-    uint64_t samples[MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES];
-    volatile uint32_t *addr = &dram_region[0];
+static uintptr_t node_addrs[MAX_NODES];
 
-    // Make sure location is in L1 by warming it repeatedly
-    memlat_warm_single_line(addr, MEMLAT_L1_SIZE_BYTES / sizeof(uint32_t));
 
-    uint64_t prev_mstatus = memlat_disable_irqs();
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES; ++i) {
-        uint64_t cyc_per_load = memlat_measure_dep_chain(addr, MEMLAT_DEP_CHAIN_ITERS);
-        samples[i] = cyc_per_load;
-    }
-    memlat_restore_irqs(prev_mstatus);
+void memlat_test_l1_hit(void) {
+    uintptr_t base = (uintptr_t)&dram_pool[0];
 
-    uint64_t kept[MEMLAT_NUM_SAMPLES];
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES; ++i) {
-        kept[i] = samples[i + MEMLAT_WARMUP_SAMPLES];
+    for (uint32_t i = 0; i < L1_NUM_NODES; i++) {
+        node_addrs[i] = base + (uintptr_t)i * CACHE_LINE_BYTES;
     }
 
-    memlat_stats_t stats;
-    memlat_compute_stats(kept, MEMLAT_NUM_SAMPLES, &stats);
-    memlat_print_stats_line(core_id, "L1", "hit", &stats);
+    uintptr_t start = memlat_build_chase_ring(node_addrs, L1_NUM_NODES, 42);
+    memlat_run_test("L1 Hit", start, L1_NUM_NODES);
 }
 
-// Force cold DRAM by streaming through the whole region between sample
-void memlat_run_dram_cold_miss_test(int core_id)
-{
-    uint64_t samples[MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES];
-    const uint32_t stride_bytes = 64; // one cacheline per step
-    volatile uint32_t *probe_addr = &dram_region[0];
-    
-    uint64_t prev_mstatus = memlat_disable_irqs();
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES; ++i) {
-        // Thrash caches so probe_addr will not be present
-        memlat_stream_region_32b(dram_region, MEMLAT_DRAM_REGION_BYTES, stride_bytes);
-        uint64_t cyc = memlat_measure_single_load(probe_addr);
-        samples[i] = cyc;
-    }
-    memlat_restore_irqs(prev_mstatus);
 
-    uint64_t kept[MEMLAT_NUM_SAMPLES];
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES; ++i) {
-        kept[i] = samples[i + MEMLAT_WARMUP_SAMPLES];
+void memlat_test_l2_local_hit(void)
+{
+    // Align to 128 B so that base[6] = 0 ==>  base+64 has bit 6 = 1
+    uintptr_t base = ((uintptr_t)&dram_pool[0] + 127u) & ~(uintptr_t)127u;
+
+    for (uint32_t i = 0; i < L2_NUM_NODES; i++) {
+        // base + 64 + i*128  →  bit 6 is always 1 (Bank 1, local)
+        node_addrs[i] = base + CACHE_LINE_BYTES
+                             + (uintptr_t)i * (2u * CACHE_LINE_BYTES);
     }
 
-    memlat_stats_t stats;
-    memlat_compute_stats(kept, MEMLAT_NUM_SAMPLES, &stats);
-    memlat_print_stats_line(core_id, "DRAM", "cold_miss", &stats);
+    uintptr_t start = memlat_build_chase_ring(node_addrs, L2_NUM_NODES, 123);
+    memlat_run_test("L2 Local Hit", start, L2_NUM_NODES);
 }
 
-void memlat_run_l2_local_hit_test(int core_id)
+void memlat_test_l2_remote_hit(void)
 {
-    (void)core_id;
-    printf("L2 local hit test not implemented yet\n");
+    uintptr_t raw = (uintptr_t)&dram_pool[DRAM_POOL_BYTES / 2];
+    uintptr_t base = (raw + 127u) & ~(uintptr_t)127u;
+
+    for (uint32_t i = 0; i < L2_NUM_NODES; i++) {
+        // base + i*128  ==>  bit 6 is always 0 (Bank 0, remote)
+        node_addrs[i] = base + (uintptr_t)i * (2u * CACHE_LINE_BYTES);
+    }
+
+    uintptr_t start = memlat_build_chase_ring(node_addrs, L2_NUM_NODES, 456);
+    memlat_run_test("L2 Remote Hit", start, L2_NUM_NODES);
 }
 
-void memlat_run_l2_remote_hit_test(int core_id)
+void memlat_test_dram(void)
 {
-    (void)core_id;
-    printf("L2 remote hit test not implemented yet\n");
+    uintptr_t base = (uintptr_t)&dram_pool[0];
+
+    for (uint32_t i = 0; i < DRAM_NUM_NODES; i++) {
+        node_addrs[i] = base + (uintptr_t)i * CACHE_LINE_BYTES;
+    }
+
+    uintptr_t start = memlat_build_chase_ring(node_addrs, DRAM_NUM_NODES, 789);
+    memlat_run_test("DRAM", start, DRAM_NUM_NODES);
 }

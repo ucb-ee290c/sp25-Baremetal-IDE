@@ -1,8 +1,16 @@
 /* =========================================================================
  * main.c - Bearly25 memory-latency microbenchmarks
  *
- * Orchestrates a set of L1/L2/DRAM/scratchpad/TCM latency tests and prints
- * CSV-style stats per core.
+ * Runs 7 latency tests from Core 0 using random pointer-chase rings:
+ *   1. L1 Hit            - small working set fits in L1D
+ *   2. L2 Local Hit      - medium working set, targets local L2 bank
+ *   3. L2 Remote Hit     - medium working set, targets remote L2 bank
+ *   4. DRAM              - large working set, overflows L2 entirely
+ *   5. Scratchpad        - MBUS SRAM at 0x08000000
+ *   6. Local TCM         - Core 0 TCM at 0x08010000
+ *   7. Remote TCM        - Core 1 TCM at 0x08012000 (from Core 0)
+ *
+ * Output: one line per test with min / mean / median / max cycles/access.
  * ========================================================================= */
 
 #include <stdio.h>
@@ -20,29 +28,21 @@ void app_init(void) {
 }
 
 void app_main(void) {
-  int core_id = (int)memlat_read_hartid();
+  uint32_t hart = memlat_hartid();
+  printf("\n=== Bearly25 Memory-Latency Benchmark (Core %lu) ===\n", (unsigned long)hart);
+  printf("  Methodology: random pointer-chase ring (data-dependent loads)\n");
+  printf("  L1D = 8 KB, L2 = 2x128 KB, bank_bit = addr[6]\n\n");
 
-  if (core_id == 0) {
-    printf("=== Bearly25 Memory-Latency Microbench ===\n");
-    printf("# fields: core, region, mode, mean_cycles,"
-           " min_cycles, p95_cycles, p99_cycles\n");
-  }
+  memlat_test_l1_hit();
+  memlat_test_l2_local_hit();
+  memlat_test_l2_remote_hit();
+  memlat_test_dram();
 
-  // 1) L1 hit latency
-  memlat_run_l1_hit_test(core_id);
-  // 2) L2 local / remote hit latency
-  memlat_run_l2_local_hit_test(core_id);
-  memlat_run_l2_remote_hit_test(core_id);
-  // 3) DRAM cold-miss latency
-  memlat_run_dram_cold_miss_test(core_id);
-  // 4) Scratchpad hit latency
-  memlat_run_scratchpad_hit_test(core_id);
-  // 5) TCM hit latency
-  memlat_run_tcm_hit_test(core_id);
-  // 6) Scratchpad under NoC load
-  memlat_run_scratchpad_under_noc_load(core_id);
+  memlat_test_scratchpad();
+  memlat_test_local_tcm();
+  memlat_test_remote_tcm();
 
-  printf("mem-lat: all tests complete on core %d\n", core_id);
+  printf("\n=== All tests complete ===\n");
 }
 
 int main(void) {

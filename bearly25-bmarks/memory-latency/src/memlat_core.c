@@ -1,125 +1,129 @@
 /*
- * memlat_core.c - Core timing utilities and stats aggregation.
- *
- * Provides cycle reads, IRQ masking, dependency-chain timing, and percentile
- * statistics for memory-latency measurements.
+ * memlat_core.c - Pointer-chase engine, statistics, and test driver.
  */
+
 #include <stdio.h>
 #include <string.h>
 #include "memlat_core.h"
 
-#define MEMLAT_MAX_SAMPLES  (MEMLAT_NUM_SAMPLES)
+static uint32_t lcg_state;
 
-static inline uint64_t memlat_read_cycle(void)
-{
-    uint64_t c;
-    asm volatile("rdcycle %0" : "=r"(c));
-    return c;
+static void lcg_seed(uint32_t s) {
+    lcg_state = s ? s : 1u;
 }
 
-uint64_t memlat_disable_irqs(void)
-{
-    uint64_t old_mstatus;
-    const uint64_t MSTATUS_MIE = (1ULL << 3);
-    // clears bits set in rs1
-    asm volatile("csrrc %0, mstatus, %1" : "=r"(old_mstatus) : "r"(MSTATUS_MIE) : "memory");
-    return old_mstatus;
+static uint32_t lcg_next(void) {
+    lcg_state = lcg_state * 1664525u + 1013904223u;
+    return lcg_state;
 }
 
-void memlat_restore_irqs(uint64_t prev_mstatus)
+uintptr_t memlat_build_chase_ring(uintptr_t *addrs, uint32_t n, uint32_t seed)
 {
-    asm volatile("csrw mstatus, %0" :: "r"(prev_mstatus) : "memory");
-}
+    lcg_seed(seed);
 
-uint32_t memlat_read_hartid(void)
-{
-    uint32_t hartid;
-    asm volatile("csrr %0, mhartid" : "=r"(hartid));
-    return hartid;
-}
-
-// Simple dependency chain: acc_{i+1} = acc_i + *addr
-uint64_t memlat_measure_dep_chain(volatile uint32_t *addr, uint32_t iters)
-{
-    uint64_t start, end;
-    uint32_t acc = 1;
-
-    start = memlat_read_cycle();
-    for (uint32_t i = 0; i < iters; ++i) {
-        acc += *addr;
+    // Fisher-Yates shuffle
+    for (uint32_t i = n - 1; i > 0; i--) {
+        uint32_t j = lcg_next() % (i + 1);
+        uintptr_t tmp = addrs[i];
+        addrs[i] = addrs[j];
+        addrs[j] = tmp;
     }
-    end = memlat_read_cycle();
-    asm volatile("" :: "r"(acc) : "memory");
 
-    uint64_t total = end - start;
-    if (iters == 0) return total;
-    return total / (uint64_t)iters;
+    // Link each node to the next
+    for (uint32_t i = 0; i < n; i++) {
+        *(volatile uintptr_t *)addrs[i] = addrs[(i + 1) % n];
+    }
+
+    // Ensure all pointer writes are visible before any chase
+    asm volatile("fence rw, rw" ::: "memory");
+
+    return addrs[0];
 }
 
-// Cold DRAM miss: only care about first access cost
-uint64_t memlat_measure_single_load(volatile uint32_t *addr)
+uint64_t memlat_run_chase(uintptr_t start, uint64_t steps)
 {
-    uint64_t start, end;
-    uint32_t value;
+    register uintptr_t p = start;
+    uint64_t t0, t1;
 
-    start = memlat_read_cycle();
-    value = *addr;
-    end = memlat_read_cycle();
+    asm volatile("fence rw, rw" ::: "memory");
+    t0 = memlat_rdcycle();
 
-    asm volatile("" :: "r"(value) : "memory");
-    return end - start;
+    for (uint64_t i = 0; i < steps; i++) {
+        p = *(volatile uintptr_t *)p;
+    }
+
+    t1 = memlat_rdcycle();
+
+    asm volatile("" :: "r"(p) : "memory");
+
+    return t1 - t0;
 }
 
-static void insertion_sort_u64(uint64_t *arr, uint32_t n)
+static void sort_u64(uint64_t *a, uint32_t n)
 {
-    for (uint32_t i = 1; i < n; ++i) {
-        uint64_t key = arr[i];
+    for (uint32_t i = 1; i < n; i++) {
+        uint64_t key = a[i];
         uint32_t j = i;
-        while (j > 0 && arr[j - 1] > key) {
-            arr[j] = arr[j - 1];
-            --j;
+        while (j > 0 && a[j - 1] > key) {
+            a[j] = a[j - 1];
+            j--;
         }
-        arr[j] = key;
+        a[j] = key;
     }
 }
 
 void memlat_compute_stats(uint64_t *samples, uint32_t n, memlat_stats_t *out)
 {
-    if (n == 0 || !out) return;
+    if (n == 0) return;
 
-    // Compute mean and min first
-    uint64_t sum = 0;
-    uint64_t minv = samples[0];
-
-    for (uint32_t i = 0; i < n; ++i) {
+    uint64_t sum = 0, mn = samples[0], mx = samples[0];
+    for (uint32_t i = 0; i < n; i++) {
         sum += samples[i];
-        if (samples[i] < minv) minv = samples[i];
+        if (samples[i] < mn) mn = samples[i];
+        if (samples[i] > mx) mx = samples[i];
     }
 
-    insertion_sort_u64(samples, n);
+    sort_u64(samples, n);
 
-    uint32_t idx95 = (uint32_t)((double)(n - 1) * 0.95);
-    uint32_t idx99 = (uint32_t)((double)(n - 1) * 0.99);
-
-    out->mean_cycles = (double)sum / (double)n;
-    out->min_cycles = minv;
-    out->p95_cycles = samples[idx95];
-    out->p99_cycles = samples[idx99];
+    out->mean   = (double)sum / (double)n;
+    out->min    = mn;
+    out->median = samples[n / 2];
+    out->max    = mx;
 }
 
-void memlat_print_stats_line(int core_id,
-                             const char *region,
-                             const char *mode,
-                             const memlat_stats_t *s)
-{
-    printf("core=%d, region=%s, mode=%s, "
-           "mean_cycles=%.2f, min_cycles=%llu, "
-           "p95_cycles=%llu, p99_cycles=%llu\n",
-           core_id,
-           region,
-           mode,
-           (double)s->mean_cycles,
-           (unsigned long long)s->min_cycles,
-           (unsigned long long)s->p95_cycles,
-           (unsigned long long)s->p99_cycles);
+void memlat_print_result(const char *name, const memlat_stats_t *s) {
+    printf("  %-22s  min=%3llu  mean=%3llu  median=%3llu  max=%3llu  cycles/access\n",
+           name,
+           (unsigned long long)s->min,
+           (unsigned long long)(uint64_t)(s->mean + 0.5),
+           (unsigned long long)s->median,
+           (unsigned long long)s->max);
+}
+
+void memlat_run_test(const char *test_name,
+                     uintptr_t  start,
+                     uint32_t   num_nodes) {
+    uint32_t steps = num_nodes;
+    while (steps < MIN_STEPS_PER_SAMPLE){
+        steps += num_nodes;
+    }
+
+    for (uint32_t w = 0; w < WARMUP_PASSES; w++) {
+        (void)memlat_run_chase(start, num_nodes);
+    }
+
+    uint64_t samples[NUM_SAMPLES];
+
+    uint64_t saved = memlat_disable_irqs();
+
+    for (uint32_t s = 0; s < NUM_SAMPLES; s++) {
+        uint64_t total = memlat_run_chase(start, steps);
+        samples[s] = total / (uint64_t)steps;
+    }
+
+    memlat_restore_irqs(saved);
+
+    memlat_stats_t stats;
+    memlat_compute_stats(samples, NUM_SAMPLES, &stats);
+    memlat_print_result(test_name, &stats);
 }

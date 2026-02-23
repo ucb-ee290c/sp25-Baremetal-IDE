@@ -1,6 +1,15 @@
 /*
- * memlat_core.h - Timing helpers and statistics for memory-latency tests.
+ * memlat_core.h - Pointer-chasing and statistics for memory-latency tests
+ *
+ * Each test builds a random pointer-chase ring: an array of cache-line-aligned
+ * locations where the first word of each location stores the address of the
+ * next location in the ring.  Chasing the ring creates a load-to-use
+ * data-dependency chain as each load address depends on the previous load
+ * result, so the CPU cannot overlap or prefetch.
+ *
+ * Measured quantity:  cycles_per_access = total_cycles / num_steps
  */
+ 
 #ifndef MEMLAT_CORE_H
 #define MEMLAT_CORE_H
 
@@ -8,34 +17,44 @@
 #include "memlat_config.h"
 
 typedef struct {
-    double      mean_cycles;
-    uint64_t    min_cycles;
-    uint64_t    p95_cycles;
-    uint64_t    p99_cycles;
+    double mean;
+    uint64_t min;
+    uint64_t median;
+    uint64_t max;
 } memlat_stats_t;
 
-// Disable interrupts, return previous mstatus so we can restore it later
-uint64_t memlat_disable_irqs(void);
+static inline uint64_t memlat_rdcycle(void) {
+    uint64_t c;
+    asm volatile("rdcycle %0" : "=r"(c));
+    return c;
+}
 
-// Restore mstatus saved by memlat_disable_irqs()
-void memlat_restore_irqs(uint64_t prev_mstatus);
+static inline uint64_t memlat_disable_irqs(void) {
+    uint64_t old;
+    asm volatile("csrrc %0, mstatus, %1" : "=r"(old) : "r"(1ULL << 3) : "memory");
+    return old;
+}
 
-// Read the current hart ID (mhartid CSR)
-uint32_t memlat_read_hartid(void);
+static inline void memlat_restore_irqs(uint64_t prev) {
+    asm volatile("csrw mstatus, %0" :: "r"(prev) : "memory");
+}
 
-// One dependent-load chain on a single address (cycles per load averaged over iters)
-uint64_t memlat_measure_dep_chain(volatile uint32_t *addr, uint32_t iters);
+static inline uint32_t memlat_hartid(void) {
+    uint32_t id;
+    asm volatile("csrr %0, mhartid" : "=r"(id));
+    return id;
+}
 
-// Single-load measurement (for cold DRAM misses)
-uint64_t memlat_measure_single_load(volatile uint32_t *addr);
+uintptr_t memlat_build_chase_ring(uintptr_t *addrs, uint32_t n, uint32_t seed);
 
-// Compute mean / min / p95 / p99 over the samples array (size = n)
+
+uint64_t memlat_run_chase(uintptr_t start, uint64_t steps);
+
+void memlat_run_test(const char *test_name,
+                     uintptr_t  start,
+                     uint32_t   num_nodes);
+
 void memlat_compute_stats(uint64_t *samples, uint32_t n, memlat_stats_t *out);
+void memlat_print_result(const char *name, const memlat_stats_t *s);
 
-// Print a single CSV line with stats for this core / region / mode.
-void memlat_print_stats_line(int core_id,
-                             const char *region,
-                             const char *mode,
-                             const memlat_stats_t *s);
-
-#endif // MEMLAT_CORE_H
+#endif /* MEMLAT_CORE_H */

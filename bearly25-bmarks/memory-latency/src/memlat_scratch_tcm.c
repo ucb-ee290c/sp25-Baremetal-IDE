@@ -1,60 +1,50 @@
-/*
- * memlat_scratch_tcm.c - Scratchpad and TCM hit-latency tests.
+/* =========================================================================
+ * memlat_scratch_tcm.c - Scratchpad and TCM latency tests.
  *
- * Measures dependent-load chains to estimate best-case hit latency.
- */
-#include <stdio.h>
-#include "memlat_tests.h"
-#include "memlat_patterns.h"
-#include "memlat_addrs.h"
+ * Scratchpad:  64 KB SRAM on MBUS at 0x08000000.
+ *              Path: Core → SBUS NoC → L2 (pass-through) → MBUS NoC → SRAM
+ *
+ * Local TCM:   8 KB tightly-coupled memory inside the tile.
+ *              Core 0 TCM at 0x08010000, Core 1 TCM at 0x08012000.
+ *              Local access bypasses the NoC.
+ *
+ * Remote TCM:  Accessing the OTHER core's TCM.
+ *              Core 0 → Core 1 TCM at 0x08012000.
+ *              Path: Core 0 → SBUS NoC → Core 1 tile → TCM SRAM.
+ * ========================================================================= */
+
+#include <stdint.h>
+#include "memlat_core.h"
 #include "memlat_config.h"
+#include "memlat_addrs.h"
 
-void memlat_run_scratchpad_hit_test(int core_id)
-{
-    uint64_t samples[MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES];
+static uintptr_t node_addrs[MAX_NODES];
 
-    // First word in scratchpad and set it to a constant
-    volatile uint32_t *addr = SCRATCHPAD_PTR(0);
-    *addr = 0xCAFEF00D;
-
-    memlat_warm_single_line(addr, 128);
-    uint64_t prev_mstatus = memlat_disable_irqs();
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES; ++i) {
-        uint64_t cyc_per_load = memlat_measure_dep_chain(addr, MEMLAT_DEP_CHAIN_ITERS);
-        samples[i] = cyc_per_load;
+static uintptr_t setup_sram_chase(uintptr_t region_base,
+                                  uint32_t  num_nodes,
+                                  uint32_t  seed) {
+    for (uint32_t i = 0; i < num_nodes; i++) {
+        node_addrs[i] = region_base + (uintptr_t)i * CACHE_LINE_BYTES;
     }
-    memlat_restore_irqs(prev_mstatus);
-
-    uint64_t kept[MEMLAT_NUM_SAMPLES];
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES; ++i) {
-        kept[i] = samples[i + MEMLAT_WARMUP_SAMPLES];
-    }
-
-    memlat_stats_t stats;
-    memlat_compute_stats(kept, MEMLAT_NUM_SAMPLES, &stats);
-    memlat_print_stats_line(core_id, "Scratchpad", "hit", &stats);
+    return memlat_build_chase_ring(node_addrs, num_nodes, seed);
 }
 
-void memlat_run_tcm_hit_test(int core_id)
+void memlat_test_scratchpad(void) {
+    uintptr_t start = setup_sram_chase(SCRATCHPAD_BASE,
+                                       SCRATCH_NUM_NODES, 111);
+    memlat_run_test("Scratchpad", start, SCRATCH_NUM_NODES);
+}
+
+void memlat_test_local_tcm(void)
 {
-    uint64_t samples[MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES];
-    volatile uint32_t *addr = TCM_PTR(0);
-    *addr = 0xF00DF00D;
+    uintptr_t start = setup_sram_chase(CORE0_TCM_BASE,
+                                       TCM_NUM_NODES, 222);
+    memlat_run_test("Local TCM (Core 0)", start, TCM_NUM_NODES);
+}
 
-    memlat_warm_single_line(addr, 128);
-    uint64_t prev_mstatus = memlat_disable_irqs();
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES + MEMLAT_WARMUP_SAMPLES; ++i) {
-        uint64_t cyc_per_load = memlat_measure_dep_chain(addr, MEMLAT_DEP_CHAIN_ITERS);
-        samples[i] = cyc_per_load;
-    }
-    memlat_restore_irqs(prev_mstatus);
-
-    uint64_t kept[MEMLAT_NUM_SAMPLES];
-    for (uint32_t i = 0; i < MEMLAT_NUM_SAMPLES; ++i) {
-        kept[i] = samples[i + MEMLAT_WARMUP_SAMPLES];
-    }
-
-    memlat_stats_t stats;
-    memlat_compute_stats(kept, MEMLAT_NUM_SAMPLES, &stats);
-    memlat_print_stats_line(core_id, "TCM", "hit", &stats);
+void memlat_test_remote_tcm(void)
+{
+    uintptr_t start = setup_sram_chase(CORE1_TCM_BASE,
+                                       TCM_NUM_NODES, 333);
+    memlat_run_test("Remote TCM (Core 1)", start, TCM_NUM_NODES);
 }

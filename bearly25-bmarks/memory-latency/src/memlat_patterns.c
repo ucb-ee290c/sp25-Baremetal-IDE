@@ -7,8 +7,7 @@
 // Walk a region on with a fixed stride
 void memlat_stream_region_32b(volatile uint32_t *base,
                               uint32_t bytes,
-                              uint32_t stride_bytes)
-{
+                              uint32_t stride_bytes) {
     if (stride_bytes < sizeof(uint32_t)) {
         stride_bytes = sizeof(uint32_t);
     }

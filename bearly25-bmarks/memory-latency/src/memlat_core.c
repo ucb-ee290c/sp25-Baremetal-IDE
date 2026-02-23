@@ -17,8 +17,7 @@ static uint32_t lcg_next(void) {
     return lcg_state;
 }
 
-uintptr_t memlat_build_chase_ring(uintptr_t *addrs, uint32_t n, uint32_t seed)
-{
+uintptr_t memlat_build_chase_ring(uintptr_t *addrs, uint32_t n, uint32_t seed) {
     lcg_seed(seed);
 
     // Fisher-Yates shuffle
@@ -40,8 +39,7 @@ uintptr_t memlat_build_chase_ring(uintptr_t *addrs, uint32_t n, uint32_t seed)
     return addrs[0];
 }
 
-uint64_t memlat_run_chase(uintptr_t start, uint64_t steps)
-{
+uint64_t memlat_run_chase(uintptr_t start, uint64_t steps) {
     register uintptr_t p = start;
     uint64_t t0, t1;
 
@@ -59,8 +57,7 @@ uint64_t memlat_run_chase(uintptr_t start, uint64_t steps)
     return t1 - t0;
 }
 
-static void sort_u64(uint64_t *a, uint32_t n)
-{
+static void sort_u64(uint64_t *a, uint32_t n) {
     for (uint32_t i = 1; i < n; i++) {
         uint64_t key = a[i];
         uint32_t j = i;
@@ -72,8 +69,7 @@ static void sort_u64(uint64_t *a, uint32_t n)
     }
 }
 
-void memlat_compute_stats(uint64_t *samples, uint32_t n, memlat_stats_t *out)
-{
+void memlat_compute_stats(uint64_t *samples, uint32_t n, memlat_stats_t *out) {
     if (n == 0) return;
 
     uint64_t sum = 0, mn = samples[0], mx = samples[0];
@@ -85,10 +81,10 @@ void memlat_compute_stats(uint64_t *samples, uint32_t n, memlat_stats_t *out)
 
     sort_u64(samples, n);
 
-    out->mean   = (double)sum / (double)n;
-    out->min    = mn;
+    out->mean = (double)sum / (double)n;
+    out->min = mn;
     out->median = samples[n / 2];
-    out->max    = mx;
+    out->max = mx;
 }
 
 void memlat_print_result(const char *name, const memlat_stats_t *s) {

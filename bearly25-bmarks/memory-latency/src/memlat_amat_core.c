@@ -53,9 +53,7 @@ static uint64_t run_pointer_chase(elem_t *buf, uint64_t steps) {
     idx = buf[idx];
   }
   uint64_t end = rdcycle64();
-
   asm volatile ("" :: "r"(idx));
-
   return end - start;
 }
 

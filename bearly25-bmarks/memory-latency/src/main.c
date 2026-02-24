@@ -18,13 +18,12 @@
 #include "chip_config.h"
 #include "memlat_core.h"
 #include "memlat_tests.h"
+#include "simple_setup.h"
+
+uint64_t target_frequency = 250000000l;
 
 void app_init(void) {
-  UART_InitType UART0_init_config;
-  UART0_init_config.baudrate = 115200;
-  UART0_init_config.mode = UART_MODE_TX_RX;
-  UART0_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0, &UART0_init_config);
+  init_test(target_frequency);
 }
 
 void app_main(void) {

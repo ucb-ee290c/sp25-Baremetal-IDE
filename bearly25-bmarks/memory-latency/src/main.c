@@ -20,7 +20,7 @@
 #include "memlat_tests.h"
 #include "simple_setup.h"
 
-uint64_t target_frequency = 250000000l;
+uint64_t target_frequency = 800000000l;
 
 void app_init(void) {
   init_test(target_frequency);

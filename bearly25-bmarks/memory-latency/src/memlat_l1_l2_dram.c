@@ -20,6 +20,8 @@ void memlat_test_l1_hit(void) {
 
     uintptr_t start = memlat_build_chase_ring(node_addrs, L1_NUM_NODES, 42);
     memlat_run_test("L1 Hit", start, L1_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, L1_NUM_NODES,
+                           (uintptr_t)dram_pool, sizeof(dram_pool)));
 }
 
 
@@ -35,6 +37,8 @@ void memlat_test_l2_local_hit(void) {
 
     uintptr_t start = memlat_build_chase_ring(node_addrs, L2_NUM_NODES, 123);
     memlat_run_test("L2 Local Hit", start, L2_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, L2_NUM_NODES,
+                           (uintptr_t)dram_pool, sizeof(dram_pool)));
 }
 
 void memlat_test_l2_remote_hit(void) {
@@ -48,6 +52,8 @@ void memlat_test_l2_remote_hit(void) {
 
     uintptr_t start = memlat_build_chase_ring(node_addrs, L2_NUM_NODES, 456);
     memlat_run_test("L2 Remote Hit", start, L2_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, L2_NUM_NODES,
+                           (uintptr_t)dram_pool, sizeof(dram_pool)));
 }
 
 void memlat_test_dram(void) {
@@ -59,4 +65,6 @@ void memlat_test_dram(void) {
 
     uintptr_t start = memlat_build_chase_ring(node_addrs, DRAM_NUM_NODES, 789);
     memlat_run_test("DRAM", start, DRAM_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, DRAM_NUM_NODES,
+                           (uintptr_t)dram_pool, sizeof(dram_pool)));
 }

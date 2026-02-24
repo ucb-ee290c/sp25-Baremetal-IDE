@@ -57,4 +57,8 @@ void memlat_run_test(const char *test_name,
 void memlat_compute_stats(uint64_t *samples, uint32_t n, memlat_stats_t *out);
 void memlat_print_result(const char *name, const memlat_stats_t *s);
 
+uint32_t memlat_verify_chase(uintptr_t start, uint32_t num_nodes,
+                              uintptr_t region_base, uintptr_t region_size);
+void memlat_print_integrity(uint32_t errors);
+
 #endif /* MEMLAT_CORE_H */

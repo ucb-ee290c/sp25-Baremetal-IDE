@@ -33,16 +33,22 @@ void memlat_test_scratchpad(void) {
     uintptr_t start = setup_sram_chase(SCRATCHPAD_BASE,
                                        SCRATCH_NUM_NODES, 111);
     memlat_run_test("Scratchpad", start, SCRATCH_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, SCRATCH_NUM_NODES,
+                           SCRATCHPAD_BASE, SCRATCHPAD_SIZE));
 }
 
 void memlat_test_local_tcm(void) {
     uintptr_t start = setup_sram_chase(CORE0_TCM_BASE,
                                        TCM_NUM_NODES, 222);
     memlat_run_test("Local TCM (Core 0)", start, TCM_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, TCM_NUM_NODES,
+                           CORE0_TCM_BASE, CORE0_TCM_SIZE));
 }
 
 void memlat_test_remote_tcm(void) {
     uintptr_t start = setup_sram_chase(CORE1_TCM_BASE,
                                        TCM_NUM_NODES, 333);
     memlat_run_test("Remote TCM (Core 1)", start, TCM_NUM_NODES);
+    memlat_print_integrity(memlat_verify_chase(start, TCM_NUM_NODES,
+                           CORE1_TCM_BASE, CORE1_TCM_SIZE));
 }

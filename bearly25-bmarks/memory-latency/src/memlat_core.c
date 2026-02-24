@@ -96,6 +96,38 @@ void memlat_print_result(const char *name, const memlat_stats_t *s) {
            (unsigned long long)s->max);
 }
 
+uint32_t memlat_verify_chase(uintptr_t start, uint32_t num_nodes,
+                              uintptr_t region_base, uintptr_t region_size) {
+    uintptr_t region_end = region_base + region_size;
+    uintptr_t p = start;
+
+    for (uint32_t i = 0; i < num_nodes; i++) {
+        uintptr_t next = *(volatile uintptr_t *)p;
+        if (next < region_base || next >= region_end) {
+            printf("  [ERROR] step %u: got 0x%08lx, expected in [0x%08lx, 0x%08lx)\n",
+                   i, (unsigned long)next,
+                   (unsigned long)region_base, (unsigned long)region_end);
+            return 1;
+        }
+        p = next;
+    }
+
+    if (p != start) {
+        printf("  [ERROR] ring broken after %u steps: at 0x%08lx, expected 0x%08lx\n",
+               num_nodes, (unsigned long)p, (unsigned long)start);
+        return 1;
+    }
+
+    return 0;
+}
+
+void memlat_print_integrity(uint32_t errors) {
+    if (errors)
+        printf("  [FAIL] data integrity check failed\n");
+    else
+        printf("  [PASS] data integrity check\n");
+}
+
 void memlat_run_test(const char *test_name,
                      uintptr_t  start,
                      uint32_t   num_nodes) {

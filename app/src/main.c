@@ -101,6 +101,11 @@ int main(int argc, char **argv) {
   /* USER CODE END SysInit */
 
   init_test(target_frequency);
+  // UART_InitType UART0_init_config;
+  // UART0_init_config.baudrate = 115200;
+  // UART0_init_config.mode = UART_MODE_TX_RX;
+  // UART0_init_config.stopbits = UART_STOPBITS_2;
+  // uart_init(UART0, &UART0_init_config);
 
   /* Initialize all configured peripherals */
   /* USER CODE BEGIN Init */

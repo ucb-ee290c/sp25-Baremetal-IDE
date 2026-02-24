@@ -1,0 +1,302 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+
+/* Benchmarks to test the memcpy/sbus bandwidth of the chip using naive CPU code, glibc, rvv, and the DSP24 DMA Engine
+   Expects a 32 bit int payload for the random seed for each iteration and returns a packet containing 1 64 bit unsigned
+   integer which is the number of cycles used and a byte which indicates whether or not the copy occured correctly.
+*/
+#include "main.h"
+#include <riscv_vector.h>
+#include "mtwister.h"
+#include <hthread.h>
+
+uint32_t TEST_SIZE = 0x10000;
+volatile void* srcbuf = 0x8FFE0000;
+volatile void* dstbuf = 0x8FFF0000;
+
+typedef struct {
+  uint64_t cycles;
+  bool correct;
+} memcpy_result_t;
+
+typedef struct {
+  void* srcbuf;
+  void* dstbuf;
+  size_t size;
+  bool vector;
+} memcpy_routine_t;
+
+void memcpy_routine(void*);
+void memcpy_arg_init(memcpy_routine_t* args, void* srcbuf_ptr, void* dstbuf_ptr, size_t stride, bool vector);
+
+void init_buffer(volatile uint32_t* buf, uint32_t size, uint32_t seed) {
+  MTRand r = seedRand(seed);
+  for (int i = 0; i < size/8; i++) {
+    buf[i] = genRandLong(&r);
+  }
+}
+
+bool check_buffer(volatile uint32_t* buf, uint32_t size, uint32_t seed) {
+  MTRand r = seedRand(seed);
+  for (int i = 0; i < size/8; i++) {
+    if(buf[i] != genRandLong(&r)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void touch_buffer(volatile uint8_t* buf, int size) {
+  volatile uint8_t var;
+  for (int i = 0; i < size; i += 16) {
+    var = buf[i];
+  }
+}
+
+void func_test(int seed) {
+  memcpy_result_t result;
+  uint64_t time;
+  init_buffer(srcbuf, TEST_SIZE, seed);
+  touch_buffer(dstbuf, TEST_SIZE);
+
+  start_roi();
+  result.cycles = 431987423;
+  end_roi();
+  result.correct = check_buffer(srcbuf, TEST_SIZE, seed);
+  xmit_payload_packet(&result, 9);
+
+}
+
+void cpu_memcpy(int seed) {
+  memcpy_result_t result;
+  uint64_t time;
+  init_buffer(srcbuf, TEST_SIZE, seed);
+  touch_buffer(dstbuf, TEST_SIZE);
+
+  start_roi();
+  time = get_cycles();
+  volatile uint64_t* src = srcbuf;
+  volatile uint64_t* dst = dstbuf;
+
+  for (int i = 0; i < TEST_SIZE/8; i++) {
+    dst[i] = src[i];
+  }
+  result.cycles = get_cycles() - time;
+  end_roi();
+  result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  xmit_payload_packet(&result, 9);
+}
+
+void cpu_memcpy_mp(int seed) {
+  memcpy_result_t result;
+  uint64_t time;
+
+  size_t stride = TEST_SIZE / N_HARTS;
+
+  init_buffer(srcbuf, TEST_SIZE, seed);
+  touch_buffer(dstbuf, TEST_SIZE);
+
+  memcpy_routine_t args[N_HARTS];
+
+  memcpy_arg_init(args, srcbuf, dstbuf, stride, false);
+
+  start_roi();
+  time = get_cycles();
+
+  for (size_t i = 1; i < N_HARTS; i++) {
+    hthread_issue(i, memcpy_routine, args + i);
+  }
+
+  memcpy_routine(args);
+
+  for (size_t i = 1; i < N_HARTS; i++) {
+    hthread_join(i);
+  }
+
+  result.cycles = get_cycles() - time;
+  end_roi();
+  result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  xmit_payload_packet(&result, 9);
+}
+
+
+void glibc_memcpy(int seed) {
+  memcpy_result_t result;
+  uint64_t time;
+  init_buffer(srcbuf, TEST_SIZE, seed);
+  touch_buffer(dstbuf, TEST_SIZE);
+
+  start_roi();
+  time = get_cycles();
+  memcpy(dstbuf, srcbuf, TEST_SIZE);
+  result.cycles = get_cycles() - time;
+  end_roi();
+  result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  xmit_payload_packet(&result, 9);
+}
+
+void rvv_memcpy(int seed) {
+  memcpy_result_t result;
+  uint64_t time;
+
+  volatile void* srcbuf_ptr = srcbuf;
+  volatile void* dstbuf_ptr = dstbuf;
+  uint32_t remaining = TEST_SIZE;
+
+  init_buffer(srcbuf, TEST_SIZE, seed);
+  touch_buffer(dstbuf, TEST_SIZE);
+
+  start_roi();
+  time = get_cycles();
+
+  for (size_t vl; remaining > 0; remaining -= vl, srcbuf_ptr += vl, dstbuf_ptr += vl) {
+    vl = __riscv_vsetvl_e8m8(TEST_SIZE);
+
+    vuint8m8_t vec_src = __riscv_vle8_v_u8m8(srcbuf_ptr, vl);
+    __riscv_vse8_v_u8m8(dstbuf_ptr, vec_src, vl);
+  }
+
+  result.cycles = get_cycles() - time;
+  end_roi();
+  result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  xmit_payload_packet(&result, 9);
+}
+
+
+void rvv_memcpy_mp(int seed) {
+  memcpy_result_t result;
+  uint64_t time;
+
+  volatile void* srcbuf_ptr = srcbuf;
+  volatile void* dstbuf_ptr = dstbuf;
+  uint32_t remaining = TEST_SIZE;
+  size_t stride = TEST_SIZE / N_HARTS;
+ 
+ 
+  init_buffer(srcbuf, TEST_SIZE, seed);
+  touch_buffer(dstbuf, TEST_SIZE);
+ 
+ 
+  memcpy_routine_t args[N_HARTS];
+ 
+ 
+  memcpy_arg_init(args, srcbuf_ptr, dstbuf_ptr, stride, true);
+ 
+ 
+  start_roi();
+  time = get_cycles();
+ 
+ 
+  for (size_t i = 1; i < N_HARTS; i++) {
+    hthread_issue(i, memcpy_routine, args + i);
+  }
+ 
+ 
+  memcpy_routine(args);
+ 
+ 
+  for (size_t i = 1; i < N_HARTS; i++) {
+    hthread_join(i);
+  }
+  result.cycles = get_cycles() - time;
+  end_roi();
+  result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  xmit_payload_packet(&result, 9);
+}
+
+
+void memcpy_arg_init(memcpy_routine_t* args, void* srcbuf_ptr, void* dstbuf_ptr, size_t stride, bool vector) {
+  for (size_t i = 0; i < N_HARTS; i++) {
+    args[i].srcbuf = srcbuf_ptr + stride;
+    args[i].dstbuf = dstbuf_ptr + stride;
+    args[i].size   = stride;
+    args[i].vector = vector;
+  }
+
+  return;
+}
+
+
+void memcpy_routine(void* arg_) {
+  memcpy_routine_t* arg = (memcpy_routine_t*) arg_;
+  volatile void* srcbuf_ptr = arg->srcbuf;
+  volatile void* dstbuf_ptr = arg->dstbuf;
+  uint32_t remaining = arg->size;
+
+
+  if (!arg->vector) {
+    volatile uint64_t* src = srcbuf_ptr;
+    volatile uint64_t* dst = dstbuf_ptr;
+    for (int i = 0; i < TEST_SIZE/8; i++) {
+      dst[i] = src[i];
+    }
+  } else {
+    for (size_t vl; remaining > 0; remaining -= vl, srcbuf_ptr += vl, dstbuf_ptr += vl) {
+      vl = __riscv_vsetvl_e8m8(TEST_SIZE);
+      vuint8m8_t vec_src = __riscv_vle8_v_u8m8(srcbuf_ptr, vl);
+      __riscv_vse8_v_u8m8(dstbuf_ptr, vec_src, vl);
+    }
+  }
+
+ return;
+}
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(int argc, char **argv) {
+  while (1) {
+    test_info t = init_test(UART1);
+    int seed = *((int*) &t.payload);
+    switch (t.testid) {
+      case 0:
+        cpu_memcpy(seed);
+        break;
+      case 1:
+        glibc_memcpy(seed);
+        break;
+      case 2:
+        rvv_memcpy(seed);
+        break;
+      case 3:
+        cpu_memcpy_mp(seed);
+        break;
+      case 4:
+        rvv_memcpy_mp(seed);
+        break;
+      default:
+        func_test(seed);
+        break;
+    }
+    clean_test(t);
+  }
+
+
+  /* USER CODE END WHILE */
+}
+
+/*
+ * Main function for secondary harts
+ * 
+ * Multi-threaded programs should provide their own implementation.
+ */
+void __attribute__((weak, noreturn)) __main(void) {
+  while (1) {
+   asm volatile ("wfi");
+  }
+}

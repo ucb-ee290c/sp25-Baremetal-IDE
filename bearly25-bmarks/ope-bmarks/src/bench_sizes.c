@@ -9,8 +9,8 @@ const OpeSizeCase OPE_BENCH_SQUARE_CASES[] = {
   {"sq_32", 32, 32, 32},
   {"sq_64", 64, 64, 64 },
   {"sq_128", 128, 128, 128 },
-  {"sq_192", 192, 192, 192 },
-  {"sq_256", 256, 256, 256 },
+  // {"sq_192", 192, 192, 192 },
+  // {"sq_256", 256, 256, 256 },
 };
 const int OPE_BENCH_NUM_SQUARE_CASES =
   (int)(sizeof(OPE_BENCH_SQUARE_CASES)/sizeof(OPE_BENCH_SQUARE_CASES[0]));

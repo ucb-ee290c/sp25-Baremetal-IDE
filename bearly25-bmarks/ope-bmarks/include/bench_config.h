@@ -29,7 +29,7 @@
 
 // Toggle which implementation families we actually run
 #ifndef BENCH_ENABLE_IMPL_ARB
-#define BENCH_ENABLE_IMPL_ARB 1
+#define BENCH_ENABLE_IMPL_ARB 0
 #endif
 
 #ifndef BENCH_ENABLE_IMPL_SQUARE

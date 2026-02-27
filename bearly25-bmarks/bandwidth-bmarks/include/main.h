@@ -63,7 +63,32 @@ extern "C" {
 #endif
 
 #ifndef BW_TARGET_FREQUENCY_HZ
-#define BW_TARGET_FREQUENCY_HZ   800000000ULL
+#define BW_TARGET_FREQUENCY_HZ   50000000ULL
+#endif
+
+// 0: single-frequency mode
+// 1: iterate over BW_PLL_FREQ_LIST frequencies
+#ifndef BW_ENABLE_PLL_SWEEP
+#define BW_ENABLE_PLL_SWEEP      1
+#endif
+
+#ifndef BW_PLL_SWEEP_SLEEP_MS
+#define BW_PLL_SWEEP_SLEEP_MS    10000u
+#endif
+
+// Comma-separated list used when BW_ENABLE_PLL_SWEEP=1
+// #define BW_PLL_FREQ_LIST 50000000ULL, 150000000ULL, 250000000ULL
+#ifndef BW_PLL_FREQ_LIST
+#define BW_PLL_FREQ_LIST \
+  50000000ULL, \
+  150000000ULL, \
+  250000000ULL, \
+  350000000ULL 
+  // 450000000ULL, \
+  // 550000000ULL, \
+  // 650000000ULL, \
+  // 750000000ULL, \
+  // 850000000ULL
 #endif
 
 #ifndef BW_BASE_SEED

@@ -60,6 +60,7 @@ typedef struct {
 static volatile uint8_t *g_dram_src = (volatile uint8_t *)BW_DRAM_SRC_BASE;
 static volatile uint8_t *g_dram_dst = (volatile uint8_t *)BW_DRAM_DST_BASE;
 static uint8_t g_cache_evict[BW_CACHE_EVICT_BYTES] __attribute__((aligned(BW_CACHE_LINE_BYTES)));
+uint64_t target_frequency = BW_TARGET_FREQUENCY_HZ;
 
 static const char *k_cache_state_name[BW_CACHE_STATE_COUNT] = {
   "COLD",
@@ -369,17 +370,13 @@ static bool rvv_memcpy_mp_suite(uint32_t seed) {
   return result.correct;
 }
 
-void app_init(void) {
-  // init_test(BW_TARGET_FREQUENCY_HZ);
-}
-
-void app_main(void) {
+static void run_suite_for_frequency(uint64_t frequency_hz) {
   bool all_ok = true;
   uint32_t seed = BW_BASE_SEED;
 
-  printf("\n=== Bearly25 Bandwidth Benchmark Sweep ===\n");
-  printf("target_frequency=%llu Hz, runs/state=%u\n",
-         (unsigned long long)BW_TARGET_FREQUENCY_HZ, BW_NUM_RUNS);
+  printf("\n=== Bearly25 Bandwidth Benchmark Sweep @ %llu Hz ===\n",
+         (unsigned long long)frequency_hz);
+  printf("runs/state=%u\n", BW_NUM_RUNS);
 
 #if BW_ENABLE_CPU
   all_ok &= cpu_memcpy_suite(seed + 0x1000u);
@@ -401,13 +398,47 @@ void app_main(void) {
   all_ok &= rvv_memcpy_mp_suite(seed + 0x5000u);
 #endif
 
-  printf("\n=== Bandwidth sweep complete: %s ===\n", all_ok ? "PASS" : "FAIL");
+  printf("\n=== Bandwidth sweep complete @ %llu Hz: %s ===\n",
+         (unsigned long long)frequency_hz, all_ok ? "PASS" : "FAIL");
 }
 
+void app_init(void) {
+  init_test(BW_TARGET_FREQUENCY_HZ);
+}
+
+void app_main(void) {
+  run_suite_for_frequency(target_frequency);
+}
+
+#if BW_ENABLE_PLL_SWEEP
+static const uint64_t k_pll_sweep_freqs_hz[] = {
+  BW_PLL_FREQ_LIST
+};
+#endif
+
 int main(void) {
+#if BW_ENABLE_PLL_SWEEP
+  const size_t num_freqs =
+      sizeof(k_pll_sweep_freqs_hz) / sizeof(k_pll_sweep_freqs_hz[0]);
+  if (num_freqs == 0u) {
+    return 0;
+  }
+
+  target_frequency = k_pll_sweep_freqs_hz[0];
+  init_test(target_frequency);
+  run_suite_for_frequency(target_frequency);
+
+  for (size_t i = 1; i < num_freqs; ++i) {
+    target_frequency = k_pll_sweep_freqs_hz[i];
+    reconfigure_pll(target_frequency, BW_PLL_SWEEP_SLEEP_MS);
+    run_suite_for_frequency(target_frequency);
+  }
+  return 0;
+#else
   app_init();
   app_main();
   return 0;
+#endif
 }
 
 /*

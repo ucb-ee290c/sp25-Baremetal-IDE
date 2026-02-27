@@ -31,6 +31,7 @@ typedef struct {
   size_t output_plane_bytes;
   int8_t *input;
   int16_t *output;
+  int16_t *expected_output;
   int8_t kernel[25];
 } conv_case_ctx_t;
 
@@ -114,12 +115,68 @@ static void conv_fill_kernel(int8_t *kernel, uint8_t kernel_size) {
   }
 }
 
+static void conv_compute_reference_output(const conv_case_ctx_t *ctx, int16_t *dst) {
+  const int in_w = (int)ctx->cs->width;
+  const int out_w = (int)ctx->out_w;
+  const int kernel = (int)CONV_BENCH_KERNEL_SIZE;
+  const int stride = (int)CONV_BENCH_STRIDE;
+  const bool use_relu = (CONV_BENCH_USE_RELU != 0u);
+
+  for (int oh = 0; oh < (int)ctx->out_h; ++oh) {
+    for (int ow = 0; ow < (int)ctx->out_w; ++ow) {
+      int32_t acc = 0;
+      const int in_row_base = oh * stride;
+      const int in_col_base = ow * stride;
+
+      for (int kh = 0; kh < kernel; ++kh) {
+        const int in_row = in_row_base + kh;
+        const int k_row = kh * kernel;
+        for (int kw = 0; kw < kernel; ++kw) {
+          const int in_col = in_col_base + kw;
+          int32_t a = (int32_t)ctx->input[in_row * in_w + in_col];
+          int32_t b = (int32_t)ctx->kernel[k_row + kw];
+          acc += a * b;
+        }
+      }
+
+      if (use_relu && acc < 0) {
+        acc = 0;
+      }
+
+      dst[oh * out_w + ow] = (int16_t)acc;
+    }
+  }
+}
+
+static bool conv_verify_output(const conv_case_ctx_t *ctx, size_t launch_idx) {
+  const size_t out_elems = ctx->output_plane_bytes / sizeof(int16_t);
+  for (size_t i = 0; i < out_elems; ++i) {
+    int16_t got = ctx->output[i];
+    int16_t exp = ctx->expected_output[i];
+    if (got != exp) {
+      const size_t oh = i / (size_t)ctx->out_w;
+      const size_t ow = i % (size_t)ctx->out_w;
+      printf("    output mismatch launch=%llu at (oh=%llu,ow=%llu): got=%d exp=%d\n",
+             (unsigned long long)launch_idx,
+             (unsigned long long)oh,
+             (unsigned long long)ow,
+             (int)got,
+             (int)exp);
+      return false;
+    }
+  }
+  return true;
+}
+
 static void conv_case_ctx_destroy(conv_case_ctx_t *ctx) {
   if (ctx->input != NULL) {
     free(ctx->input);
   }
   if (ctx->output != NULL) {
     free(ctx->output);
+  }
+  if (ctx->expected_output != NULL) {
+    free(ctx->expected_output);
   }
   memset(ctx, 0, sizeof(*ctx));
 }
@@ -165,8 +222,10 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const conv_bench_case_t *cs)
   ctx->input = (int8_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->input_plane_bytes);
   ctx->output =
       (int16_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->output_plane_bytes);
+  ctx->expected_output =
+      (int16_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->output_plane_bytes);
 
-  if (ctx->input == NULL || ctx->output == NULL) {
+  if (ctx->input == NULL || ctx->output == NULL || ctx->expected_output == NULL) {
     printf("ERROR: allocation failed for case %s\n", cs->name);
     conv_case_ctx_destroy(ctx);
     return -1;
@@ -175,6 +234,7 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const conv_bench_case_t *cs)
   conv_fill_input(ctx->input, ctx->input_plane_bytes);
   memset(ctx->output, 0, ctx->output_plane_bytes);
   conv_fill_kernel(ctx->kernel, CONV_BENCH_KERNEL_SIZE);
+  conv_compute_reference_output(ctx, ctx->expected_output);
   return 0;
 }
 
@@ -286,6 +346,13 @@ static bool conv_run_workload(const conv_case_ctx_t *ctx, uint64_t *cycles_out,
 
 #if CONV_BENCH_VERIFY_STATUS
       if (status != 0u) {
+        return false;
+      }
+#endif
+
+#if CONV_BENCH_VERIFY_OUTPUT
+      if (!conv_verify_output(ctx, launch_idx)) {
+        *status_out = 0xFEu;
         return false;
       }
 #endif
@@ -428,6 +495,9 @@ void conv_bench_run_all(void) {
          CONV_BENCH_USE_RELU);
   printf("  inter_run_stall_cycles=%u (included in timed cycles)\n",
          CONV_BENCH_INTER_RUN_STALL_CYCLES);
+  printf("  verify_status=%u verify_output=%u\n",
+         CONV_BENCH_VERIFY_STATUS,
+         CONV_BENCH_VERIFY_OUTPUT);
 
   bool all_ok = true;
   for (uint32_t i = 0; i < CONV_BENCH_NUM_CASES; ++i) {

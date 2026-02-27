@@ -19,7 +19,7 @@
 #endif
 
 #ifndef RVV_BENCH_PLL_SWEEP_SLEEP_MS
-#define RVV_BENCH_PLL_SWEEP_SLEEP_MS 10u
+#define RVV_BENCH_PLL_SWEEP_SLEEP_MS 10000u
 #endif
 
 // Comma-separated list used when RVV_BENCH_ENABLE_PLL_SWEEP=1

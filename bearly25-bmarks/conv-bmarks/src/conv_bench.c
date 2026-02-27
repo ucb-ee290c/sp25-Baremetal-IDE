@@ -207,14 +207,15 @@ static void conv_prepare_cache_state(const conv_case_ctx_t *ctx, conv_cache_stat
   conv_fence_all();
 }
 
-static void conv_stall_cycles(uint32_t cycles) {
+static uint64_t conv_stall_cycles(uint32_t cycles) {
   if (cycles == 0u) {
-    return;
+    return 0u;
   }
   const uint64_t start = conv_bench_rdcycle64();
   while ((conv_bench_rdcycle64() - start) < (uint64_t)cycles) {
     asm volatile("nop");
   }
+  return conv_bench_rdcycle64() - start;
 }
 
 static void conv_hw_write_kernel(const int8_t *kernel, uint8_t kernel_size) {
@@ -263,7 +264,7 @@ static bool conv_run_workload(const conv_case_ctx_t *ctx, uint64_t *cycles_out,
       conv_mmio_write64(CONV2D_INPUT_WIDTH_OFFSET, (uint64_t)ctx->cs->width);
 
       if (launch_idx > 0u) {
-        conv_stall_cycles(CONV_BENCH_INTER_RUN_STALL_CYCLES);
+        total_cycles += conv_stall_cycles(CONV_BENCH_INTER_RUN_STALL_CYCLES);
       }
 
       conv_fence_all();
@@ -313,10 +314,11 @@ static bool conv_run_state(const conv_case_ctx_t *ctx, conv_cache_state_t state,
   }
 
   for (uint32_t run = 0; run < CONV_BENCH_RUNS; ++run) {
+    uint64_t run_stall_cycles = 0;
     if (state != CONV_CACHE_HOT_REPEAT) {
       conv_prepare_cache_state(ctx, state);
     } else if (run > 0u) {
-      conv_stall_cycles(CONV_BENCH_INTER_RUN_STALL_CYCLES);
+      run_stall_cycles += conv_stall_cycles(CONV_BENCH_INTER_RUN_STALL_CYCLES);
     }
 
     uint64_t cycles = 0;
@@ -326,7 +328,7 @@ static bool conv_run_state(const conv_case_ctx_t *ctx, conv_cache_state_t state,
       return false;
     }
 
-    conv_stats_update(stats, cycles);
+    conv_stats_update(stats, cycles + run_stall_cycles);
   }
 
   return true;
@@ -424,7 +426,7 @@ void conv_bench_run_all(void) {
          CONV_BENCH_KERNEL_SIZE,
          CONV_BENCH_STRIDE,
          CONV_BENCH_USE_RELU);
-  printf("  inter_run_stall_cycles=%u (excluded from timed cycles)\n",
+  printf("  inter_run_stall_cycles=%u (included in timed cycles)\n",
          CONV_BENCH_INTER_RUN_STALL_CYCLES);
 
   bool all_ok = true;

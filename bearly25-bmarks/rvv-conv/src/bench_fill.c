@@ -1,6 +1,7 @@
 /*
- * bench_fill.c - Input generation and reference math for core-v-conv.
+ * bench_fill.c - Input generation and reference math for rvv-conv.
  */
+
 #include <stdio.h>
 #include <string.h>
 

@@ -225,10 +225,10 @@ static void bench_run_f32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   bench_stats_t hot;
   bench_stats_init(&cold);
   bench_stats_init(&hot);
+  memset(ctx->C_f32, 0, ctx->c_elems * sizeof(float));
 
   for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
     bench_cache_flush();
-    memset(ctx->C_f32, 0, ctx->c_elems * sizeof(float));
 
     uint64_t t0 = rdcycle64();
     run_f32_once(ctx, packed);
@@ -237,12 +237,9 @@ static void bench_run_f32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   }
 
   bench_cache_flush();
-  memset(ctx->C_f32, 0, ctx->c_elems * sizeof(float));
   run_f32_once(ctx, packed);  // warm-up run
 
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
-    memset(ctx->C_f32, 0, ctx->c_elems * sizeof(float));
-
     uint64_t t0 = rdcycle64();
     run_f32_once(ctx, packed);
     uint64_t t1 = rdcycle64();
@@ -257,10 +254,10 @@ static void bench_run_i16_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   bench_stats_t hot;
   bench_stats_init(&cold);
   bench_stats_init(&hot);
+  memset(ctx->C_i16, 0, ctx->c_elems * sizeof(int16_t));
 
   for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
     bench_cache_flush();
-    memset(ctx->C_i16, 0, ctx->c_elems * sizeof(int16_t));
 
     uint64_t t0 = rdcycle64();
     run_i16_once(ctx, packed);
@@ -269,12 +266,9 @@ static void bench_run_i16_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   }
 
   bench_cache_flush();
-  memset(ctx->C_i16, 0, ctx->c_elems * sizeof(int16_t));
   run_i16_once(ctx, packed);  // warm-up run
 
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
-    memset(ctx->C_i16, 0, ctx->c_elems * sizeof(int16_t));
-
     uint64_t t0 = rdcycle64();
     run_i16_once(ctx, packed);
     uint64_t t1 = rdcycle64();
@@ -289,10 +283,10 @@ static void bench_run_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   bench_stats_t hot;
   bench_stats_init(&cold);
   bench_stats_init(&hot);
+  memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
 
   for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
     bench_cache_flush();
-    memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
 
     uint64_t t0 = rdcycle64();
     run_i32_once(ctx, packed);
@@ -301,12 +295,9 @@ static void bench_run_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   }
 
   bench_cache_flush();
-  memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
   run_i32_once(ctx, packed);  // warm-up run
 
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
-    memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
-
     uint64_t t0 = rdcycle64();
     run_i32_once(ctx, packed);
     uint64_t t1 = rdcycle64();

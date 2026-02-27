@@ -38,7 +38,6 @@ extern "C" {
 
 #include "riscv.h"
 #include "chip_config.h"
-#include "libbmark.h"
 #include "rocketcore.h"
 
 
@@ -59,28 +58,80 @@ extern "C" {
 /* Private defines -----------------------------------------------------------*/
 /* USER CODE BEGIN Private defines */
 
-/* USER CODE END Private defines */
+#ifndef BW_NUM_RUNS
+#define BW_NUM_RUNS              8u
+#endif
 
-/* Exported types ------------------------------------------------------------*/
-/* USER CODE BEGIN ET */
+#ifndef BW_TARGET_FREQUENCY_HZ
+#define BW_TARGET_FREQUENCY_HZ   800000000ULL
+#endif
 
-/* USER CODE END ET */
+#ifndef BW_BASE_SEED
+#define BW_BASE_SEED             0x12345678u
+#endif
 
-/* Exported constants --------------------------------------------------------*/
-/* USER CODE BEGIN EC */
+#ifndef BW_ENABLE_CPU
+#define BW_ENABLE_CPU            1
+#endif
 
-/* USER CODE END EC */
+#ifndef BW_ENABLE_GLIBC
+#define BW_ENABLE_GLIBC          1
+#endif
 
-/* Exported macro ------------------------------------------------------------*/
-/* USER CODE BEGIN EM */
+#ifndef BW_ENABLE_RVV
+#define BW_ENABLE_RVV            1
+#endif
 
-/* USER CODE END EM */
+#ifndef BW_ENABLE_CPU_MP
+#define BW_ENABLE_CPU_MP         1
+#endif
 
-/* Exported functions prototypes ---------------------------------------------*/
-/* USER CODE BEGIN EFP */
+#ifndef BW_ENABLE_RVV_MP
+#define BW_ENABLE_RVV_MP         1
+#endif
+
+#ifndef BW_DRAM_BYTES
+#define BW_DRAM_BYTES            (64u * 1024u)
+#endif
+
+#ifndef BW_SCRATCH_BYTES
+#define BW_SCRATCH_BYTES         (64u * 1024u)
+#endif
+
+#ifndef BW_TCM_BYTES
+#define BW_TCM_BYTES             (8u * 1024u)
+#endif
+
+#ifndef BW_CACHE_LINE_BYTES
+#define BW_CACHE_LINE_BYTES      64u
+#endif
+
+#ifndef BW_CACHE_EVICT_BYTES
+#define BW_CACHE_EVICT_BYTES     (512u * 1024u)
+#endif
+
+#ifndef BW_DRAM_SRC_BASE
+#define BW_DRAM_SRC_BASE         0x8FFE0000UL
+#endif
+
+#ifndef BW_DRAM_DST_BASE
+#define BW_DRAM_DST_BASE         0x8FFF0000UL
+#endif
+
+#ifndef BW_SCRATCHPAD_BASE
+#define BW_SCRATCHPAD_BASE       0x08000000UL
+#endif
+
+#ifndef BW_CORE0_TCM_BASE
+#define BW_CORE0_TCM_BASE        0x08010000UL
+#endif
+
+#ifndef BW_CORE1_TCM_BASE
+#define BW_CORE1_TCM_BASE        0x08012000UL
+#endif
+
 void app_init();
 void app_main();
-/* USER CODE END EFP */
 
 #ifdef __cplusplus
 }

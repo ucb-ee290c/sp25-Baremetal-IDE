@@ -20,6 +20,7 @@
    integer which is the number of cycles used and a byte which indicates whether or not the copy occured correctly.
 */
 #include "main.h"
+#include "libbmark.h"
 #include <riscv_vector.h>
 #include "mtwister.h"
 

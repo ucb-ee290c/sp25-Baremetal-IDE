@@ -128,6 +128,13 @@ static bool conv_verify_output(const conv_case_ctx_t *ctx, size_t launch_idx) {
              (unsigned long long)ow,
              (int)got,
              (int)exp);
+      const size_t dump_count =
+          (CONV_BENCH_VERIFY_DUMP_COUNT < out_elems) ? CONV_BENCH_VERIFY_DUMP_COUNT : out_elems;
+      printf("    first %llu outputs (got/exp):", (unsigned long long)dump_count);
+      for (size_t d = 0; d < dump_count; ++d) {
+        printf(" %d/%d", (int)ctx->output[d], (int)ctx->expected_output[d]);
+      }
+      printf("\n");
       return false;
     }
   }
@@ -198,7 +205,6 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const conv_bench_case_t *cs)
   }
 
   conv_fill_input(ctx->input, ctx->input_plane_bytes);
-  memset(ctx->output, 0, ctx->output_plane_bytes);
   conv_fill_kernel(ctx->kernel, CONV_BENCH_KERNEL_SIZE);
   conv_compute_reference_output(ctx, ctx->expected_output);
   return 0;
@@ -279,16 +285,20 @@ static bool conv_run_workload(const conv_case_ctx_t *ctx, uint64_t *cycles_out,
       }
 #endif
 
-#if CONV_BENCH_VERIFY_OUTPUT
-      if (!conv_verify_output(ctx, launch_idx)) {
-        *status_out = 0xFEu;
-        return false;
-      }
-#endif
-
       launch_idx += 1;
     }
   }
+
+#if CONV_BENCH_VERIFY_OUTPUT
+  // Accelerator writes may not be cache-coherent with CPU data cache lines.
+  // Force eviction before reading destination for verification.
+  conv_evict_caches();
+  conv_fence_all();
+  if (launch_idx > 0u && !conv_verify_output(ctx, launch_idx - 1u)) {
+    *status_out = 0xFEu;
+    return false;
+  }
+#endif
 
   *cycles_out = total_cycles;
   return true;

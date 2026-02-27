@@ -29,8 +29,6 @@ typedef struct {
   size_t launches_per_run;
   size_t input_plane_bytes;
   size_t output_plane_bytes;
-  size_t total_input_bytes;
-  size_t total_output_bytes;
   int8_t *input;
   int16_t *output;
   int8_t kernel[25];
@@ -162,12 +160,11 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const conv_bench_case_t *cs)
   ctx->launches_per_run = (size_t)cs->batch_size * (size_t)cs->channels;
   ctx->input_plane_bytes = (size_t)cs->height * (size_t)cs->width * sizeof(int8_t);
   ctx->output_plane_bytes = (size_t)ctx->out_h * (size_t)ctx->out_w * sizeof(int16_t);
-  ctx->total_input_bytes = ctx->launches_per_run * ctx->input_plane_bytes;
-  ctx->total_output_bytes = ctx->launches_per_run * ctx->output_plane_bytes;
 
-  ctx->input = (int8_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->total_input_bytes);
+  // Reuse one input/output plane for each accelerator launch.
+  ctx->input = (int8_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->input_plane_bytes);
   ctx->output =
-      (int16_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->total_output_bytes);
+      (int16_t *)bench_aligned_alloc(CONV_BENCH_CACHE_LINE_BYTES, ctx->output_plane_bytes);
 
   if (ctx->input == NULL || ctx->output == NULL) {
     printf("ERROR: allocation failed for case %s\n", cs->name);
@@ -175,8 +172,8 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const conv_bench_case_t *cs)
     return -1;
   }
 
-  conv_fill_input(ctx->input, ctx->total_input_bytes);
-  memset(ctx->output, 0, ctx->total_output_bytes);
+  conv_fill_input(ctx->input, ctx->input_plane_bytes);
+  memset(ctx->output, 0, ctx->output_plane_bytes);
   conv_fill_kernel(ctx->kernel, CONV_BENCH_KERNEL_SIZE);
   return 0;
 }
@@ -201,10 +198,10 @@ static void conv_prepare_cache_state(const conv_case_ctx_t *ctx, conv_cache_stat
   conv_evict_caches();
 
   if (state == CONV_CACHE_WARM_SRC || state == CONV_CACHE_WARM_BOTH) {
-    conv_stream_touch((volatile const uint8_t *)ctx->input, ctx->total_input_bytes);
+    conv_stream_touch((volatile const uint8_t *)ctx->input, ctx->input_plane_bytes);
   }
   if (state == CONV_CACHE_WARM_DST || state == CONV_CACHE_WARM_BOTH) {
-    conv_stream_touch((volatile const uint8_t *)ctx->output, ctx->total_output_bytes);
+    conv_stream_touch((volatile const uint8_t *)ctx->output, ctx->output_plane_bytes);
   }
 
   conv_fence_all();
@@ -256,8 +253,9 @@ static bool conv_run_workload(const conv_case_ctx_t *ctx, uint64_t *cycles_out,
   for (size_t b = 0; b < (size_t)ctx->cs->batch_size; ++b) {
     for (size_t ch = 0; ch < (size_t)ctx->cs->channels; ++ch) {
       const size_t idx = b * (size_t)ctx->cs->channels + ch;
-      uintptr_t src_addr = (uintptr_t)(ctx->input + idx * ctx->input_plane_bytes);
-      uintptr_t dst_addr = (uintptr_t)((uint8_t *)ctx->output + idx * ctx->output_plane_bytes);
+      (void)idx;
+      uintptr_t src_addr = (uintptr_t)ctx->input;
+      uintptr_t dst_addr = (uintptr_t)ctx->output;
 
       conv_mmio_write64(CONV2D_SRC_ADDR_OFFSET, (uint64_t)src_addr);
       conv_mmio_write64(CONV2D_DEST_ADDR_OFFSET, (uint64_t)dst_addr);
@@ -382,8 +380,8 @@ static bool conv_bench_run_case(const conv_bench_case_t *cs) {
          cs->batch_size, cs->channels, cs->height, cs->width, ctx.out_h, ctx.out_w);
   printf("  launches/run=%llu, input_bytes=%llu, output_bytes=%llu\n",
          (unsigned long long)ctx.launches_per_run,
-         (unsigned long long)ctx.total_input_bytes,
-         (unsigned long long)ctx.total_output_bytes);
+         (unsigned long long)ctx.input_plane_bytes,
+         (unsigned long long)ctx.output_plane_bytes);
 
   bool case_ok = true;
   for (int state = 0; state < (int)CONV_CACHE_STATE_COUNT; ++state) {

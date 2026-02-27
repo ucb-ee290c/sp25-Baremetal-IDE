@@ -52,11 +52,11 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_F32
-#define RVV_BENCH_ENABLE_F32 0
+#define RVV_BENCH_ENABLE_F32 1
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I16
-#define RVV_BENCH_ENABLE_I8_I16 0
+#define RVV_BENCH_ENABLE_I8_I16 1
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I32
@@ -64,11 +64,11 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_UNPACKED
-#define RVV_BENCH_ENABLE_UNPACKED 0
+#define RVV_BENCH_ENABLE_UNPACKED 1
 #endif
 
 #ifndef RVV_BENCH_ENABLE_PACKED
-#define RVV_BENCH_ENABLE_PACKED 0
+#define RVV_BENCH_ENABLE_PACKED 1
 #endif
 
 typedef struct {

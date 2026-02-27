@@ -61,16 +61,26 @@ void ope_mat8_free (ope_mat8_t*  mat);
 void ope_mat32_free(ope_mat32_t* mat);
 void ope_mat32_transpose_inplace(ope_mat32_t* mat);
 
+// Packed/remapped buffer sizing helpers (returned size is 8-byte aligned)
+size_t ope_packed_a_size_bytes(int rows, int cols);
+size_t ope_packed_b_size_bytes(int rows, int cols);
+
+// Remap row-major matrices into OPE packed layout
+void ope_remap_matrix_A(const ope_mat8_t* restrict A, int8_t* restrict A_T);
+void ope_remap_matrix_B(const ope_mat8_t* restrict B, int8_t* restrict B_remap);
+
+// Compute from pre-remapped buffers
+long ope_matmul_square_packed(int8_t* A_T, int8_t* B_remap, int kU, ope_mat32_t* out);
+long ope_matmul_arb_packed(int8_t* A_T, int8_t* B_remap, int mU, int nU, int kU, ope_mat32_t* out);
+
 long ope_matmul_8x8 (ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out);
 long ope_matmul_16x16(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out);
 long ope_matmul_32x32(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out);
 long ope_matmul_64x64(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out);
 
+// Backward-compatible wrappers (pack + compute)
 long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out);
 long ope_matmul_arb (ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out);
-
-void ope_remap_matrix_A(const ope_mat8_t* restrict A, int8_t* restrict A_T);
-void ope_remap_matrix_B(const ope_mat8_t* restrict B, int8_t* restrict B_remap);
 
 #ifdef __cplusplus
 }

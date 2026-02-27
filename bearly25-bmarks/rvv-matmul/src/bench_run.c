@@ -183,14 +183,41 @@ static void run_i32_once(const rvv_case_ctx_t *ctx, bool packed) {
 static void print_stats_line(const char *tag,
                              const bench_stats_t *cold,
                              const bench_stats_t *hot) {
-  printf("  %-20s COLD(runs=%d best=%llu avg=%llu) HOT(runs=%d best=%llu avg=%llu)\n",
-         tag,
-         cold->runs,
-         (unsigned long long)cold->best,
-         (unsigned long long)bench_stats_avg(cold),
-         hot->runs,
-         (unsigned long long)hot->best,
-         (unsigned long long)bench_stats_avg(hot));
+  if (cold->runs > 0 && hot->runs > 0) {
+    printf("  %-20s COLD(runs=%d best=%llu avg=%llu) HOT(runs=%d best=%llu avg=%llu)\n",
+           tag,
+           cold->runs,
+           (unsigned long long)cold->best,
+           (unsigned long long)bench_stats_avg(cold),
+           hot->runs,
+           (unsigned long long)hot->best,
+           (unsigned long long)bench_stats_avg(hot));
+    return;
+  }
+
+  if (cold->runs > 0) {
+    printf("  %-20s COLD(runs=%d best=%llu avg=%llu) HOT(runs=0)\n",
+           tag,
+           cold->runs,
+           (unsigned long long)cold->best,
+           (unsigned long long)bench_stats_avg(cold));
+    return;
+  }
+
+  if (hot->runs > 0) {
+    printf("  %-20s COLD(runs=0) HOT(runs=%d best=%llu avg=%llu)\n",
+           tag,
+           hot->runs,
+           (unsigned long long)hot->best,
+           (unsigned long long)bench_stats_avg(hot));
+    return;
+  }
+
+  printf("  %-20s COLD(runs=0) HOT(runs=0)\n", tag);
+}
+
+static void print_disabled_line(const char *tag, const char *reason) {
+  printf("  %-20s DISABLED (%s)\n", tag, reason);
 }
 
 static void bench_run_f32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
@@ -305,28 +332,49 @@ void bench_run_case(const RvvMatmulCase *cs) {
 #if RVV_BENCH_ENABLE_F32
 #if RVV_BENCH_ENABLE_UNPACKED
   bench_run_f32_impl(&ctx, "f32_gemm", false);
+#else
+  print_disabled_line("f32_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
 #endif
 #if RVV_BENCH_ENABLE_PACKED
   bench_run_f32_impl(&ctx, "f32_gemm_packed", true);
+#else
+  print_disabled_line("f32_gemm_packed", "RVV_BENCH_ENABLE_PACKED=0");
 #endif
+#else
+  print_disabled_line("f32_gemm", "RVV_BENCH_ENABLE_F32=0");
+  print_disabled_line("f32_gemm_packed", "RVV_BENCH_ENABLE_F32=0");
 #endif
 
 #if RVV_BENCH_ENABLE_I8_I16
 #if RVV_BENCH_ENABLE_UNPACKED
   bench_run_i16_impl(&ctx, "i8_i16_gemm", false);
+#else
+  print_disabled_line("i8_i16_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
 #endif
 #if RVV_BENCH_ENABLE_PACKED
   bench_run_i16_impl(&ctx, "i8_i16_gemm_packed", true);
+#else
+  print_disabled_line("i8_i16_gemm_packed", "RVV_BENCH_ENABLE_PACKED=0");
 #endif
+#else
+  print_disabled_line("i8_i16_gemm", "RVV_BENCH_ENABLE_I8_I16=0");
+  print_disabled_line("i8_i16_gemm_packed", "RVV_BENCH_ENABLE_I8_I16=0");
 #endif
 
 #if RVV_BENCH_ENABLE_I8_I32
 #if RVV_BENCH_ENABLE_UNPACKED
   bench_run_i32_impl(&ctx, "i8_i32_gemm", false);
+#else
+  print_disabled_line("i8_i32_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
 #endif
 #if RVV_BENCH_ENABLE_PACKED
   bench_run_i32_impl(&ctx, "i8_i32_gemm_packed", true);
+#else
+  print_disabled_line("i8_i32_gemm_packed", "RVV_BENCH_ENABLE_PACKED=0");
 #endif
+#else
+  print_disabled_line("i8_i32_gemm", "RVV_BENCH_ENABLE_I8_I32=0");
+  print_disabled_line("i8_i32_gemm_packed", "RVV_BENCH_ENABLE_I8_I32=0");
 #endif
 
   rvv_case_ctx_destroy(&ctx);

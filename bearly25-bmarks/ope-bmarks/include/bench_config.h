@@ -24,7 +24,7 @@
 #endif
 
 #ifndef BENCH_RUNS_HOT
-#define BENCH_RUNS_HOT 5
+#define BENCH_RUNS_HOT 1000
 #endif
 
 // Toggle which implementation families we actually run

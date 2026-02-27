@@ -7,10 +7,10 @@
 # Source Files
 add_executable(rvv-matmul
   src/main.c
-  src/bench_cache.c
-  src/bench_fill.c
+  src/f32_matmul_rvv.c
+  src/i8_i16_matmul_rvv.c
+  src/i8_i32_matmul_rvv.c
   src/bench_impl.c
-  src/bench_sizes.c
   ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 

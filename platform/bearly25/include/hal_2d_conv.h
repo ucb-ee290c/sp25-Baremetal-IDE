@@ -126,6 +126,21 @@ void conv2d_start(Conv2D_Accel_Type *conv);
 void conv2d_wait_complete(Conv2D_Accel_Type *conv);
 
 /**
+ * \brief Software reference convolution (valid convolution, int8 input/kernel -> int16 output)
+ * \param input Pointer to input matrix in row-major order
+ * \param inputWidth Input width
+ * \param inputHeight Input height
+ * \param kernel Pointer to flattened kernel values (size*size)
+ * \param kernelSize Kernel size (must be 3 or 5)
+ * \param stride Stride value (must be >= 1)
+ * \param useReLU Whether to apply ReLU on output
+ * \param output Pointer to output buffer in row-major order
+ */
+void convolve(const int8_t* input, uint16_t inputWidth, uint16_t inputHeight,
+              const int8_t* kernel, uint8_t kernelSize, uint8_t stride,
+              uint8_t useReLU, int16_t* output);
+
+/**
  * \brief Simplified wrapper function for performing 2D convolution
  * \param srcAddrValue Source address of the input data
  * \param destAddrValue Destination address for the output data

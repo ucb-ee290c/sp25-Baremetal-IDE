@@ -9,11 +9,13 @@ add_executable(conv-bmarks
   src/conv_bench.c
   src/conv_cases.c
   ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
+  ${CMAKE_SOURCE_DIR}/platform/bearly25/src/hal_2d_conv.c
 )
 
 target_include_directories(conv-bmarks PUBLIC include)
 target_include_directories(conv-bmarks PRIVATE
   ${CMAKE_SOURCE_DIR}/bmark-lib
+  ${CMAKE_SOURCE_DIR}/platform/bearly25
   ${CMAKE_SOURCE_DIR}/platform/bearly25/include
 )
 

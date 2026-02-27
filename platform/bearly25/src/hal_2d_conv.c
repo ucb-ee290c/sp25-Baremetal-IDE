@@ -1,5 +1,6 @@
 #include "hal_2d_conv.h"
 #include "chip_config.h"
+#include <limits.h>
 #include <string.h>
 
 void reg_write8(uintptr_t addr, uint8_t data) {
@@ -188,6 +189,54 @@ void conv2d_wait_complete(Conv2D_Accel_Type *conv) {
         // Using register access directly instead of printf to avoid string constant issues
         // That might be causing the relocation error
         reg_write8((uintptr_t)&conv->READY, 0x01); // Force the convolution engine to finish.
+    }
+}
+
+void convolve(const int8_t* input, uint16_t inputWidth, uint16_t inputHeight,
+              const int8_t* kernel, uint8_t kernelSize, uint8_t stride,
+              uint8_t useReLU, int16_t* output) {
+    if (input == NULL || kernel == NULL || output == NULL) {
+        return;
+    }
+    if ((kernelSize != 3u && kernelSize != 5u) || stride == 0u) {
+        return;
+    }
+    if (inputWidth < kernelSize || inputHeight < kernelSize) {
+        return;
+    }
+
+    const uint16_t outHeight = (uint16_t)((inputHeight - kernelSize) / stride + 1u);
+    const uint16_t outWidth = (uint16_t)((inputWidth - kernelSize) / stride + 1u);
+
+    for (uint16_t oh = 0; oh < outHeight; ++oh) {
+        for (uint16_t ow = 0; ow < outWidth; ++ow) {
+            int32_t acc = 0;
+            const uint16_t inRowBase = (uint16_t)(oh * stride);
+            const uint16_t inColBase = (uint16_t)(ow * stride);
+
+            for (uint16_t kh = 0; kh < kernelSize; ++kh) {
+                const uint16_t inRow = (uint16_t)(inRowBase + kh);
+                const uint16_t kRow = (uint16_t)(kh * kernelSize);
+                for (uint16_t kw = 0; kw < kernelSize; ++kw) {
+                    const uint16_t inCol = (uint16_t)(inColBase + kw);
+                    const int32_t a = (int32_t)input[(size_t)inRow * inputWidth + inCol];
+                    const int32_t b = (int32_t)kernel[(size_t)kRow + kw];
+                    acc += a * b;
+                }
+            }
+
+            if (useReLU && acc < 0) {
+                acc = 0;
+            }
+
+            if (acc > INT16_MAX) {
+                acc = INT16_MAX;
+            } else if (acc < INT16_MIN) {
+                acc = INT16_MIN;
+            }
+
+            output[(size_t)oh * outWidth + ow] = (int16_t)acc;
+        }
     }
 }
 

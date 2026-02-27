@@ -50,18 +50,6 @@ static inline void conv_fence_all(void) {
   asm volatile("fence iorw, iorw" ::: "memory");
 }
 
-static inline void conv_mmio_write8(uintptr_t offset, uint8_t value) {
-  *(volatile uint8_t *)(MMIO_BASE + offset) = value;
-}
-
-static inline uint8_t conv_mmio_read8(uintptr_t offset) {
-  return *(volatile uint8_t *)(MMIO_BASE + offset);
-}
-
-static inline void conv_mmio_write64(uintptr_t offset, uint64_t value) {
-  *(volatile uint64_t *)(MMIO_BASE + offset) = value;
-}
-
 static inline void conv_stats_init(conv_stats_t *stats) {
   stats->best_cycles = ULLONG_MAX;
   stats->sum_cycles = 0;
@@ -116,36 +104,14 @@ static void conv_fill_kernel(int8_t *kernel, uint8_t kernel_size) {
 }
 
 static void conv_compute_reference_output(const conv_case_ctx_t *ctx, int16_t *dst) {
-  const int in_w = (int)ctx->cs->width;
-  const int out_w = (int)ctx->out_w;
-  const int kernel = (int)CONV_BENCH_KERNEL_SIZE;
-  const int stride = (int)CONV_BENCH_STRIDE;
-  const bool use_relu = (CONV_BENCH_USE_RELU != 0u);
-
-  for (int oh = 0; oh < (int)ctx->out_h; ++oh) {
-    for (int ow = 0; ow < (int)ctx->out_w; ++ow) {
-      int32_t acc = 0;
-      const int in_row_base = oh * stride;
-      const int in_col_base = ow * stride;
-
-      for (int kh = 0; kh < kernel; ++kh) {
-        const int in_row = in_row_base + kh;
-        const int k_row = kh * kernel;
-        for (int kw = 0; kw < kernel; ++kw) {
-          const int in_col = in_col_base + kw;
-          int32_t a = (int32_t)ctx->input[in_row * in_w + in_col];
-          int32_t b = (int32_t)ctx->kernel[k_row + kw];
-          acc += a * b;
-        }
-      }
-
-      if (use_relu && acc < 0) {
-        acc = 0;
-      }
-
-      dst[oh * out_w + ow] = (int16_t)acc;
-    }
-  }
+  convolve(ctx->input,
+           ctx->cs->width,
+           ctx->cs->height,
+           ctx->kernel,
+           CONV_BENCH_KERNEL_SIZE,
+           CONV_BENCH_STRIDE,
+           CONV_BENCH_USE_RELU,
+           dst);
 }
 
 static bool conv_verify_output(const conv_case_ctx_t *ctx, size_t launch_idx) {
@@ -278,70 +244,33 @@ static uint64_t conv_stall_cycles(uint32_t cycles) {
   return conv_bench_rdcycle64() - start;
 }
 
-static void conv_hw_write_kernel(const int8_t *kernel, uint8_t kernel_size) {
-  volatile uint8_t *kernel_mmio = (volatile uint8_t *)(MMIO_BASE + CONV2D_KERNEL_REG0_OFFSET);
-  const size_t elems = (size_t)kernel_size * (size_t)kernel_size;
-
-  for (size_t i = 0; i < elems; ++i) {
-    kernel_mmio[i] = (uint8_t)kernel[i];
-  }
-  for (size_t i = elems; i < 25u; ++i) {
-    kernel_mmio[i] = 0u;
-  }
-  conv_mmio_write8(CONV2D_KERNEL_SIZE_OFFSET, kernel_size);
-}
-
-static bool conv_wait_ready(void) {
-  const uint64_t start = conv_bench_rdcycle64();
-  while (conv_mmio_read8(CONV2D_READY_REG_OFFSET) == 0u) {
-    if ((conv_bench_rdcycle64() - start) > CONV_BENCH_READY_TIMEOUT_CYCLES) {
-      return false;
-    }
-  }
-  return true;
-}
-
 static bool conv_run_workload(const conv_case_ctx_t *ctx, uint64_t *cycles_out,
                               uint8_t *status_out) {
   uint64_t total_cycles = 0;
   size_t launch_idx = 0;
 
-  conv_mmio_write8(CONV2D_READY_REG_OFFSET, 1u);
-  conv_hw_write_kernel(ctx->kernel, CONV_BENCH_KERNEL_SIZE);
-  conv_mmio_write8(CONV2D_USE_RELU_OFFSET, (uint8_t)CONV_BENCH_USE_RELU);
-  conv_mmio_write8(CONV2D_STRIDE_OFFSET, (uint8_t)CONV_BENCH_STRIDE);
-
   for (size_t b = 0; b < (size_t)ctx->cs->batch_size; ++b) {
     for (size_t ch = 0; ch < (size_t)ctx->cs->channels; ++ch) {
-      const size_t idx = b * (size_t)ctx->cs->channels + ch;
-      (void)idx;
-      uintptr_t src_addr = (uintptr_t)ctx->input;
-      uintptr_t dst_addr = (uintptr_t)ctx->output;
-
-      conv_mmio_write64(CONV2D_SRC_ADDR_OFFSET, (uint64_t)src_addr);
-      conv_mmio_write64(CONV2D_DEST_ADDR_OFFSET, (uint64_t)dst_addr);
-      conv_mmio_write64(CONV2D_INPUT_HEIGHT_OFFSET, (uint64_t)ctx->cs->height);
-      conv_mmio_write64(CONV2D_INPUT_WIDTH_OFFSET, (uint64_t)ctx->cs->width);
+      (void)b;
+      (void)ch;
 
       if (launch_idx > 0u) {
         total_cycles += conv_stall_cycles(CONV_BENCH_INTER_RUN_STALL_CYCLES);
       }
 
-      conv_fence_all();
       uint64_t t0 = conv_bench_rdcycle64();
-      conv_mmio_write8(CONV2D_READY_REG_OFFSET, 0u);
-      bool ready = conv_wait_ready();
+      uint8_t status = perform_convolution((uint64_t)(uintptr_t)ctx->input,
+                                           (uint64_t)(uintptr_t)ctx->output,
+                                           ctx->cs->height,
+                                           ctx->cs->width,
+                                           (uint8_t *)ctx->kernel,
+                                           CONV_BENCH_KERNEL_SIZE,
+                                           CONV_BENCH_USE_RELU,
+                                           CONV_BENCH_STRIDE);
       uint64_t t1 = conv_bench_rdcycle64();
-      conv_fence_all();
-
-      if (!ready) {
-        *status_out = 0xFFu;
-        return false;
-      }
 
       total_cycles += (t1 - t0);
 
-      uint8_t status = conv_mmio_read8(CONV2D_STATUS_REG_OFFSET);
       *status_out = status;
 
 #if CONV_BENCH_VERIFY_STATUS

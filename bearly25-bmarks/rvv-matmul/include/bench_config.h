@@ -29,21 +29,21 @@
   50000000ULL, \
   150000000ULL, \
   250000000ULL, \
-  350000000ULL, \
-  450000000ULL, \
-  550000000ULL, \
-  650000000ULL, \
-  750000000ULL, \
-  850000000ULL
+  350000000ULL 
+  // 450000000ULL, \
+  // 550000000ULL, \
+  // 650000000ULL, \
+  // 750000000ULL, \
+  // 850000000ULL
 #endif
 
 // Repetitions for each cache state.
 #ifndef RVV_BENCH_RUNS_COLD
-#define RVV_BENCH_RUNS_COLD 5
+#define RVV_BENCH_RUNS_COLD 10
 #endif
 
 #ifndef RVV_BENCH_RUNS_HOT
-#define RVV_BENCH_RUNS_HOT 20
+#define RVV_BENCH_RUNS_HOT 2000
 #endif
 
 // Approximate L2 cache size for flush-thrash helper
@@ -52,11 +52,11 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_F32
-#define RVV_BENCH_ENABLE_F32 1
+#define RVV_BENCH_ENABLE_F32 0
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I16
-#define RVV_BENCH_ENABLE_I8_I16 1
+#define RVV_BENCH_ENABLE_I8_I16 0
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I32
@@ -64,11 +64,11 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_UNPACKED
-#define RVV_BENCH_ENABLE_UNPACKED 1
+#define RVV_BENCH_ENABLE_UNPACKED 0
 #endif
 
 #ifndef RVV_BENCH_ENABLE_PACKED
-#define RVV_BENCH_ENABLE_PACKED 1
+#define RVV_BENCH_ENABLE_PACKED 0
 #endif
 
 typedef struct {

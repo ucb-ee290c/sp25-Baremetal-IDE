@@ -83,7 +83,7 @@ extern "C" {
   50000000ULL, \
   150000000ULL, \
   250000000ULL, \
-  350000000ULL 
+  // 350000000ULL 
   // 450000000ULL, \
   // 550000000ULL, \
   // 650000000ULL, \
@@ -108,11 +108,11 @@ extern "C" {
 #endif
 
 #ifndef BW_ENABLE_CPU_MP
-#define BW_ENABLE_CPU_MP         1
+#define BW_ENABLE_CPU_MP         0
 #endif
 
 #ifndef BW_ENABLE_RVV_MP
-#define BW_ENABLE_RVV_MP         1
+#define BW_ENABLE_RVV_MP         0
 #endif
 
 #ifndef BW_DRAM_BYTES

@@ -19,7 +19,7 @@ extern char __heap_start[];
 extern char __heap_end[];
 extern char __end[];
 
-uint64_t target_frequency = 400000000l;
+uint64_t target_frequency = 950000000l;
 
 static void print_heap_usage(void) {
   extern char *_sbrk(ptrdiff_t);

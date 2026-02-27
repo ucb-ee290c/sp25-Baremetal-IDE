@@ -30,6 +30,22 @@ void bench_fill_int8_pattern(int8_t *data, int channels, int rows, int cols) {
     }
   }
 }
+//TODO: HARDCODED TO FP32
+void bench_fill_float_pattern(void* data, int channels, int rows, int cols, int data_bytes) {
+  float* matrix = (float*) data;
+  size_t plane = (size_t) rows * (size_t) cols;
+  for (int ch = 0; ch < channels; ++ch) {
+    float* dst = matrix + ch*plane;
+    for (int i = 0; i < rows; ++i) {
+      for (int j = 0; j < cols; ++j) {
+        // Pseudorandom
+        // TODO improve randomness
+        float v = (ch*12 / i + (j%3));
+        dst[i*cols+j] = v;
+      }
+    }
+  }
+}
 
 void bench_fill_int8_zero(int8_t *data, size_t size_bytes) {
   memset(data, 0, size_bytes);
@@ -50,14 +66,15 @@ void bench_fill_conv_weights(void *weights, int channels) {
   }
 }
 
-void bench_ref_dwconv3x3_i8(const int8_t *input,
+void bench_ref_dwconv_i8(const int8_t *input,
                             int rows, int cols,
                             int channels,
                             int stride, int padding,
                             const void *weights,
                             const float *scale,
                             int32_t zero_point,
-                            int8_t *output) {
+                            int8_t *output,
+			    int kernel_dim) {
   int out_rows = conv_out_dim(rows, CONV_KERNEL_SIZE, stride, padding);
   int out_cols = conv_out_dim(cols, CONV_KERNEL_SIZE, stride, padding);
   size_t in_plane = (size_t)rows * (size_t)cols;
@@ -80,18 +97,18 @@ void bench_ref_dwconv3x3_i8(const int8_t *input,
         int in_y = oy * stride - padding;
         int in_x = ox * stride - padding;
 
-        for (int ky = 0; ky < 3; ++ky) {
+        for (int ky = 0; ky < kernel_dim; ++ky) {
           int iy = in_y + ky;
           if (iy < 0 || iy >= rows) {
             continue;
           }
-          for (int kx = 0; kx < 3; ++kx) {
+          for (int kx = 0; kx < kernel_dim; ++kx) {
             int ix = in_x + kx;
             if (ix < 0 || ix >= cols) {
               continue;
             }
             int8_t a = in_ch[iy * cols + ix];
-            int8_t b = kernel[ky * 3 + kx];
+            int8_t b = kernel[ky * kernel_dim + kx];
             acc += (int32_t)a * (int32_t)b;
           }
         }

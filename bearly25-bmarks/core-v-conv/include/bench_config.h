@@ -44,10 +44,18 @@
 #define CONV_RELU 0
 #endif
 
+typedef enum {
+  INT,
+  FLOAT,
+} Type;
+
 typedef struct {
   const char *name;
   int H;
   int W;
+  int kernel_dim; // Length/height of kernel
+  int data_bytes;
+  Type data_type;
 } ConvSizeCase;
 
 static inline uint64_t rdcycle64(void) {

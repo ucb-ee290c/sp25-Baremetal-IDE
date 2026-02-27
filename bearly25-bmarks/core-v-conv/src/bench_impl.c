@@ -58,6 +58,9 @@ typedef struct {
   int8_t *output_ref;
   void *weights;
   float *scale;
+  int kernel_dim;
+  int data_bytes;
+  Type data_type; // FLOAT or INT right now
 } conv_case_ctx_t;
 
 static void conv_case_ctx_destroy(conv_case_ctx_t *ctx) {
@@ -74,17 +77,20 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const ConvSizeCase *cs) {
   ctx->H = cs->H;
   ctx->W = cs->W;
   ctx->channels = CONV_CHANNELS;
-  ctx->out_H = conv_out_dim(ctx->H, CONV_KERNEL_SIZE, CONV_STRIDE, CONV_PADDING);
-  ctx->out_W = conv_out_dim(ctx->W, CONV_KERNEL_SIZE, CONV_STRIDE, CONV_PADDING);
+  ctx->out_H = conv_out_dim(ctx->H, cs->kernel_dim, CONV_STRIDE, CONV_PADDING);
+  ctx->out_W = conv_out_dim(ctx->W, cs->kernel_dim, CONV_STRIDE, CONV_PADDING);
+  ctx->kernel_dim = cs->kernel_dim;
+  ctx->data_type = cs->data_type;
+  ctx->data_bytes = cs->data_bytes;
 
   if (ctx->out_H <= 0 || ctx->out_W <= 0) {
     printf("ERROR: invalid output dims for H=%d W=%d\n", ctx->H, ctx->W);
     return -1;
   }
 
-  ctx->input_bytes = (size_t)ctx->channels * (size_t)ctx->H * (size_t)ctx->W;
-  ctx->output_bytes = (size_t)ctx->channels * (size_t)ctx->out_H * (size_t)ctx->out_W;
-  ctx->weight_bytes = (size_t)ctx->channels * sizeof(int32_t) + (size_t)ctx->channels * 9 * sizeof(int8_t);
+  ctx->input_bytes = (size_t)ctx->channels * (size_t)ctx->H * (size_t)ctx->W * cs->data_bytes;
+  ctx->output_bytes = (size_t)ctx->channels * (size_t)ctx->out_H * (size_t)ctx->out_W * cs->data_bytes;
+  ctx->weight_bytes = (size_t)ctx->channels * (sizeof(int32_t) + cs->kernel_dim*cs->kernel_dim * cs->data_bytes);
 
   ctx->input = (int8_t *)bench_aligned_alloc(8, ctx->input_bytes);
   ctx->output = (int8_t *)bench_aligned_alloc(8, ctx->output_bytes);
@@ -98,23 +104,33 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const ConvSizeCase *cs) {
     return -1;
   }
 
-  bench_fill_int8_pattern(ctx->input, ctx->channels, ctx->H, ctx->W);
+  switch(cs->data_type) {
+    case INT:
+      bench_fill_int8_pattern(ctx->input, ctx->channels, ctx->H, ctx->W);
+      bench_fill_int8_pattern(ctx->weights, 1, ctx->kernel_dim, ctx->kernel_dim);
+      break;
+    case FLOAT:
+      bench_fill_float_pattern((void*)ctx->input, ctx->channels, ctx->H, ctx->W, cs->data_bytes);
+      bench_fill_float_pattern((void*)ctx->weights, 1, ctx->kernel_dim, ctx->kernel_dim, cs->data_bytes);
+      break;
+  }
   bench_fill_int8_zero(ctx->output, ctx->output_bytes);
   bench_fill_int8_zero(ctx->output_ref, ctx->output_bytes);
-  bench_fill_conv_weights(ctx->weights, ctx->channels);
   for (int ch = 0; ch < ctx->channels; ++ch) {
     ctx->scale[ch] = 1.0f;
   }
 
 #if BENCH_VERIFY
-  bench_ref_dwconv3x3_i8(ctx->input,
+  //TODO Float reference calculation (should basically just be changing this function from ints to floats)
+  bench_ref_dwconv_i8(ctx->input,
                           ctx->H, ctx->W,
                           ctx->channels,
                           CONV_STRIDE, CONV_PADDING,
                           ctx->weights,
                           ctx->scale,
                           0,
-                          ctx->output_ref);
+                          ctx->output_ref,
+			  ctx->kernel_dim);
 #endif
 
   return 0;
@@ -124,7 +140,7 @@ void bench_run_case(const ConvSizeCase *cs) {
   printf("\n=== Case: %s ===\n", cs->name);
   printf("Input: %dx%d, C=%d, kernel=%dx%d, stride=%d, pad=%d\n",
          cs->H, cs->W, CONV_CHANNELS,
-         CONV_KERNEL_SIZE, CONV_KERNEL_SIZE,
+         cs->kernel_dim, cs->kernel_dim,
          CONV_STRIDE, CONV_PADDING);
 
 #if BENCH_ENABLE_VEC
@@ -140,6 +156,7 @@ void bench_run_case(const ConvSizeCase *cs) {
   rqp.zero_point = 0;
 
 #if BENCH_VERIFY
+  //TODO Not modified for FP or variable sizes
   printf("  VEC correctness...");
   bench_fill_int8_zero(ctx.output, ctx.output_bytes);
   dwconv2D_3x3_int8(
@@ -152,6 +169,7 @@ void bench_run_case(const ConvSizeCase *cs) {
       CONV_RELU,
       rqp);
 
+  // TODO Float comparison
   int errs = bench_compare_i8(ctx.output, ctx.output_ref,
                               ctx.out_H, ctx.out_W,
                               ctx.channels,
@@ -169,6 +187,8 @@ void bench_run_case(const ConvSizeCase *cs) {
   for (int r = 0; r < BENCH_RUNS; ++r) {
     bench_fill_int8_zero(ctx.output, ctx.output_bytes);
     uint64_t t0 = rdcycle64();
+    //TODO: Replace this function with the appropriate assembly function
+    // https://stackoverflow.com/questions/15132185/mixing-c-and-assembly-sources-and-build-with-cmake
     dwconv2D_3x3_int8(
         (size_t)ctx.H, (size_t)ctx.W,
         (size_t)ctx.channels,

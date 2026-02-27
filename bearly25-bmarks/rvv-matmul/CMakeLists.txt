@@ -1,4 +1,4 @@
-# CMakeLists definitions for target `ope-bmarks`.
+# CMakeLists definitions for target `rvv-matmul`.
 
 #################################
 # Build Configuration
@@ -8,8 +8,8 @@
 add_executable(rvv-matmul
   src/main.c
   src/bench_cache.c
-  src/bench_fill.c
   src/bench_impl.c
+  src/bench_run.c
   src/bench_sizes.c
   ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )

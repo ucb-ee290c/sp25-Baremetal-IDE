@@ -399,7 +399,7 @@ static void run_f32_3x3(const conv_case_ctx_t *ctx) {
       float *out = ctx->output_f32_3x3 + idx * out_plane;
       const float *k = ctx->kernel_f32_3x3 + (size_t)c * 9u;
 
-      vec_conv_f32_3x3((size_t)ctx->height,
+      vec_conv_f32_3x3((size_t)ctx->out3_h,
                        (size_t)ctx->out3_w,
                        (size_t)ctx->width,
                        (size_t)ctx->out3_w,
@@ -423,7 +423,7 @@ static void run_f32_5x5(const conv_case_ctx_t *ctx) {
       float *out = ctx->output_f32_5x5 + idx * out_plane;
       const float *k = ctx->kernel_f32_5x5 + (size_t)c * 25u;
 
-      vec_conv_f32_5x5((size_t)ctx->height,
+      vec_conv_f32_5x5((size_t)ctx->out5_h,
                        (size_t)ctx->out5_w,
                        (size_t)ctx->width,
                        (size_t)ctx->out5_w,
@@ -447,7 +447,7 @@ static void run_i8_3x3(const conv_case_ctx_t *ctx) {
       int16_t *out = ctx->output_i16_3x3 + idx * out_plane;
       const int8_t *k = ctx->kernel_i8_3x3 + (size_t)c * 9u;
 
-      vec_conv_i8_3x3((size_t)ctx->height,
+      vec_conv_i8_3x3((size_t)ctx->out3_h,
                       (size_t)ctx->out3_w,
                       (size_t)ctx->width,
                       (size_t)ctx->out3_w,
@@ -471,7 +471,7 @@ static void run_i8_5x5(const conv_case_ctx_t *ctx) {
       int16_t *out = ctx->output_i16_5x5 + idx * out_plane;
       const int8_t *k = ctx->kernel_i8_5x5 + (size_t)c * 25u;
 
-      vec_conv_i8_5x5((size_t)ctx->height,
+      vec_conv_i8_5x5((size_t)ctx->out5_h,
                       (size_t)ctx->out5_w,
                       (size_t)ctx->width,
                       (size_t)ctx->out5_w,

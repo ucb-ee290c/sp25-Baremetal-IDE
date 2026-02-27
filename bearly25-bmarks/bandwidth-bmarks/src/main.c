@@ -71,7 +71,7 @@ static const char *k_cache_state_name[BW_CACHE_STATE_COUNT] = {
 };
 
 static const bw_transfer_case_t k_transfer_cases[] = {
-  { "DRAM->DRAM",        BW_REGION_DRAM,       BW_REGION_DRAM,       BW_DRAM_BYTES    }
+  { "DRAM->DRAM",        BW_REGION_DRAM,       BW_REGION_DRAM,       BW_DRAM_BYTES    },
   // { "DRAM->Scratchpad",  BW_REGION_DRAM,       BW_REGION_SCRATCHPAD, BW_SCRATCH_BYTES },
   // { "Scratchpad->DRAM",  BW_REGION_SCRATCHPAD, BW_REGION_DRAM,       BW_SCRATCH_BYTES },
   // { "DRAM->LocalTCM",    BW_REGION_DRAM,       BW_REGION_LOCAL_TCM,  BW_TCM_BYTES     },
@@ -178,6 +178,21 @@ static inline uint64_t bw_stats_avg(const bw_stats_t *s) {
     return 0;
   }
   return s->sum_cycles / (uint64_t)s->runs;
+}
+
+static inline double bw_cycles_to_ns(uint64_t cycles, uint64_t frequency_hz) {
+  if (frequency_hz == 0u) {
+    return 0.0;
+  }
+  return ((double)cycles * 1000000000.0) / (double)frequency_hz;
+}
+
+static inline double bw_cycles_to_mbps(uint32_t bytes, uint64_t cycles, uint64_t frequency_hz) {
+  if (frequency_hz == 0u || cycles == 0u) {
+    return 0.0;
+  }
+  // Report decimal MB/s (1 MB = 1,000,000 bytes)
+  return ((double)bytes * (double)frequency_hz) / ((double)cycles * 1000000.0);
 }
 
 static void bw_copy_cpu(volatile uint8_t *dst, volatile uint8_t *src, uint32_t bytes) {
@@ -307,7 +322,10 @@ static bool bw_run_state(const bw_transfer_case_t *tc,
   return ok;
 }
 
-static bw_suite_result_t run_bandwidth_suite(const char *kernel_name, bw_copy_fn_t copy_fn, uint32_t seed_base) {
+static bw_suite_result_t run_bandwidth_suite(const char *kernel_name,
+                                             bw_copy_fn_t copy_fn,
+                                             uint32_t seed_base,
+                                             uint64_t frequency_hz) {
   bw_suite_result_t result;
   result.summary_cycles = 0;
   result.correct = true;
@@ -325,11 +343,20 @@ static bw_suite_result_t run_bandwidth_suite(const char *kernel_name, bw_copy_fn
       bool ok = bw_run_state(tc, (bw_cache_state_t)st, copy_fn,
                              seed_base + tc_i * 0x1000u, &stats);
       uint64_t avg = bw_stats_avg(&stats);
+      double best_ns = bw_cycles_to_ns(stats.best_cycles, frequency_hz);
+      double avg_ns = bw_cycles_to_ns(avg, frequency_hz);
+      double best_mbps = bw_cycles_to_mbps(tc->bytes, stats.best_cycles, frequency_hz);
+      double avg_mbps = bw_cycles_to_mbps(tc->bytes, avg, frequency_hz);
 
-      printf("  %-10s best=%10llu cycles  avg=%10llu cycles  %s\n",
+      printf("  %-10s best=%10llu cyc (%12.2f ns, %10.2f MB/s)  "
+             "avg=%10llu cyc (%12.2f ns, %10.2f MB/s)  %s\n",
              k_cache_state_name[st],
              (unsigned long long)stats.best_cycles,
+             best_ns,
+             best_mbps,
              (unsigned long long)avg,
+             avg_ns,
+             avg_mbps,
              ok ? "PASS" : "FAIL");
 
       if (tc_i == 0 && st == BW_CACHE_COLD) {
@@ -340,33 +367,42 @@ static bw_suite_result_t run_bandwidth_suite(const char *kernel_name, bw_copy_fn
     }
   }
 
-  printf("\nSummary: cycles=%llu (DRAM->DRAM COLD avg), pass=%d\n",
-         (unsigned long long)result.summary_cycles, result.correct ? 1 : 0);
+  {
+    const uint32_t summary_bytes = k_transfer_cases[0].bytes;
+    const double summary_ns = bw_cycles_to_ns(result.summary_cycles, frequency_hz);
+    const double summary_mbps = bw_cycles_to_mbps(summary_bytes, result.summary_cycles, frequency_hz);
+    printf("\nSummary: cycles=%llu, time=%0.2f ns, bw=%0.2f MB/s "
+           "(DRAM->DRAM COLD avg), pass=%d\n",
+           (unsigned long long)result.summary_cycles,
+           summary_ns,
+           summary_mbps,
+           result.correct ? 1 : 0);
+  }
   return result;
 }
 
-static bool cpu_memcpy_suite(uint32_t seed) {
-  bw_suite_result_t result = run_bandwidth_suite("CPU memcpy", bw_copy_cpu, seed);
+static bool cpu_memcpy_suite(uint32_t seed, uint64_t frequency_hz) {
+  bw_suite_result_t result = run_bandwidth_suite("CPU memcpy", bw_copy_cpu, seed, frequency_hz);
   return result.correct;
 }
 
-static bool glibc_memcpy_suite(uint32_t seed) {
-  bw_suite_result_t result = run_bandwidth_suite("glibc memcpy", bw_copy_glibc, seed);
+static bool glibc_memcpy_suite(uint32_t seed, uint64_t frequency_hz) {
+  bw_suite_result_t result = run_bandwidth_suite("glibc memcpy", bw_copy_glibc, seed, frequency_hz);
   return result.correct;
 }
 
-static bool rvv_memcpy_suite(uint32_t seed) {
-  bw_suite_result_t result = run_bandwidth_suite("RVV memcpy", bw_copy_rvv, seed);
+static bool rvv_memcpy_suite(uint32_t seed, uint64_t frequency_hz) {
+  bw_suite_result_t result = run_bandwidth_suite("RVV memcpy", bw_copy_rvv, seed, frequency_hz);
   return result.correct;
 }
 
-static bool cpu_memcpy_mp_suite(uint32_t seed) {
-  bw_suite_result_t result = run_bandwidth_suite("CPU memcpy (multi-hart)", bw_copy_cpu_mp, seed);
+static bool cpu_memcpy_mp_suite(uint32_t seed, uint64_t frequency_hz) {
+  bw_suite_result_t result = run_bandwidth_suite("CPU memcpy (multi-hart)", bw_copy_cpu_mp, seed, frequency_hz);
   return result.correct;
 }
 
-static bool rvv_memcpy_mp_suite(uint32_t seed) {
-  bw_suite_result_t result = run_bandwidth_suite("RVV memcpy (multi-hart)", bw_copy_rvv_mp, seed);
+static bool rvv_memcpy_mp_suite(uint32_t seed, uint64_t frequency_hz) {
+  bw_suite_result_t result = run_bandwidth_suite("RVV memcpy (multi-hart)", bw_copy_rvv_mp, seed, frequency_hz);
   return result.correct;
 }
 
@@ -379,23 +415,23 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
   printf("runs/state=%u\n", BW_NUM_RUNS);
 
 #if BW_ENABLE_CPU
-  all_ok &= cpu_memcpy_suite(seed + 0x1000u);
+  all_ok &= cpu_memcpy_suite(seed + 0x1000u, frequency_hz);
 #endif
 
 #if BW_ENABLE_GLIBC
-  all_ok &= glibc_memcpy_suite(seed + 0x2000u);
+  all_ok &= glibc_memcpy_suite(seed + 0x2000u, frequency_hz);
 #endif
 
 #if BW_ENABLE_RVV
-  all_ok &= rvv_memcpy_suite(seed + 0x3000u);
+  all_ok &= rvv_memcpy_suite(seed + 0x3000u, frequency_hz);
 #endif
 
 #if BW_ENABLE_CPU_MP
-  all_ok &= cpu_memcpy_mp_suite(seed + 0x4000u);
+  all_ok &= cpu_memcpy_mp_suite(seed + 0x4000u, frequency_hz);
 #endif
 
 #if BW_ENABLE_RVV_MP
-  all_ok &= rvv_memcpy_mp_suite(seed + 0x5000u);
+  all_ok &= rvv_memcpy_mp_suite(seed + 0x5000u, frequency_hz);
 #endif
 
   printf("\n=== Bandwidth sweep complete @ %llu Hz: %s ===\n",
@@ -403,7 +439,7 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 }
 
 void app_init(void) {
-  init_test(BW_TARGET_FREQUENCY_HZ);
+  // init_test(BW_TARGET_FREQUENCY_HZ);
 }
 
 void app_main(void) {

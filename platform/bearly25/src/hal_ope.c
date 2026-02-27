@@ -28,14 +28,6 @@ static inline unsigned long read_cycles(void) {
   return cycles;
 }
 
-static inline int round_up_8(int x) {
-  return ((x + 7) / 8) * 8;
-}
-
-static inline size_t align_up_8(size_t bytes) {
-  return ((bytes + 7) / 8) * 8;
-}
-
 // ===== Low-Level RoCC Operations =====
 
 #define OP_ZERO() ROCC_INSTRUCTION(OPE_CUSTOM, FCTN7_ZERO)
@@ -175,63 +167,16 @@ void ope_mat32_transpose_inplace(ope_mat32_t* mat) {
   }
 }
 
-size_t ope_packed_a_size_bytes(int rows, int cols) {
-  assert(rows >= 0 && cols >= 0);
-  int rowsU = round_up_8(rows);
-  int colsU = round_up_8(cols);
-  return align_up_8((size_t)rowsU * (size_t)colsU * sizeof(int8_t));
-}
-
-size_t ope_packed_b_size_bytes(int rows, int cols) {
-  assert(rows >= 0 && cols >= 0);
-  int rowsU = round_up_8(rows);
-  int colsU = round_up_8(cols);
-  return align_up_8((size_t)rowsU * (size_t)colsU * sizeof(int8_t));
-}
-
 // ===== Pre-allocated Workspace for Remap Buffers =====
 static int8_t *g_workspace_A = NULL;
 static int8_t *g_workspace_B = NULL;
 static size_t g_workspace_size = 0;
 
-static int acquire_pack_buffers(size_t size_A, size_t size_B,
-                                int8_t** A_T, int8_t** B_remap, bool* use_workspace) {
-  size_t max_size = (size_A > size_B) ? size_A : size_B;
-  *use_workspace = (g_workspace_A && g_workspace_B && g_workspace_size >= max_size);
-
-  if (*use_workspace) {
-    *A_T = g_workspace_A;
-    *B_remap = g_workspace_B;
-    return 0;
-  }
-
-  *A_T = aligned_alloc(8, size_A);
-  if (!*A_T) {
-    return -1;
-  }
-
-  *B_remap = aligned_alloc(8, size_B);
-  if (!*B_remap) {
-    free(*A_T);
-    *A_T = NULL;
-    return -1;
-  }
-
-  return 0;
-}
-
-static void release_pack_buffers(int8_t* A_T, int8_t* B_remap, bool use_workspace) {
-  if (!use_workspace) {
-    free(A_T);
-    free(B_remap);
-  }
-}
-
 void ope_init_workspace(int max_M, int max_N, int max_K) {
   // Round up to multiples of 8
-  int mU = round_up_8(max_M);
-  int nU = round_up_8(max_N);
-  int kU = round_up_8(max_K);
+  int mU = ((max_M + 7) / 8) * 8;
+  int nU = ((max_N + 7) / 8) * 8;
+  int kU = ((max_K + 7) / 8) * 8;
   
   // Size for A remap: mU * kU, Size for B remap: kU * nU
   size_t size_A = (size_t)mU * (size_t)kU;
@@ -239,7 +184,7 @@ void ope_init_workspace(int max_M, int max_N, int max_K) {
   size_t max_size = (size_A > size_B) ? size_A : size_B;
   
   // Ensure multiple of 8 for aligned_alloc
-  max_size = align_up_8(max_size);
+  max_size = ((max_size + 7) / 8) * 8;
   
   if (g_workspace_A) free(g_workspace_A);
   if (g_workspace_B) free(g_workspace_B);
@@ -382,31 +327,54 @@ long ope_matmul_64x64(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out) {
   return t1 - t0;
 }
 
-static long ope_matmul_8x8_packed(int8_t* A_T, int8_t* B_remap, ope_mat32_t* out) {
-  assert(out->rowsU == 8 && out->colsU == 8);
-  unsigned long t0 = read_cycles();
-  OP_ZERO();
-  OP_ACC_L(A_T, B_remap, 8);
-  OP_EXT_STRIDE((int32_t*)&out->data, 8, OPE_EXT_FLIP);
-  unsigned long t1 = read_cycles();
-  return t1 - t0;
-}
+long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
+  assert(A->rows == A->cols);
+  assert(B->rows == B->cols);
+  assert(out->rows == out->cols);
+  assert(A->cols == B->rows);
 
-long ope_matmul_square_packed(int8_t* A_T, int8_t* B_remap, int kU, ope_mat32_t* out) {
-  assert(A_T && B_remap && out);
-  assert(kU > 0 && (kU % 8) == 0);
-  assert(out->rowsU == out->colsU);
-  assert(out->rowsU == kU);
+  int kU = A->colsU;
+  if (kU == 8) return ope_matmul_8x8(A, B, out);
 
+  size_t alloc_size = (size_t)kU * (size_t)kU * sizeof(int8_t);
+  // Ensure size is multiple of 8
+  alloc_size = ((alloc_size + 7) / 8) * 8;
+  
+  // Use pre-allocated workspace if available and large enough
+  int8_t* A_T;
+  int8_t* B_remap;
+  bool use_workspace = (g_workspace_A && g_workspace_B && g_workspace_size >= alloc_size);
+  
+  if (use_workspace) {
+    A_T = g_workspace_A;
+    B_remap = g_workspace_B;
+  } else {
+    A_T = aligned_alloc(8, alloc_size);
+    if (!A_T) {
+      return -1;
+    }
+    
+    B_remap = aligned_alloc(8, alloc_size);
+    if (!B_remap) {
+      free(A_T);
+      return -1;
+    }
+  }
+  
+  ope_remap_matrix_A(A, A_T);
+  ope_remap_matrix_B(B, B_remap);
+
+  unsigned long cycles;
   switch (kU) {
-    case 8:
-      return ope_matmul_8x8_packed(A_T, B_remap, out);
     case 16:
-      return ope_matmul_16x16(A_T, B_remap, out);
+      cycles = ope_matmul_16x16(A_T, B_remap, out);
+      break;
     case 32:
-      return ope_matmul_32x32(A_T, B_remap, out);
+      cycles = ope_matmul_32x32(A_T, B_remap, out);
+      break;
     case 64:
-      return ope_matmul_64x64(A_T, B_remap, out);
+      cycles = ope_matmul_64x64(A_T, B_remap, out);
+      break;
     default: {
       // Generic tiled implementation for sizes > 64
       // Process in 8x8 output tiles, accumulating K dimension in chunks of 32
@@ -432,23 +400,68 @@ long ope_matmul_square_packed(int8_t* A_T, int8_t* B_remap, int kU, ope_mat32_t*
 
       asm volatile("fence w, rw" ::: "memory");
       unsigned long t1 = read_cycles();
-      return t1 - t0;
+      cycles = t1 - t0;
+      break;
     }
   }
+
+  if (!use_workspace) {
+    free(A_T);
+    free(B_remap);
+  }
+  return cycles;
 }
 
-long ope_matmul_arb_packed(int8_t* A_T, int8_t* B_remap, int mU, int nU, int kU, ope_mat32_t* out) {
-  assert(A_T && B_remap && out);
-  assert(mU > 0 && nU > 0 && kU > 0);
-  assert((mU % 8) == 0 && (nU % 8) == 0 && (kU % 8) == 0);
-  assert(out->rowsU == mU);
-  assert(out->colsU == nU);
+long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
+  assert(A->rows == out->rows);
+  assert(B->cols == out->cols);
+  assert(A->cols == B->rows);
 
+  int mU = A->rowsU;
+  int kU = A->colsU;
+  int nU = B->colsU;
+
+  // Square Case
   if (mU == kU && kU == nU) {
-    return ope_matmul_square_packed(A_T, B_remap, kU, out);
+    if (mU == 8) return ope_matmul_8x8(A, B, out);
+    return ope_matmul_square(A, B, out);
   }
 
+  // Rectangular case
+  size_t size_A = (size_t)mU * (size_t)kU * sizeof(int8_t);
+  size_t size_B = (size_t)kU * (size_t)nU * sizeof(int8_t);
+  // Ensure sizes are multiples of 8
+  size_A = ((size_A + 7) / 8) * 8;
+  size_B = ((size_B + 7) / 8) * 8;
+  
+  size_t max_size = (size_A > size_B) ? size_A : size_B;
+  
+  // Use pre-allocated workspace if available and large enough
+  int8_t* A_T;
+  int8_t* B_remap;
+  bool use_workspace = (g_workspace_A && g_workspace_B && g_workspace_size >= max_size);
+  
+  if (use_workspace) {
+    A_T = g_workspace_A;
+    B_remap = g_workspace_B;
+  } else {
+    A_T = aligned_alloc(8, size_A);
+    if (!A_T) {
+      return -1;
+    }
+    
+    B_remap = aligned_alloc(8, size_B);
+    if (!B_remap) {
+      free(A_T);
+      return -1;
+    }
+  }
+  
+  ope_remap_matrix_A(A, A_T);
+  ope_remap_matrix_B(B, B_remap);
+
   register int stride = nU;
+
   unsigned long t0 = read_cycles();
 
   for (int i = 0; i < mU / 8; i++) {
@@ -476,65 +489,11 @@ long ope_matmul_arb_packed(int8_t* A_T, int8_t* B_remap, int mU, int nU, int kU,
 
   asm volatile("fence w, rw" ::: "memory");
   unsigned long t1 = read_cycles();
+
+  if (!use_workspace) {
+    free(A_T);
+    free(B_remap);
+  }
+
   return t1 - t0;
-}
-
-long ope_matmul_square(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
-  assert(A->rows == A->cols);
-  assert(B->rows == B->cols);
-  assert(out->rows == out->cols);
-  assert(A->cols == B->rows);
-
-  int kU = A->colsU;
-  if (kU == 8) return ope_matmul_8x8(A, B, out);
-
-  size_t size_A = ope_packed_a_size_bytes(A->rows, A->cols);
-  size_t size_B = ope_packed_b_size_bytes(B->rows, B->cols);
-
-  int8_t* A_T = NULL;
-  int8_t* B_remap = NULL;
-  bool use_workspace = false;
-  if (acquire_pack_buffers(size_A, size_B, &A_T, &B_remap, &use_workspace) != 0) {
-    return -1;
-  }
-
-  ope_remap_matrix_A(A, A_T);
-  ope_remap_matrix_B(B, B_remap);
-  unsigned long cycles = ope_matmul_square_packed(A_T, B_remap, kU, out);
-
-  release_pack_buffers(A_T, B_remap, use_workspace);
-  return cycles;
-}
-
-long ope_matmul_arb(ope_mat8_t* A, ope_mat8_t* B, ope_mat32_t* out) {
-  assert(A->rows == out->rows);
-  assert(B->cols == out->cols);
-  assert(A->cols == B->rows);
-
-  int mU = A->rowsU;
-  int kU = A->colsU;
-  int nU = B->colsU;
-
-  // Square case keeps the existing fast path behavior.
-  if (mU == kU && kU == nU) {
-    if (mU == 8) return ope_matmul_8x8(A, B, out);
-    return ope_matmul_square(A, B, out);
-  }
-
-  size_t size_A = ope_packed_a_size_bytes(A->rows, A->cols);
-  size_t size_B = ope_packed_b_size_bytes(B->rows, B->cols);
-
-  int8_t* A_T = NULL;
-  int8_t* B_remap = NULL;
-  bool use_workspace = false;
-  if (acquire_pack_buffers(size_A, size_B, &A_T, &B_remap, &use_workspace) != 0) {
-    return -1;
-  }
-
-  ope_remap_matrix_A(A, A_T);
-  ope_remap_matrix_B(B, B_remap);
-  unsigned long cycles = ope_matmul_arb_packed(A_T, B_remap, mU, nU, kU, out);
-
-  release_pack_buffers(A_T, B_remap, use_workspace);
-  return cycles;
 }

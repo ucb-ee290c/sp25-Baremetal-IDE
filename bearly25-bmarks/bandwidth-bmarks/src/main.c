@@ -71,13 +71,13 @@ static const char *k_cache_state_name[BW_CACHE_STATE_COUNT] = {
 };
 
 static const bw_transfer_case_t k_transfer_cases[] = {
-  { "DRAM->DRAM",        BW_REGION_DRAM,       BW_REGION_DRAM,       BW_DRAM_BYTES    },
-  { "DRAM->Scratchpad",  BW_REGION_DRAM,       BW_REGION_SCRATCHPAD, BW_SCRATCH_BYTES },
-  { "Scratchpad->DRAM",  BW_REGION_SCRATCHPAD, BW_REGION_DRAM,       BW_SCRATCH_BYTES },
-  { "DRAM->LocalTCM",    BW_REGION_DRAM,       BW_REGION_LOCAL_TCM,  BW_TCM_BYTES     },
-  { "LocalTCM->DRAM",    BW_REGION_LOCAL_TCM,  BW_REGION_DRAM,       BW_TCM_BYTES     },
-  { "DRAM->RemoteTCM",   BW_REGION_DRAM,       BW_REGION_REMOTE_TCM, BW_TCM_BYTES     },
-  { "RemoteTCM->DRAM",   BW_REGION_REMOTE_TCM, BW_REGION_DRAM,       BW_TCM_BYTES     },
+  { "DRAM->DRAM",        BW_REGION_DRAM,       BW_REGION_DRAM,       BW_DRAM_BYTES    }
+  // { "DRAM->Scratchpad",  BW_REGION_DRAM,       BW_REGION_SCRATCHPAD, BW_SCRATCH_BYTES },
+  // { "Scratchpad->DRAM",  BW_REGION_SCRATCHPAD, BW_REGION_DRAM,       BW_SCRATCH_BYTES },
+  // { "DRAM->LocalTCM",    BW_REGION_DRAM,       BW_REGION_LOCAL_TCM,  BW_TCM_BYTES     },
+  // { "LocalTCM->DRAM",    BW_REGION_LOCAL_TCM,  BW_REGION_DRAM,       BW_TCM_BYTES     },
+  // { "DRAM->RemoteTCM",   BW_REGION_DRAM,       BW_REGION_REMOTE_TCM, BW_TCM_BYTES     },
+  // { "RemoteTCM->DRAM",   BW_REGION_REMOTE_TCM, BW_REGION_DRAM,       BW_TCM_BYTES     },
 };
 
 static inline uint64_t rdcycle64(void) {

@@ -5,7 +5,6 @@
 #include <assert.h>
 
 #include <riscv_vector.h> 
-
 // Example: 7x(m4) int8->int32 microkernel with no float scaling.
 // A is [mr × kc], B is fused into w (int8 weights) laid out per column-block, C is [mr × nc] in int32.
 void gemm_i8_i32_7xm4_packed(
@@ -81,30 +80,17 @@ void gemm_i8_i32_7xm4_packed(
       const int8_t va6 = *a6++;
 
       // Load one vector of int8 from the weights
-      vint8m1_t vb = __riscv_vle8_v_i8m1(w, vl);
+      vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
 
       // Perform widening multiply to int16, then add to the int32 accumulators
-      vint16m2_t tmp0 = __riscv_vwmul_vx_i16m2(vb, va0, vl);
-      vacc0 = __riscv_vwadd_wv_i32m4(vacc0, tmp0, vl);
-
-      vint16m2_t tmp1 = __riscv_vwmul_vx_i16m2(vb, va1, vl);
-      vacc1 = __riscv_vwadd_wv_i32m4(vacc1, tmp1, vl);
-
-      vint16m2_t tmp2 = __riscv_vwmul_vx_i16m2(vb, va2, vl);
-      vacc2 = __riscv_vwadd_wv_i32m4(vacc2, tmp2, vl);
-
-      vint16m2_t tmp3 = __riscv_vwmul_vx_i16m2(vb, va3, vl);
-      vacc3 = __riscv_vwadd_wv_i32m4(vacc3, tmp3, vl);
-
-      vint16m2_t tmp4 = __riscv_vwmul_vx_i16m2(vb, va4, vl);
-      vacc4 = __riscv_vwadd_wv_i32m4(vacc4, tmp4, vl);
-
-      vint16m2_t tmp5 = __riscv_vwmul_vx_i16m2(vb, va5, vl);
-      vacc5 = __riscv_vwadd_wv_i32m4(vacc5, tmp5, vl);
-
-      vint16m2_t tmp6 = __riscv_vwmul_vx_i16m2(vb, va6, vl);
-      vacc6 = __riscv_vwadd_wv_i32m4(vacc6, tmp6, vl);
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
+      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb, vl);
+      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb, vl);
+      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb, vl);
+      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
+      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
+      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
 
       k -= 1;
     } while (k != 0);
@@ -174,10 +160,9 @@ void gemm_i8_i32_1xm4_packed(
     size_t k = kc;
     do {
       const int8_t va0 = *a0++;
-      vint8m1_t vb = __riscv_vle8_v_i8m1(w, vl);
+      vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
-      vint16m2_t tmp0 = __riscv_vwmul_vx_i16m2(vb, va0, vl);
-      vacc0 = __riscv_vwadd_wv_i32m4(vacc0, tmp0, vl);
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
 
       k -= 1;
     } while (k != 0);
@@ -189,6 +174,28 @@ void gemm_i8_i32_1xm4_packed(
 
   } while (nc != 0);
 }
+
+void copy_int8_to_tcm(const int8_t *src, size_t n) {
+  // Destination pointer in TCM
+  int8_t *tcm_input = (int8_t *)0x78000000;
+
+  size_t vl;
+  while (n > 0) {
+      // Set VL to process up to 'n' bytes with 8‑bit elements, SEW=8, LMUL=1
+      vl = __riscv_vsetvl_e8m8(n);
+
+      // Load vl int8 elements from src
+      vint8m8_t v = __riscv_vle8_v_i8m8(src, vl);
+      // Store them to TCM
+      __riscv_vse8_v_i8m8(tcm_input, v, vl);
+
+      // Advance pointers and decrease remaining count
+      src       += vl;
+      tcm_input += vl;
+      n         -= vl;
+  }
+}
+
 
 void int8_gemm_packed(
     size_t M, size_t N, size_t K,
@@ -202,6 +209,7 @@ void int8_gemm_packed(
     const size_t cm_stride_bytes = c_row_stride * sizeof(int32_t);
     const size_t cn_stride_bytes = c_col_stride;
 
+    copy_int8_to_tcm(B, K*N+N);
     size_t row = 0;
     while (row < M) {
         size_t rows_left = M - row;
@@ -213,7 +221,7 @@ void int8_gemm_packed(
                 kc_bytes,
                 A + row * a_row_stride,
                 a_stride_bytes,
-                B,
+                (int8_t *)0x78000000,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes
@@ -226,7 +234,7 @@ void int8_gemm_packed(
                 kc_bytes,
                 A + row * a_row_stride,
                 a_stride_bytes,
-                B,
+                (int8_t *)0x78000000,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes
@@ -332,30 +340,17 @@ void gemm_i8_i32_7xm4(
       const int8_t va6 = *a6++;
 
       // Load one vector of int8 from the weights
-      vint8m1_t vb = __riscv_vle8_v_i8m1(w, vl);
+      vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
 
       // Perform widening multiply to int16, then add to the int32 accumulators
-      vint16m2_t tmp0 = __riscv_vwmul_vx_i16m2(vb, va0, vl);
-      vacc0 = __riscv_vwadd_wv_i32m4(vacc0, tmp0, vl);
-
-      vint16m2_t tmp1 = __riscv_vwmul_vx_i16m2(vb, va1, vl);
-      vacc1 = __riscv_vwadd_wv_i32m4(vacc1, tmp1, vl);
-
-      vint16m2_t tmp2 = __riscv_vwmul_vx_i16m2(vb, va2, vl);
-      vacc2 = __riscv_vwadd_wv_i32m4(vacc2, tmp2, vl);
-
-      vint16m2_t tmp3 = __riscv_vwmul_vx_i16m2(vb, va3, vl);
-      vacc3 = __riscv_vwadd_wv_i32m4(vacc3, tmp3, vl);
-
-      vint16m2_t tmp4 = __riscv_vwmul_vx_i16m2(vb, va4, vl);
-      vacc4 = __riscv_vwadd_wv_i32m4(vacc4, tmp4, vl);
-
-      vint16m2_t tmp5 = __riscv_vwmul_vx_i16m2(vb, va5, vl);
-      vacc5 = __riscv_vwadd_wv_i32m4(vacc5, tmp5, vl);
-
-      vint16m2_t tmp6 = __riscv_vwmul_vx_i16m2(vb, va6, vl);
-      vacc6 = __riscv_vwadd_wv_i32m4(vacc6, tmp6, vl);
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
+      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb, vl);
+      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb, vl);
+      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb, vl);
+      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
+      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
+      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
 
       k -= 1;
     } while (k != 0);
@@ -423,10 +418,9 @@ void gemm_i8_i32_1xm4(
     size_t k = kc;
     do {
       const int8_t va0 = *a0++;
-      vint8m1_t vb = __riscv_vle8_v_i8m1(w, vl);
+      vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
-      vint16m2_t tmp0 = __riscv_vwmul_vx_i16m2(vb, va0, vl);
-      vacc0 = __riscv_vwadd_wv_i32m4(vacc0, tmp0, vl);
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl); 
 
       k -= 1;
     } while (k != 0);

@@ -27,6 +27,7 @@ target_include_directories(rvv-conv PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 target_link_libraries(rvv-conv PRIVATE
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
+target_link_options(rvv-conv PRIVATE -Wl,--defsym=__heap_size=16777216)
 
 if (PROF_COV)
   target_link_libraries(rvv-conv PRIVATE gcov)

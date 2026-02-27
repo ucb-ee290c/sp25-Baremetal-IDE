@@ -35,6 +35,8 @@ typedef struct {
   int8_t *input_i8;
   float *input_f32;
 
+  void *output_buf_3x3;
+  void *output_buf_5x5;
   int16_t *output_i16_3x3;
   int16_t *output_i16_5x5;
   float *output_f32_3x3;
@@ -83,6 +85,9 @@ extern void vec_conv_i8_5x5(size_t rows,
                             const int8_t *k,
                             const int8_t *a,
                             int16_t *b);
+
+#define CONV_NEEDS_F32 (CONV_BENCH_ENABLE_F32_3X3 || CONV_BENCH_ENABLE_F32_5X5)
+#define CONV_NEEDS_I8  (CONV_BENCH_ENABLE_I8_3X3 || CONV_BENCH_ENABLE_I8_5X5)
 
 static uint8_t g_cache_thrash[CONV_BENCH_CACHE_THRASH_BYTES]
     __attribute__((aligned(CONV_BENCH_CACHE_LINE_BYTES)));
@@ -176,8 +181,12 @@ static void bench_cache_flush(void) {
 static void fill_inputs(conv_case_ctx_t *ctx) {
   for (size_t i = 0; i < ctx->in_elems; ++i) {
     int32_t v = (int32_t)((i * 13u + 17u) % 31u) - 15;
-    ctx->input_i8[i] = (int8_t)v;
-    ctx->input_f32[i] = (float)v * 0.125f;
+    if (ctx->input_i8) {
+      ctx->input_i8[i] = (int8_t)v;
+    }
+    if (ctx->input_f32) {
+      ctx->input_f32[i] = (float)v * 0.125f;
+    }
   }
 }
 
@@ -199,14 +208,22 @@ static void fill_kernels(conv_case_ctx_t *ctx) {
   for (int ch = 0; ch < ctx->channels; ++ch) {
     for (int i = 0; i < 9; ++i) {
       int8_t k = (int8_t)(k3_base[i] + (int8_t)(ch & 1));
-      ctx->kernel_i8_3x3[(size_t)ch * 9u + (size_t)i] = k;
-      ctx->kernel_f32_3x3[(size_t)ch * 9u + (size_t)i] = (float)k * 0.125f;
+      if (ctx->kernel_i8_3x3) {
+        ctx->kernel_i8_3x3[(size_t)ch * 9u + (size_t)i] = k;
+      }
+      if (ctx->kernel_f32_3x3) {
+        ctx->kernel_f32_3x3[(size_t)ch * 9u + (size_t)i] = (float)k * 0.125f;
+      }
     }
 
     for (int i = 0; i < 25; ++i) {
       int8_t k = (int8_t)(k5_base[i] - (int8_t)(ch % 3));
-      ctx->kernel_i8_5x5[(size_t)ch * 25u + (size_t)i] = k;
-      ctx->kernel_f32_5x5[(size_t)ch * 25u + (size_t)i] = (float)k * 0.0625f;
+      if (ctx->kernel_i8_5x5) {
+        ctx->kernel_i8_5x5[(size_t)ch * 25u + (size_t)i] = k;
+      }
+      if (ctx->kernel_f32_5x5) {
+        ctx->kernel_f32_5x5[(size_t)ch * 25u + (size_t)i] = (float)k * 0.0625f;
+      }
     }
   }
 }
@@ -215,10 +232,8 @@ static void conv_case_ctx_destroy(conv_case_ctx_t *ctx) {
   if (ctx->input_i8) free(ctx->input_i8);
   if (ctx->input_f32) free(ctx->input_f32);
 
-  if (ctx->output_i16_3x3) free(ctx->output_i16_3x3);
-  if (ctx->output_i16_5x5) free(ctx->output_i16_5x5);
-  if (ctx->output_f32_3x3) free(ctx->output_f32_3x3);
-  if (ctx->output_f32_5x5) free(ctx->output_f32_5x5);
+  if (ctx->output_buf_3x3) free(ctx->output_buf_3x3);
+  if (ctx->output_buf_5x5) free(ctx->output_buf_5x5);
 
   if (ctx->kernel_i8_3x3) free(ctx->kernel_i8_3x3);
   if (ctx->kernel_i8_5x5) free(ctx->kernel_i8_5x5);
@@ -261,30 +276,100 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const ConvBenchCase *cs) {
                       (size_t)ctx->out5_h * (size_t)ctx->out5_w;
   }
 
-  ctx->input_i8 = (int8_t *)bench_aligned_alloc(64, ctx->in_elems * sizeof(int8_t));
-  ctx->input_f32 = (float *)bench_aligned_alloc(64, ctx->in_elems * sizeof(float));
+  const size_t bytes_input_i8 = CONV_NEEDS_I8 ? (ctx->in_elems * sizeof(int8_t)) : 0u;
+  const size_t bytes_input_f32 = CONV_NEEDS_F32 ? (ctx->in_elems * sizeof(float)) : 0u;
+  const size_t bytes_k_i8_3x3 =
+      CONV_BENCH_ENABLE_I8_3X3 ? ((size_t)ctx->channels * 9u * sizeof(int8_t)) : 0u;
+  const size_t bytes_k_i8_5x5 =
+      CONV_BENCH_ENABLE_I8_5X5 ? ((size_t)ctx->channels * 25u * sizeof(int8_t)) : 0u;
+  const size_t bytes_k_f32_3x3 =
+      CONV_BENCH_ENABLE_F32_3X3 ? ((size_t)ctx->channels * 9u * sizeof(float)) : 0u;
+  const size_t bytes_k_f32_5x5 =
+      CONV_BENCH_ENABLE_F32_5X5 ? ((size_t)ctx->channels * 25u * sizeof(float)) : 0u;
 
-  ctx->kernel_i8_3x3 = (int8_t *)bench_aligned_alloc(64, (size_t)ctx->channels * 9u * sizeof(int8_t));
-  ctx->kernel_i8_5x5 = (int8_t *)bench_aligned_alloc(64, (size_t)ctx->channels * 25u * sizeof(int8_t));
-  ctx->kernel_f32_3x3 = (float *)bench_aligned_alloc(64, (size_t)ctx->channels * 9u * sizeof(float));
-  ctx->kernel_f32_5x5 = (float *)bench_aligned_alloc(64, (size_t)ctx->channels * 25u * sizeof(float));
+  const size_t bytes_out3_i16 =
+      (ctx->out3_elems > 0 && CONV_BENCH_ENABLE_I8_3X3)
+          ? (ctx->out3_elems * sizeof(int16_t))
+          : 0u;
+  const size_t bytes_out3_f32 =
+      (ctx->out3_elems > 0 && CONV_BENCH_ENABLE_F32_3X3)
+          ? (ctx->out3_elems * sizeof(float))
+          : 0u;
+  const size_t bytes_out5_i16 =
+      (ctx->out5_elems > 0 && CONV_BENCH_ENABLE_I8_5X5)
+          ? (ctx->out5_elems * sizeof(int16_t))
+          : 0u;
+  const size_t bytes_out5_f32 =
+      (ctx->out5_elems > 0 && CONV_BENCH_ENABLE_F32_5X5)
+          ? (ctx->out5_elems * sizeof(float))
+          : 0u;
 
-  if (ctx->out3_elems > 0) {
-    ctx->output_i16_3x3 = (int16_t *)bench_aligned_alloc(64, ctx->out3_elems * sizeof(int16_t));
-    ctx->output_f32_3x3 = (float *)bench_aligned_alloc(64, ctx->out3_elems * sizeof(float));
+  const size_t bytes_out3 = (bytes_out3_i16 > bytes_out3_f32) ? bytes_out3_i16 : bytes_out3_f32;
+  const size_t bytes_out5 = (bytes_out5_i16 > bytes_out5_f32) ? bytes_out5_i16 : bytes_out5_f32;
+  const size_t requested_total = bytes_input_i8 + bytes_input_f32 +
+                                 bytes_k_i8_3x3 + bytes_k_i8_5x5 +
+                                 bytes_k_f32_3x3 + bytes_k_f32_5x5 +
+                                 bytes_out3 + bytes_out5;
+
+  if (bytes_input_i8 > 0u) {
+    ctx->input_i8 = (int8_t *)bench_aligned_alloc(64, bytes_input_i8);
+  }
+  if (bytes_input_f32 > 0u) {
+    ctx->input_f32 = (float *)bench_aligned_alloc(64, bytes_input_f32);
+  }
+  if (bytes_k_i8_3x3 > 0u) {
+    ctx->kernel_i8_3x3 = (int8_t *)bench_aligned_alloc(64, bytes_k_i8_3x3);
+  }
+  if (bytes_k_i8_5x5 > 0u) {
+    ctx->kernel_i8_5x5 = (int8_t *)bench_aligned_alloc(64, bytes_k_i8_5x5);
+  }
+  if (bytes_k_f32_3x3 > 0u) {
+    ctx->kernel_f32_3x3 = (float *)bench_aligned_alloc(64, bytes_k_f32_3x3);
+  }
+  if (bytes_k_f32_5x5 > 0u) {
+    ctx->kernel_f32_5x5 = (float *)bench_aligned_alloc(64, bytes_k_f32_5x5);
   }
 
-  if (ctx->out5_elems > 0) {
-    ctx->output_i16_5x5 = (int16_t *)bench_aligned_alloc(64, ctx->out5_elems * sizeof(int16_t));
-    ctx->output_f32_5x5 = (float *)bench_aligned_alloc(64, ctx->out5_elems * sizeof(float));
+  if (bytes_out3 > 0u) {
+    ctx->output_buf_3x3 = bench_aligned_alloc(64, bytes_out3);
+#if CONV_BENCH_ENABLE_I8_3X3
+    ctx->output_i16_3x3 = (int16_t *)ctx->output_buf_3x3;
+#endif
+#if CONV_BENCH_ENABLE_F32_3X3
+    ctx->output_f32_3x3 = (float *)ctx->output_buf_3x3;
+#endif
   }
 
-  if (!ctx->input_i8 || !ctx->input_f32 ||
-      !ctx->kernel_i8_3x3 || !ctx->kernel_i8_5x5 ||
-      !ctx->kernel_f32_3x3 || !ctx->kernel_f32_5x5 ||
-      (ctx->out3_elems > 0 && (!ctx->output_i16_3x3 || !ctx->output_f32_3x3)) ||
-      (ctx->out5_elems > 0 && (!ctx->output_i16_5x5 || !ctx->output_f32_5x5))) {
-    printf("  ERROR: allocation failed\n");
+  if (bytes_out5 > 0u) {
+    ctx->output_buf_5x5 = bench_aligned_alloc(64, bytes_out5);
+#if CONV_BENCH_ENABLE_I8_5X5
+    ctx->output_i16_5x5 = (int16_t *)ctx->output_buf_5x5;
+#endif
+#if CONV_BENCH_ENABLE_F32_5X5
+    ctx->output_f32_5x5 = (float *)ctx->output_buf_5x5;
+#endif
+  }
+
+  if ((bytes_input_i8 > 0u && !ctx->input_i8) ||
+      (bytes_input_f32 > 0u && !ctx->input_f32) ||
+      (bytes_k_i8_3x3 > 0u && !ctx->kernel_i8_3x3) ||
+      (bytes_k_i8_5x5 > 0u && !ctx->kernel_i8_5x5) ||
+      (bytes_k_f32_3x3 > 0u && !ctx->kernel_f32_3x3) ||
+      (bytes_k_f32_5x5 > 0u && !ctx->kernel_f32_5x5) ||
+      (bytes_out3 > 0u && !ctx->output_buf_3x3) ||
+      (bytes_out5 > 0u && !ctx->output_buf_5x5)) {
+    printf("  ERROR: allocation failed (requested_total=%llu bytes)\n",
+           (unsigned long long)requested_total);
+    printf("         in_i8=%llu in_f32=%llu out3=%llu out5=%llu\n",
+           (unsigned long long)bytes_input_i8,
+           (unsigned long long)bytes_input_f32,
+           (unsigned long long)bytes_out3,
+           (unsigned long long)bytes_out5);
+    printf("         k_i8_3x3=%llu k_i8_5x5=%llu k_f32_3x3=%llu k_f32_5x5=%llu\n",
+           (unsigned long long)bytes_k_i8_3x3,
+           (unsigned long long)bytes_k_i8_5x5,
+           (unsigned long long)bytes_k_f32_3x3,
+           (unsigned long long)bytes_k_f32_5x5);
     conv_case_ctx_destroy(ctx);
     return -1;
   }
@@ -292,13 +377,11 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const ConvBenchCase *cs) {
   fill_inputs(ctx);
   fill_kernels(ctx);
 
-  if (ctx->out3_elems > 0) {
-    memset(ctx->output_i16_3x3, 0, ctx->out3_elems * sizeof(int16_t));
-    memset(ctx->output_f32_3x3, 0, ctx->out3_elems * sizeof(float));
+  if (ctx->output_buf_3x3) {
+    memset(ctx->output_buf_3x3, 0, bytes_out3);
   }
-  if (ctx->out5_elems > 0) {
-    memset(ctx->output_i16_5x5, 0, ctx->out5_elems * sizeof(int16_t));
-    memset(ctx->output_f32_5x5, 0, ctx->out5_elems * sizeof(float));
+  if (ctx->output_buf_5x5) {
+    memset(ctx->output_buf_5x5, 0, bytes_out5);
   }
 
   return 0;

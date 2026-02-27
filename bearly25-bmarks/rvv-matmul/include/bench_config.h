@@ -12,6 +12,22 @@
 #define RVV_BENCH_TARGET_FREQUENCY_HZ 500000000ULL
 #endif
 
+// 0: single-frequency mode
+// 1: iterate over RVV_BENCH_PLL_FREQ_LIST frequencies
+#ifndef RVV_BENCH_ENABLE_PLL_SWEEP
+#define RVV_BENCH_ENABLE_PLL_SWEEP 0
+#endif
+
+#ifndef RVV_BENCH_PLL_SWEEP_SLEEP_MS
+#define RVV_BENCH_PLL_SWEEP_SLEEP_MS 10u
+#endif
+
+// Comma-separated list used when RVV_BENCH_ENABLE_PLL_SWEEP=1
+// #define RVV_BENCH_PLL_FREQ_LIST 400000000ULL, 600000000ULL, 800000000ULL
+#ifndef RVV_BENCH_PLL_FREQ_LIST
+#define RVV_BENCH_PLL_FREQ_LIST RVV_BENCH_TARGET_FREQUENCY_HZ
+#endif
+
 // Repetitions for each cache state.
 #ifndef RVV_BENCH_RUNS_COLD
 #define RVV_BENCH_RUNS_COLD 5
@@ -21,7 +37,7 @@
 #define RVV_BENCH_RUNS_HOT 20
 #endif
 
-// Approximate L2 cache size for flush-thrash helper.
+// Approximate L2 cache size for flush-thrash helper
 #ifndef RVV_L2_BYTES
 #define RVV_L2_BYTES (256u * 1024u)
 #endif

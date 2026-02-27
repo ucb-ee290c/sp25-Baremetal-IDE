@@ -15,7 +15,7 @@
 // 0: single-frequency mode
 // 1: iterate over RVV_BENCH_PLL_FREQ_LIST frequencies
 #ifndef RVV_BENCH_ENABLE_PLL_SWEEP
-#define RVV_BENCH_ENABLE_PLL_SWEEP 1
+#define RVV_BENCH_ENABLE_PLL_SWEEP 0
 #endif
 
 #ifndef RVV_BENCH_PLL_SWEEP_SLEEP_MS
@@ -43,7 +43,7 @@
 #endif
 
 #ifndef RVV_BENCH_RUNS_HOT
-#define RVV_BENCH_RUNS_HOT 2000
+#define RVV_BENCH_RUNS_HOT 20
 #endif
 
 // Approximate L2 cache size for flush-thrash helper

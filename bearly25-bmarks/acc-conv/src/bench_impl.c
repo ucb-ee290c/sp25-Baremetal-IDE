@@ -33,6 +33,8 @@ typedef struct {
   size_t in_elems;
   size_t out3_elems;
   size_t out5_elems;
+  size_t out3_stride;  /* 64B-aligned per-call output stride (int16_t elements) */
+  size_t out5_stride;
 
   int8_t  *input_i8;
 
@@ -161,15 +163,17 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const ConvBenchCase *cs) {
   ctx->in_elems = (size_t)ctx->batch * (size_t)ctx->channels *
                   (size_t)ctx->height * (size_t)ctx->width;
 
-  ctx->out3_elems = (ctx->out3_h > 0 && ctx->out3_w > 0)
-      ? (size_t)ctx->batch * (size_t)ctx->channels *
-        (size_t)ctx->out3_h * (size_t)ctx->out3_w
+  /* Round each per-call output plane up to a 64-byte boundary (32 int16_t elements)
+   * so every back-to-back perform_convolution call writes to a distinct 64B-aligned address. */
+  ctx->out3_stride = (ctx->out3_h > 0 && ctx->out3_w > 0)
+      ? (((size_t)ctx->out3_h * (size_t)ctx->out3_w + 31u) / 32u) * 32u
+      : 0u;
+  ctx->out5_stride = (ctx->out5_h > 0 && ctx->out5_w > 0)
+      ? (((size_t)ctx->out5_h * (size_t)ctx->out5_w + 31u) / 32u) * 32u
       : 0u;
 
-  ctx->out5_elems = (ctx->out5_h > 0 && ctx->out5_w > 0)
-      ? (size_t)ctx->batch * (size_t)ctx->channels *
-        (size_t)ctx->out5_h * (size_t)ctx->out5_w
-      : 0u;
+  ctx->out3_elems = (size_t)ctx->batch * (size_t)ctx->channels * ctx->out3_stride;
+  ctx->out5_elems = (size_t)ctx->batch * (size_t)ctx->channels * ctx->out5_stride;
 
   ctx->input_i8      = bench_aligned_alloc(ctx->in_elems * sizeof(int8_t));
   ctx->kernel_i8_3x3 = bench_aligned_alloc((size_t)ctx->channels * 9u);
@@ -205,7 +209,7 @@ static int conv_case_ctx_init(conv_case_ctx_t *ctx, const ConvBenchCase *cs) {
 
 static void run_acc_3x3(const conv_case_ctx_t *ctx) {
   const size_t in_plane  = (size_t)ctx->height * (size_t)ctx->width;
-  const size_t out_plane = (size_t)ctx->out3_h  * (size_t)ctx->out3_w;
+  const size_t out_plane = ctx->out3_stride;
   for (int b = 0; b < ctx->batch; ++b) {
     for (int c = 0; c < ctx->channels; ++c) {
       const size_t idx = (size_t)b * (size_t)ctx->channels + (size_t)c;
@@ -222,7 +226,7 @@ static void run_acc_3x3(const conv_case_ctx_t *ctx) {
 
 static void run_acc_5x5(const conv_case_ctx_t *ctx) {
   const size_t in_plane  = (size_t)ctx->height * (size_t)ctx->width;
-  const size_t out_plane = (size_t)ctx->out5_h  * (size_t)ctx->out5_w;
+  const size_t out_plane = ctx->out5_stride;
   for (int b = 0; b < ctx->batch; ++b) {
     for (int c = 0; c < ctx->channels; ++c) {
       const size_t idx = (size_t)b * (size_t)ctx->channels + (size_t)c;
@@ -239,7 +243,7 @@ static void run_acc_5x5(const conv_case_ctx_t *ctx) {
 
 static void run_ref_3x3(const conv_case_ctx_t *ctx) {
   const size_t in_plane  = (size_t)ctx->height * (size_t)ctx->width;
-  const size_t out_plane = (size_t)ctx->out3_h  * (size_t)ctx->out3_w;
+  const size_t out_plane = ctx->out3_stride;
   for (int b = 0; b < ctx->batch; ++b) {
     for (int c = 0; c < ctx->channels; ++c) {
       const size_t idx = (size_t)b * (size_t)ctx->channels + (size_t)c;
@@ -254,7 +258,7 @@ static void run_ref_3x3(const conv_case_ctx_t *ctx) {
 
 static void run_ref_5x5(const conv_case_ctx_t *ctx) {
   const size_t in_plane  = (size_t)ctx->height * (size_t)ctx->width;
-  const size_t out_plane = (size_t)ctx->out5_h  * (size_t)ctx->out5_w;
+  const size_t out_plane = ctx->out5_stride;
   for (int b = 0; b < ctx->batch; ++b) {
     for (int c = 0; c < ctx->channels; ++c) {
       const size_t idx = (size_t)b * (size_t)ctx->channels + (size_t)c;

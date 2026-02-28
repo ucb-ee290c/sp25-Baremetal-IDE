@@ -51,6 +51,13 @@ typedef void (*conv_kernel_fn_t)(const conv_case_ctx_t *ctx);
 static uint8_t g_cache_thrash[CONV_BENCH_CACHE_THRASH_BYTES]
     __attribute__((aligned(CONV_BENCH_CACHE_LINE_BYTES)));
 
+static void spin_cycles(uint64_t cycles) {
+  if (cycles == 0u) return;
+  uint64_t start = rdcycle64();
+  while ((rdcycle64() - start) < cycles)
+    asm volatile("" ::: "memory");
+}
+
 static void bench_stats_init(bench_stats_t *s) {
   s->sum  = 0;
   s->best = ULLONG_MAX;
@@ -206,6 +213,7 @@ static void run_acc_3x3(const conv_case_ctx_t *ctx) {
           (uint16_t)ctx->height, (uint16_t)ctx->width,
           (uint8_t *)(ctx->kernel_i8_3x3 + (size_t)c * 9u),
           3u, 0u, 1u);
+      spin_cycles(CONV_BENCH_INTER_CALL_CYCLES);
     }
   }
 }
@@ -222,6 +230,7 @@ static void run_acc_5x5(const conv_case_ctx_t *ctx) {
           (uint16_t)ctx->height, (uint16_t)ctx->width,
           (uint8_t *)(ctx->kernel_i8_5x5 + (size_t)c * 25u),
           5u, 0u, 1u);
+      spin_cycles(CONV_BENCH_INTER_CALL_CYCLES);
     }
   }
 }

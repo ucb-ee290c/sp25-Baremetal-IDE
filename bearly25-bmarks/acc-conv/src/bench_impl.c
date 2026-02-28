@@ -53,9 +53,11 @@ static uint8_t g_cache_thrash[CONV_BENCH_CACHE_THRASH_BYTES]
 
 static void spin_cycles(uint64_t cycles) {
   if (cycles == 0u) return;
+  __asm__ __volatile__("fence rw, rw" ::: "memory");
   uint64_t start = rdcycle64();
-  while ((rdcycle64() - start) < cycles)
+  while ((rdcycle64() - start) < cycles) {
     asm volatile("" ::: "memory");
+  }
 }
 
 static void bench_stats_init(bench_stats_t *s) {

@@ -13,7 +13,7 @@
 #endif
 
 #ifndef CONV_BENCH_ENABLE_PLL_SWEEP
-#define CONV_BENCH_ENABLE_PLL_SWEEP 0
+#define CONV_BENCH_ENABLE_PLL_SWEEP 1
 #endif
 
 #ifndef CONV_BENCH_PLL_SWEEP_SLEEP_MS
@@ -47,7 +47,7 @@
 /* Number of cycles to busy-wait between consecutive perform_convolution calls.
  * Set to 0 to disable (default). Override via -DCONV_BENCH_INTER_CALL_CYCLES=N. */
 #ifndef CONV_BENCH_INTER_CALL_CYCLES
-#define CONV_BENCH_INTER_CALL_CYCLES 0ULL
+#define CONV_BENCH_INTER_CALL_CYCLES 10000ULL
 #endif
 
 typedef struct {

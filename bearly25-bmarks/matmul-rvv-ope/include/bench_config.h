@@ -25,10 +25,18 @@
 #define MATMUL_L2_BYTES (256u * 1024u)
 #endif
 
-// Fixed matmul dimensions
-#define MATMUL_M 64
-#define MATMUL_N 64
-#define MATMUL_K 64
+// Fixed matmul dimensions (60 = 4 x 15-row tiles, clean tiling for RVV+OPE interleave)
+#define MATMUL_M 60
+#define MATMUL_N 60
+#define MATMUL_K 60
+
+// Interleaved tile structure
+#define MATMUL_RVV_ROWS    7   // rows computed by RVV per tile (rows 0-6)
+#define MATMUL_OPE_ROWS    8   // rows computed by OPE per tile (rows 7-14)
+#define MATMUL_TILE_ROWS   15  // MATMUL_RVV_ROWS + MATMUL_OPE_ROWS
+
+// OPE works on 8-column tiles; ceil(N/8)
+#define MATMUL_N_OPE_TILES ((MATMUL_N + 7) / 8)
 
 static inline uint64_t rdcycle64(void) {
   uint64_t x;

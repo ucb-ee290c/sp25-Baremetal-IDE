@@ -132,7 +132,7 @@ void bench_run(void) {
   for (int r = 0; r < MATMUL_BENCH_RUNS_COLD; ++r) {
     memset(C, 0, M * N * sizeof(int32_t));
     uint64_t t0 = rdcycle64();
-    printf("gothere\n");
+    // printf("gothere\n");
     i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, C, N);
     uint64_t t1 = rdcycle64();
     bench_stats_update(&cold, t1 - t0);

@@ -2,7 +2,7 @@
 
 #include "bench_cache.h"
 #include "bench_config.h"
-#include "simple_setup.h"
+// #include "simple_setup.h"
 
 uint64_t target_frequency = MATMUL_BENCH_TARGET_FREQUENCY_HZ;
 

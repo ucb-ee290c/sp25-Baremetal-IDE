@@ -296,61 +296,68 @@ void i8_i32_matmul(size_t M, size_t N, size_t K,
 /*
  * gemm_i8_i32_15row_interleaved - 15-row microkernel: 7 RVV rows + 8 OPE rows.
  *
- * Per 8-column tile j:
- *   1. OP_ZERO()
- *   2. OP_ACC_L(a_ope, b_ope+j*kc*8, 32)            -- async OPE k=0..31
- *   3. RVV k-loop k=0..31                            -- hides OPE latency
- *   4. OP_ACC_L(a_ope+32*8, b_ope+j*kc*8+32*8, kc-32) -- async OPE k=32..kc-1
- *   5. RVV k-loop k=32..kc-1                         -- hides OPE latency
- *   6. VSE32 stores for RVV rows 0-6 at columns j*8..j*8+vl
- *   7. OP_EXT_STRIDE(c_row7 + j*8, N, OPE_EXT_FLIP)  -- blocking extract rows 7-14
+ * Three-phase interleaving on a superscalar core (OPE + vector co-issue):
  *
- * a_ope layout: [kc][8], where a_ope[k*8+r] = A[tile_row+7+r][k].
- * b_ope layout: [N_ope_tiles][kc][8].
- * RVV uses LMUL=4, VL=8 (or <8 for the last partial tile).
- * 7 accumulators pinned to v0,v4,...,v24; vb pinned to v28 (LMUL=2).
+ * Phase 1 — n-chunk/OPE pairing (max hiding):
+ *   Each n-chunk's k-loop simultaneously advances one OPE j-tile.
+ *   Within each k-step: scalar A loads FIRST (brings a+0..+14 into L1),
+ *   then OP_ACC_L (OPE reads a+7..+14 from warm L1 cache), then vector
+ *   B load + vwmacc. On a superscalar core, OPE and vector instructions
+ *   can issue in the same cycle, so OPE j-tile latency ≈ free.
+ *   After the k-loop: OP_EXT_STRIDE (nearly free — OPE already done).
+ *   For N=60/LMUL=4/VLEN=128: 4 n-chunks → hides 4 OPE j-tiles.
+ *
+ * Phase 2 — pure RVV (if n-chunks > N_ope_tiles):
+ *   Remaining n-chunks run without OPE work.
+ *
+ * Phase 3 — remaining OPE j-tiles with copy-pipeline hiding:
+ *   issue j OPE (async) → extract j-1 → copy j-1 to C (hides j OPE)
+ *   For N=60: 4 remaining j-tiles (j=4..7) hidden behind copy loops.
  */
 static void gemm_i8_i32_15row_interleaved(
     size_t N_ope_tiles,
     size_t N,
     size_t kc,
-    const int8_t* a,        // A_T col ptr for this tile; a+0..+6 are RVV rows
-    size_t a_stride,        // M (stride between k-steps in A_T)
-    const int8_t* a_ope,    // OPE-remapped A for rows 7-14: [kc][8]
-    const int8_t* w,        // B [kc x N] row-major
-    const int8_t* b_ope,    // B remapped [N_ope_tiles x kc x 8]
-    int32_t* c,             // C row 0 of this tile
-    size_t cm_stride        // byte stride between rows of C (= N*sizeof(int32_t))
+    const int8_t* a,     // A_T col ptr; a+0..+6 = RVV rows, a+7..+14 = OPE rows
+    size_t a_stride,     // M (stride between k-steps in A_T)
+    const int8_t* w,     // B [kc x N] row-major
+    const int8_t* b_ope, // B remapped [N_ope_tiles x kc x 8]
+    int32_t* c,          // C row 0 of this tile
+    size_t cm_stride     // byte stride between rows of C
 ) {
-  // Base pointer for OPE output rows (rows 7-14 of this tile)
   int32_t* c_ope_base = (int32_t*)((uint8_t*)c + 7 * cm_stride);
+  int32_t ope_tmp[64] __attribute__((aligned(8)));
 
-  for (size_t j = 0; j < N_ope_tiles; j++) {
-    const size_t col = j * 8;
-    const size_t vl  = (col + 8 <= N) ? 8 : (N - col);
+  const int8_t* a0 = a + 0;
+  const int8_t* a1 = a + 1;
+  const int8_t* a2 = a + 2;
+  const int8_t* a3 = a + 3;
+  const int8_t* a4 = a + 4;
+  const int8_t* a5 = a + 5;
+  const int8_t* a6 = a + 6;
 
-    // B pointer for this column tile (row 0 of B, starting at column col)
-    const int8_t* wb = w + col;
+  int32_t* c0 = (int32_t*)((uint8_t*)c + 0*cm_stride);
+  int32_t* c1 = (int32_t*)((uint8_t*)c + 1*cm_stride);
+  int32_t* c2 = (int32_t*)((uint8_t*)c + 2*cm_stride);
+  int32_t* c3 = (int32_t*)((uint8_t*)c + 3*cm_stride);
+  int32_t* c4 = (int32_t*)((uint8_t*)c + 4*cm_stride);
+  int32_t* c5 = (int32_t*)((uint8_t*)c + 5*cm_stride);
+  int32_t* c6 = (int32_t*)((uint8_t*)c + 6*cm_stride);
 
-    // A row pointers for RVV rows 0-6 (reset each j-tile since A doesn't depend on j)
-    const int8_t* a0 = a + 0;
-    const int8_t* a1 = a + 1;
-    const int8_t* a2 = a + 2;
-    const int8_t* a3 = a + 3;
-    const int8_t* a4 = a + 4;
-    const int8_t* a5 = a + 5;
-    const int8_t* a6 = a + 6;
+  size_t j     = 0;
+  size_t nc    = N;
+  const int8_t* w_col   = w;
+  const int8_t* b_ope_j = b_ope;  // = b_ope + j*kc*8, advances by kc*8 per j
 
-    // C output pointers for RVV rows 0-6, offset to this column tile
-    int32_t* c0 = (int32_t*)((uint8_t*)c + 0*cm_stride) + col;
-    int32_t* c1 = (int32_t*)((uint8_t*)c + 1*cm_stride) + col;
-    int32_t* c2 = (int32_t*)((uint8_t*)c + 2*cm_stride) + col;
-    int32_t* c3 = (int32_t*)((uint8_t*)c + 3*cm_stride) + col;
-    int32_t* c4 = (int32_t*)((uint8_t*)c + 4*cm_stride) + col;
-    int32_t* c5 = (int32_t*)((uint8_t*)c + 5*cm_stride) + col;
-    int32_t* c6 = (int32_t*)((uint8_t*)c + 6*cm_stride) + col;
+  // -----------------------------------------------------------------------
+  // Phase 1: pair each n-chunk with one OPE j-tile
+  // -----------------------------------------------------------------------
+  OP_ZERO();  // start OPE j=0
 
-    // Zero-initialize RVV accumulators
+  while (nc > 0 && j < N_ope_tiles) {
+    size_t vl = __riscv_vsetvl_e32m4(nc);
+    nc -= vl;
+
     register vint32m4_t vacc0 asm("v0")  = __riscv_vmv_v_x_i32m4(0, vl);
     register vint32m4_t vacc1 asm("v4")  = __riscv_vmv_v_x_i32m4(0, vl);
     register vint32m4_t vacc2 asm("v8")  = __riscv_vmv_v_x_i32m4(0, vl);
@@ -359,11 +366,90 @@ static void gemm_i8_i32_15row_interleaved(
     register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_x_i32m4(0, vl);
     register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_x_i32m4(0, vl);
 
-    // --- First half: OPE k=0..31 async, RVV k=0..31 ---
-    OP_ZERO();
-    OP_ACC_L(a_ope, b_ope + j * kc * 8, 32);
+    const int8_t* wb  = w_col;
+    const int8_t* ak7 = a + 7;       // OPE A pointer for this j-tile
+    const int8_t* bk  = b_ope_j;     // OPE B pointer for this j-tile
 
-    for (size_t k = 0; k < 32; k++) {
+    size_t k = kc;
+    do {
+      // 1. Scalar A loads: bring A_T[k*M + tile+0..14] into L1 cache
+      const int8_t va0 = *a0; a0 += a_stride;
+      const int8_t va1 = *a1; a1 += a_stride;
+      const int8_t va2 = *a2; a2 += a_stride;
+      const int8_t va3 = *a3; a3 += a_stride;
+      const int8_t va4 = *a4; a4 += a_stride;
+      const int8_t va5 = *a5; a5 += a_stride;
+      const int8_t va6 = *a6; a6 += a_stride;
+
+      // 2. OPE: reads a+7..+14 from L1 (warmed by loads above); co-issues with RVV
+      OP_ACC_L(ak7, bk, 1);
+      ak7 += a_stride;
+      bk  += 8;
+
+      // 3. RVV: vector B load and multiply-accumulate
+      register vint16m2_t vb asm("v28") =
+          __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(wb, vl), vl);
+      wb += N;
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
+      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb, vl);
+      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb, vl);
+      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb, vl);
+      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
+      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
+      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
+      k -= 1;
+    } while (k != 0);
+
+    // Reset scalar A pointers to k=0 for next n-chunk
+    a0 -= kc * a_stride;  a1 -= kc * a_stride;  a2 -= kc * a_stride;
+    a3 -= kc * a_stride;  a4 -= kc * a_stride;  a5 -= kc * a_stride;
+    a6 -= kc * a_stride;
+
+    __riscv_vse32_v_i32m4(c0, vacc0, vl); c0 += vl;
+    __riscv_vse32_v_i32m4(c1, vacc1, vl); c1 += vl;
+    __riscv_vse32_v_i32m4(c2, vacc2, vl); c2 += vl;
+    __riscv_vse32_v_i32m4(c3, vacc3, vl); c3 += vl;
+    __riscv_vse32_v_i32m4(c4, vacc4, vl); c4 += vl;
+    __riscv_vse32_v_i32m4(c5, vacc5, vl); c5 += vl;
+    __riscv_vse32_v_i32m4(c6, vacc6, vl); c6 += vl;
+    w_col += vl;
+
+    // OPE j ran kc iterations in parallel — extract (should be nearly free)
+    OP_EXT_STRIDE(ope_tmp, 8, OPE_EXT_FLIP);
+
+    // Copy j to C
+    {
+      const size_t col  = j * 8;
+      const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
+      for (int r = 0; r < 8; r++) {
+        int32_t* crow = (int32_t*)((uint8_t*)c_ope_base + r * cm_stride) + col;
+        for (size_t cc = 0; cc < vl_j; cc++) crow[cc] = ope_tmp[r * 8 + cc];
+      }
+    }
+
+    b_ope_j += kc * 8;
+    j++;
+    if (j < N_ope_tiles) OP_ZERO();  // prep next OPE tile before next n-chunk
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 2: remaining n-chunks (pure RVV, no OPE tiles left to pair)
+  // -----------------------------------------------------------------------
+  while (nc > 0) {
+    size_t vl = __riscv_vsetvl_e32m4(nc);
+    nc -= vl;
+
+    register vint32m4_t vacc0 asm("v0")  = __riscv_vmv_v_x_i32m4(0, vl);
+    register vint32m4_t vacc1 asm("v4")  = __riscv_vmv_v_x_i32m4(0, vl);
+    register vint32m4_t vacc2 asm("v8")  = __riscv_vmv_v_x_i32m4(0, vl);
+    register vint32m4_t vacc3 asm("v12") = __riscv_vmv_v_x_i32m4(0, vl);
+    register vint32m4_t vacc4 asm("v16") = __riscv_vmv_v_x_i32m4(0, vl);
+    register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_x_i32m4(0, vl);
+    register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_x_i32m4(0, vl);
+
+    const int8_t* wb = w_col;
+    size_t k = kc;
+    do {
       const int8_t va0 = *a0; a0 += a_stride;
       const int8_t va1 = *a1; a1 += a_stride;
       const int8_t va2 = *a2; a2 += a_stride;
@@ -381,42 +467,71 @@ static void gemm_i8_i32_15row_interleaved(
       vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
       vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
       vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
+      k -= 1;
+    } while (k != 0);
+
+    a0 -= kc * a_stride;  a1 -= kc * a_stride;  a2 -= kc * a_stride;
+    a3 -= kc * a_stride;  a4 -= kc * a_stride;  a5 -= kc * a_stride;
+    a6 -= kc * a_stride;
+
+    __riscv_vse32_v_i32m4(c0, vacc0, vl); c0 += vl;
+    __riscv_vse32_v_i32m4(c1, vacc1, vl); c1 += vl;
+    __riscv_vse32_v_i32m4(c2, vacc2, vl); c2 += vl;
+    __riscv_vse32_v_i32m4(c3, vacc3, vl); c3 += vl;
+    __riscv_vse32_v_i32m4(c4, vacc4, vl); c4 += vl;
+    __riscv_vse32_v_i32m4(c5, vacc5, vl); c5 += vl;
+    __riscv_vse32_v_i32m4(c6, vacc6, vl); c6 += vl;
+    w_col += vl;
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 3: remaining OPE j-tiles with copy-pipeline hiding
+  // OP_ZERO for j was already issued at the end of Phase 1 (if j < N_ope_tiles).
+  // Pipeline: issue j OPE → extract j-1 → copy j-1 → issue j+1 OPE → ...
+  // -----------------------------------------------------------------------
+  if (j < N_ope_tiles) {
+    // Issue OPE for current j (OP_ZERO already called)
+    {
+      const int8_t* ak7 = a + 7;
+      for (size_t k = 0; k < kc; k++) {
+        OP_ACC_L(ak7, b_ope_j + k * 8, 1);
+        ak7 += a_stride;
+      }
     }
 
-    // --- Second half: OPE k=32..kc-1 async, RVV k=32..kc-1 ---
-    OP_ACC_L(a_ope + 32 * 8, b_ope + j * kc * 8 + 32 * 8, (int)(kc - 32));
+    // Pipeline: extract j → issue j+1 (async) → copy j → repeat
+    for (; j < N_ope_tiles - 1; j++) {
+      OP_EXT_STRIDE(ope_tmp, 8, OPE_EXT_FLIP);  // blocking: j done
 
-    for (size_t k = 32; k < kc; k++) {
-      const int8_t va0 = *a0; a0 += a_stride;
-      const int8_t va1 = *a1; a1 += a_stride;
-      const int8_t va2 = *a2; a2 += a_stride;
-      const int8_t va3 = *a3; a3 += a_stride;
-      const int8_t va4 = *a4; a4 += a_stride;
-      const int8_t va5 = *a5; a5 += a_stride;
-      const int8_t va6 = *a6; a6 += a_stride;
-      register vint16m2_t vb asm("v28") =
-          __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(wb, vl), vl);
-      wb += N;
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
-      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb, vl);
-      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb, vl);
-      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb, vl);
-      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
-      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
-      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
+      b_ope_j += kc * 8;
+      OP_ZERO();  // start j+1
+      {
+        const int8_t* ak7 = a + 7;
+        for (size_t k = 0; k < kc; k++) {
+          OP_ACC_L(ak7, b_ope_j + k * 8, 1);
+          ak7 += a_stride;
+        }
+      }
+
+      // Copy j to C while j+1 OPE runs
+      const size_t col  = j * 8;
+      const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
+      for (int r = 0; r < 8; r++) {
+        int32_t* crow = (int32_t*)((uint8_t*)c_ope_base + r * cm_stride) + col;
+        for (size_t cc = 0; cc < vl_j; cc++) crow[cc] = ope_tmp[r * 8 + cc];
+      }
     }
 
-    // Store RVV results for rows 0-6
-    __riscv_vse32_v_i32m4(c0, vacc0, vl);
-    __riscv_vse32_v_i32m4(c1, vacc1, vl);
-    __riscv_vse32_v_i32m4(c2, vacc2, vl);
-    __riscv_vse32_v_i32m4(c3, vacc3, vl);
-    __riscv_vse32_v_i32m4(c4, vacc4, vl);
-    __riscv_vse32_v_i32m4(c5, vacc5, vl);
-    __riscv_vse32_v_i32m4(c6, vacc6, vl);
-
-    // Blocking OPE extract for rows 7-14 into C
-    OP_EXT_STRIDE(c_ope_base + col, (int)N, OPE_EXT_FLIP);
+    // Extract and copy the last Phase-3 j-tile
+    OP_EXT_STRIDE(ope_tmp, 8, OPE_EXT_FLIP);
+    {
+      const size_t col  = j * 8;
+      const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
+      for (int r = 0; r < 8; r++) {
+        int32_t* crow = (int32_t*)((uint8_t*)c_ope_base + r * cm_stride) + col;
+        for (size_t cc = 0; cc < vl_j; cc++) crow[cc] = ope_tmp[r * 8 + cc];
+      }
+    }
   }
 }
 
@@ -424,13 +539,11 @@ void i8_i32_matmul_interleaved(size_t M, size_t N, size_t K,
                                 const int8_t *A_T, size_t a_row_stride,
                                 const int8_t *B,
                                 const int8_t *B_ope, size_t N_ope_tiles,
-                                const int8_t *A_ope,
                                 int32_t *C, size_t c_row_stride)
 {
     const size_t cm_stride_bytes = c_row_stride * sizeof(int32_t);
 
-    size_t row  = 0;
-    size_t tile = 0;
+    size_t row = 0;
     while (row < M) {
         size_t rows_left = M - row;
 
@@ -441,14 +554,12 @@ void i8_i32_matmul_interleaved(size_t M, size_t N, size_t K,
                 K,
                 A_T + row,
                 a_row_stride,
-                A_ope + tile * K * 8,
                 B,
                 B_ope,
                 C + row * c_row_stride,
                 cm_stride_bytes
             );
-            row  += 15;
-            tile += 1;
+            row += 15;
         } else if (rows_left >= 7) {
             gemm_i8_i32_8xm1(
                 7,

@@ -56,23 +56,17 @@ void bench_run(void) {
 
   const size_t N_ope_tiles = MATMUL_N_OPE_TILES;  // ceil(N/8)
 
-  // Number of 15-row tiles (each tile has 8 OPE rows at offsets 7-14)
-  const size_t N_15row_tiles = (M + 14) / 15;
-
   int8_t  *A     = (int8_t  *)bench_aligned_alloc(8, M * K * sizeof(int8_t));
   int8_t  *A_T   = (int8_t  *)bench_aligned_alloc(8, K * M * sizeof(int8_t));
   int8_t  *B     = (int8_t  *)bench_aligned_alloc(8, K * N * sizeof(int8_t));
   // B_ope: [N_ope_tiles x K x 8], remapped B for OPE 8-column tiles.
   // B_ope[j*K*8 + k*8 + e] = B[k*N + j*8 + e], zero-padded if out of bounds.
   int8_t  *B_ope = (int8_t  *)bench_aligned_alloc(8, N_ope_tiles * K * 8 * sizeof(int8_t));
-  // A_ope: [N_15row_tiles x K x 8], OPE-remapped A for rows 7-14 of each 15-row tile.
-  // A_ope[t*K*8 + k*8 + r] = A_T[k*M + t*15 + 7 + r], zero-padded if out of bounds.
-  int8_t  *A_ope = (int8_t  *)bench_aligned_alloc(8, N_15row_tiles * K * 8 * sizeof(int8_t));
   int32_t *C     = (int32_t *)bench_aligned_alloc(8, M * N * sizeof(int32_t));
 
-  if (!A || !A_T || !B || !B_ope || !A_ope || !C) {
+  if (!A || !A_T || !B || !B_ope || !C) {
     printf("  ERROR: allocation failed\n");
-    free(A); free(A_T); free(B); free(B_ope); free(A_ope); free(C);
+    free(A); free(A_T); free(B); free(B_ope); free(C);
     return;
   }
 
@@ -101,21 +95,6 @@ void bench_run(void) {
         size_t col = j * 8 + e;
         if (col < N) {
           B_ope[j * K * 8 + k * 8 + e] = B[k * N + col];
-        }
-      }
-    }
-  }
-
-  // Remap A for OPE: group into [N_15row_tiles][K][8] layout.
-  // For 15-row tile t, OPE handles rows t*15+7 .. t*15+14 (8 rows).
-  // A_ope[t*K*8 + k*8 + r] = A_T[k*M + t*15 + 7 + r]
-  memset(A_ope, 0, N_15row_tiles * K * 8 * sizeof(int8_t));
-  for (size_t t = 0; t < N_15row_tiles; ++t) {
-    for (size_t k = 0; k < K; ++k) {
-      for (size_t r = 0; r < 8; ++r) {
-        size_t row_in_M = t * 15 + 7 + r;
-        if (row_in_M < M) {
-          A_ope[t * K * 8 + k * 8 + r] = A_T[k * M + row_in_M];
         }
       }
     }
@@ -153,14 +132,15 @@ void bench_run(void) {
   for (int r = 0; r < MATMUL_BENCH_RUNS_COLD; ++r) {
     memset(C, 0, M * N * sizeof(int32_t));
     uint64_t t0 = rdcycle64();
-    i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, A_ope, C, N);
+    printf("gothere\n");
+    i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, C, N);
     uint64_t t1 = rdcycle64();
     bench_stats_update(&cold, t1 - t0);
   }
-  i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, A_ope, C, N);
+  i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, C, N);
   for (int r = 0; r < MATMUL_BENCH_RUNS_HOT; ++r) {
     uint64_t t0 = rdcycle64();
-    i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, A_ope, C, N);
+    i8_i32_matmul_interleaved(M, N, K, A_T, M, B, B_ope, N_ope_tiles, C, N);
     uint64_t t1 = rdcycle64();
     bench_stats_update(&hot, t1 - t0);
   }
@@ -173,6 +153,5 @@ void bench_run(void) {
   free(A_T);
   free(B);
   free(B_ope);
-  free(A_ope);
   free(C);
 }

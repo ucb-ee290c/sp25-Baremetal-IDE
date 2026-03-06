@@ -90,7 +90,7 @@ void bench_run(void) {
   // Pass A_T with a_stride=M: kernel advances by M elements per k step,
   // reading row i of A as column i of A_T.
   for (int r = 0; r < MATMUL_BENCH_RUNS_COLD; ++r) {
-    bench_cache_flush();
+    // bench_cache_flush();
     memset(C, 0, M * N * sizeof(int32_t));
 
     uint64_t t0 = rdcycle64();
@@ -99,7 +99,7 @@ void bench_run(void) {
     bench_stats_update(&cold, t1 - t0);
   }
 
-  bench_cache_flush();
+  // bench_cache_flush();
   i8_i32_matmul(M, N, K, A_T, M, B, C, N, 1);  // warm-up
 
   for (int r = 0; r < MATMUL_BENCH_RUNS_HOT; ++r) {

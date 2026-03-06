@@ -13,11 +13,11 @@
 #endif
 
 #ifndef MATMUL_BENCH_RUNS_COLD
-#define MATMUL_BENCH_RUNS_COLD 10
+#define MATMUL_BENCH_RUNS_COLD 100
 #endif
 
 #ifndef MATMUL_BENCH_RUNS_HOT
-#define MATMUL_BENCH_RUNS_HOT 20
+#define MATMUL_BENCH_RUNS_HOT 200
 #endif
 
 // Approximate L2 cache size for flush-thrash helper

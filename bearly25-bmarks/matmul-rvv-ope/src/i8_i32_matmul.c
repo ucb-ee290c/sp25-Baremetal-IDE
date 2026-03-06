@@ -59,8 +59,8 @@ void gemm_i8_i32_8xm1(
   const int8_t* a6 = a0 + 6;
   int32_t* c6 = (int32_t*) ((uintptr_t) c5 + cm_stride);
 
-  const int8_t* a7 = a0 + 7;
-  int32_t* c7 = (int32_t*) ((uintptr_t) c6 + cm_stride);
+  // const int8_t* a7 = a0 + 7;
+  // int32_t* c7 = (int32_t*) ((uintptr_t) c6 + cm_stride);
 
   size_t nr = nc;
   size_t vl = nr;
@@ -81,7 +81,7 @@ void gemm_i8_i32_8xm1(
     register vint32m4_t vacc4 asm("v16") = __riscv_vmv_v_v_i32m4(vacc0, vl);
     register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_v_i32m4(vacc0, vl);
     register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
-    register vint32m4_t vacc7 asm("v28") = __riscv_vmv_v_v_i32m4(vacc0, vl);
+    // register vint32m4_t vacc7 asm("v28") = __riscv_vmv_v_v_i32m4(vacc0, vl);
 
     // Multiply-accumulate across kc
     size_t k = kc;
@@ -94,10 +94,10 @@ void gemm_i8_i32_8xm1(
       const int8_t va4 = *a4; a4 += a_stride;
       const int8_t va5 = *a5; a5 += a_stride;
       const int8_t va6 = *a6; a6 += a_stride;
-      const int8_t va7 = *a7; a7 += a_stride;
+      // const int8_t va7 = *a7; a7 += a_stride;
 
       // Load one vector of int8 from the weights
-      vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
+      register vint16m2_t vb asm("v28") = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
 
       // Widening multiply-accumulate into int32
@@ -108,7 +108,7 @@ void gemm_i8_i32_8xm1(
       vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
       vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
       vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
-      vacc7 = __riscv_vwmacc_vx_i32m4(vacc7, va7, vb, vl);
+      // vacc7 = __riscv_vwmacc_vx_i32m4(vacc7, va7, vb, vl);
 
       k -= 1;
     } while (k != 0);
@@ -120,7 +120,7 @@ void gemm_i8_i32_8xm1(
     a4 -= kc * a_stride;
     a5 -= kc * a_stride;
     a6 -= kc * a_stride;
-    a7 -= kc * a_stride;
+    // a7 -= kc * a_stride;
 
     // Store results
     __riscv_vse32_v_i32m4(c0, vacc0, vl); c0 += vl;
@@ -130,7 +130,7 @@ void gemm_i8_i32_8xm1(
     __riscv_vse32_v_i32m4(c4, vacc4, vl); c4 += vl;
     __riscv_vse32_v_i32m4(c5, vacc5, vl); c5 += vl;
     __riscv_vse32_v_i32m4(c6, vacc6, vl); c6 += vl;
-    __riscv_vse32_v_i32m4(c7, vacc7, vl); c7 += vl;
+    // __riscv_vse32_v_i32m4(c7, vacc7, vl); c7 += vl;
     w = w_new;
   } while (nc != 0);
 }
@@ -164,7 +164,7 @@ void gemm_i8_i32_1xm4(
 
     size_t k = kc;
     do {
-      const int8_t va0 = *a0++;
+      const int8_t va0 = *a0; a0 += a_stride;
       vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
       vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl); 
@@ -172,7 +172,7 @@ void gemm_i8_i32_1xm4(
       k -= 1;
     } while (k != 0);
 
-    a0 -= kc;
+    a0 -= kc*a_stride;
 
     __riscv_vse32_v_i32m4(c0, vacc0, vl);
     c0 += vl;
@@ -194,25 +194,25 @@ void i8_i32_matmul(size_t M, size_t N, size_t K,
     while (row < M) {
         size_t rows_left = M - row;
 
-        if (rows_left >= 8) {
-            gemm_i8_i32_7xm4(
+        if (rows_left >= 7) {
+            gemm_i8_i32_8xm1(
                 7,
                 N,
                 kc_bytes,
-                A + row * a_row_stride,
+                A + row,
                 a_stride_bytes,
                 B,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes
             );
-            row += 8;
+            row += 7;
         } else {
             gemm_i8_i32_1xm4(
                 1,
                 N,
                 kc_bytes,
-                A + row * a_row_stride,
+                A + row,
                 a_stride_bytes,
                 B,
                 C + row * c_row_stride,

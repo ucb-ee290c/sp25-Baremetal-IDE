@@ -417,13 +417,14 @@ static void gemm_i8_i32_15row_interleaved(
     // OPE j ran kc iterations in parallel — extract (should be nearly free)
     OP_EXT_STRIDE(ope_tmp, 8, OPE_EXT_FLIP);
 
-    // Copy j to C
+    // Copy j to C using RVV (ope_tmp rows are contiguous 8 int32s)
     {
       const size_t col  = j * 8;
       const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
+      __riscv_vsetvl_e32m1(vl_j);
       for (int r = 0; r < 8; r++) {
         int32_t* crow = (int32_t*)((uint8_t*)c_ope_base + r * cm_stride) + col;
-        for (size_t cc = 0; cc < vl_j; cc++) crow[cc] = ope_tmp[r * 8 + cc];
+        __riscv_vse32_v_i32m1(crow, __riscv_vle32_v_i32m1(ope_tmp + r * 8, vl_j), vl_j);
       }
     }
 
@@ -516,9 +517,10 @@ static void gemm_i8_i32_15row_interleaved(
       // Copy j to C while j+1 OPE runs
       const size_t col  = j * 8;
       const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
+      __riscv_vsetvl_e32m1(vl_j);
       for (int r = 0; r < 8; r++) {
         int32_t* crow = (int32_t*)((uint8_t*)c_ope_base + r * cm_stride) + col;
-        for (size_t cc = 0; cc < vl_j; cc++) crow[cc] = ope_tmp[r * 8 + cc];
+        __riscv_vse32_v_i32m1(crow, __riscv_vle32_v_i32m1(ope_tmp + r * 8, vl_j), vl_j);
       }
     }
 
@@ -527,9 +529,10 @@ static void gemm_i8_i32_15row_interleaved(
     {
       const size_t col  = j * 8;
       const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
+      __riscv_vsetvl_e32m1(vl_j);
       for (int r = 0; r < 8; r++) {
         int32_t* crow = (int32_t*)((uint8_t*)c_ope_base + r * cm_stride) + col;
-        for (size_t cc = 0; cc < vl_j; cc++) crow[cc] = ope_tmp[r * 8 + cc];
+        __riscv_vse32_v_i32m1(crow, __riscv_vle32_v_i32m1(ope_tmp + r * 8, vl_j), vl_j);
       }
     }
   }

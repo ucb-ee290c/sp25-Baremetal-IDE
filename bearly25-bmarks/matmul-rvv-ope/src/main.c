@@ -10,6 +10,7 @@ void bench_run(void);
 
 void app_init(void) {
   bench_cache_init();
+  init_test(target_frequency);
 }
 
 void app_main(void) {

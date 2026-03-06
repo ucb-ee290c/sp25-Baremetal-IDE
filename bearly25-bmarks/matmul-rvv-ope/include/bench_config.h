@@ -13,11 +13,11 @@
 #endif
 
 #ifndef MATMUL_BENCH_RUNS_COLD
-#define MATMUL_BENCH_RUNS_COLD 10
+#define MATMUL_BENCH_RUNS_COLD 100
 #endif
 
 #ifndef MATMUL_BENCH_RUNS_HOT
-#define MATMUL_BENCH_RUNS_HOT 20
+#define MATMUL_BENCH_RUNS_HOT 200
 #endif
 
 // Approximate L2 cache size for flush-thrash helper
@@ -26,9 +26,9 @@
 #endif
 
 // Fixed matmul dimensions (60 = 4 x 15-row tiles, clean tiling for RVV+OPE interleave)
-#define MATMUL_M 60
-#define MATMUL_N 60
-#define MATMUL_K 60
+#define MATMUL_M 30
+#define MATMUL_N 30
+#define MATMUL_K 30
 
 // Interleaved tile structure
 #define MATMUL_RVV_ROWS    7   // rows computed by RVV per tile (rows 0-6)

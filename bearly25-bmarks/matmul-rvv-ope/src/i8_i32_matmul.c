@@ -348,7 +348,7 @@ static void gemm_i8_i32_15row_interleaved(
   // Each n-chunk is paired with one OPE j-tile (N_ope_tiles >= n-chunks always).
   // -----------------------------------------------------------------------
   do {
-    printf("nc: %d\n", nc);
+    // printf("nc: %d\n", nc);
     size_t vl = __riscv_vsetvl_e32m4(nc);
     nc -= vl;
 
@@ -366,6 +366,7 @@ static void gemm_i8_i32_15row_interleaved(
 
     size_t k = kc;
     do {
+      // printf("k: %d\n", k);
       // 1. Scalar A loads: bring A_T cache line into L1 for both RVV and OPE
       const int8_t va0 = *a0; a0 += a_stride;
       const int8_t va1 = *a1; a1 += a_stride;
@@ -435,6 +436,7 @@ static void gemm_i8_i32_15row_interleaved(
   // 8 k-steps, then issue OP_ACC_L(L=8) per chunk — 8 calls instead of
   // 60, with the packing loop providing natural pacing between them.
   // -----------------------------------------------------------------------
+  // printf("Here\n");
   for (; j < N_ope_tiles; j++, b_ope_j += kc * 8) {
     int8_t u_chunk[8 * 8] __attribute__((aligned(8)));
     for (size_t k0 = 0; k0 < kc; k0 += 8) {
@@ -444,7 +446,9 @@ static void gemm_i8_i32_15row_interleaved(
         for (int e = 0; e < 8; e++) u_chunk[ki * 8 + e] = ak[e];
       OP_ACC_L(u_chunk, b_ope_j + k0 * 8, (int)L);
     }
+    // printf("j=%d\n", j);
     OP_EXT_STRIDE(ope_tmp, 8, OPE_EXT_FLIP);
+    // printf("herehere2\n");
     const size_t col  = j * 8;
     const size_t vl_j = (col + 8 <= N) ? 8 : (N - col);
     __riscv_vsetvl_e32m1(vl_j);
@@ -454,6 +458,7 @@ static void gemm_i8_i32_15row_interleaved(
     }
     if (j + 1 < N_ope_tiles) OP_ZERO();
   }
+  // printf("here2\n");
 }
 
 void i8_i32_matmul_interleaved(size_t M, size_t N, size_t K,
@@ -466,6 +471,7 @@ void i8_i32_matmul_interleaved(size_t M, size_t N, size_t K,
 
     size_t row = 0;
     while (row < M) {
+        // printf("row: %d \n", row);
         size_t rows_left = M - row;
 
         if (rows_left >= 15) {

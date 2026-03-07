@@ -5,6 +5,7 @@
 
 const ConvBenchCase ACC_CONV_CASES[] = {
   {"b1_c32_h128_w128", 1, 2, 128, 128},
+  {"b1_c32_h128_w128", 1, 1, 128, 128},
 };
 
 const int ACC_CONV_NUM_CASES =

@@ -74,3 +74,30 @@ int main(void) {
   return 0;
 #endif
 }
+
+int __main(void) {
+#if RVV_BENCH_ENABLE_PLL_SWEEP
+  const size_t num_freqs =
+      sizeof(k_pll_sweep_freqs_hz) / sizeof(k_pll_sweep_freqs_hz[0]);
+  if (num_freqs == 0u) {
+    return 0;
+  }
+
+  target_frequency = k_pll_sweep_freqs_hz[0];
+  init_test(target_frequency);
+  bench_cache_init();
+  run_suite_for_frequency(target_frequency);
+
+  for (size_t i = 1; i < num_freqs; ++i) {
+    target_frequency = k_pll_sweep_freqs_hz[i];
+    reconfigure_pll(target_frequency, RVV_BENCH_PLL_SWEEP_SLEEP_MS);
+    run_suite_for_frequency(target_frequency);
+  }
+  return 0;
+#else
+  app_init();
+  app_main();
+  return 0;
+#endif
+}
+

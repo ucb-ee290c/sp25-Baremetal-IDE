@@ -348,6 +348,7 @@ static void gemm_i8_i32_15row_interleaved(
   // Each n-chunk is paired with one OPE j-tile (N_ope_tiles >= n-chunks always).
   // -----------------------------------------------------------------------
   do {
+    printf("nc: %d\n", nc);
     size_t vl = __riscv_vsetvl_e32m4(nc);
     nc -= vl;
 
@@ -424,11 +425,24 @@ static void gemm_i8_i32_15row_interleaved(
   // -----------------------------------------------------------------------
   // Residual OPE j-tiles (always present: OPE tiles ≈ 2x n-chunks).
   // OP_ZERO already issued for j at end of main loop.
+  //
+  // The main loop fires one OP_ACC_L per k-step but paces it with ~10
+  // vector/scalar instructions between each call.  The residual has no
+  // such work to interleave, so firing kc=60 consecutive OP_ACC_L(L=1)
+  // calls floods the OPE FIFO and the subsequent fence never returns.
+  //
+  // Fix: pack A_T rows 7-14 into a compact stride-8 buffer in chunks of
+  // 8 k-steps, then issue OP_ACC_L(L=8) per chunk — 8 calls instead of
+  // 60, with the packing loop providing natural pacing between them.
   // -----------------------------------------------------------------------
   for (; j < N_ope_tiles; j++, b_ope_j += kc * 8) {
-    const int8_t* ak7 = a + 7;
-    for (size_t k = 0; k < kc; k++, ak7 += a_stride) {
-      OP_ACC_L(ak7, b_ope_j + k * 8, 1);
+    int8_t u_chunk[8 * 8] __attribute__((aligned(8)));
+    for (size_t k0 = 0; k0 < kc; k0 += 8) {
+      const size_t L    = ((kc - k0) < 8) ? (kc - k0) : 8;
+      const int8_t* ak  = a + 7 + k0 * a_stride;
+      for (size_t ki = 0; ki < L; ki++, ak += a_stride)
+        for (int e = 0; e < 8; e++) u_chunk[ki * 8 + e] = ak[e];
+      OP_ACC_L(u_chunk, b_ope_j + k0 * 8, (int)L);
     }
     OP_EXT_STRIDE(ope_tmp, 8, OPE_EXT_FLIP);
     const size_t col  = j * 8;

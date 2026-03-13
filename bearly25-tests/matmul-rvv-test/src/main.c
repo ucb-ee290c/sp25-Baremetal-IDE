@@ -1,29 +1,31 @@
 /*
  * matmul-rvv-test/src/main.c
  *
- * Functional correctness test for i8_i32_matmul() — the RVV A^T * B kernel.
+ * RVV A^T * B kernel test — single-core or dual-core depending on compile flag.
  *
- * Problem layout
- * --------------
- *   A_T  : [K x M] int8  row-major  (A stored transposed; a_row_stride = M)
- *   B    : [K x N] int8  row-major
- *   C    : [M x N] int32 row-major  (output; c_row_stride = N)
+ * Build with -DDUAL_CORE to enable the two-hart split:
+ *   Hart 0: output rows   0 .. 63  (A_T columns  0..63)
+ *   Hart 1: output rows  64 .. 127 (A_T columns 64..127)
  *
- * Reference: C[i][j] = Σ_k  A_T[k*M + i] * B[k*N + j]
- *            (equivalent to C = A * B where A[i][k] = A_T[k][i])
+ * Without -DDUAL_CORE the original 64x64 single-core test is built.
  *
- * Test strategy
- * -------------
- *   1. Fill A_T and B with small deterministic int8 values.
- *   2. Compute C_ref on the CPU.
- *   3. Run i8_i32_matmul().
- *   4. Compare C against C_ref element-by-element.
- *   5. Print both matrices and a PASS / FAIL summary.
+ * Dual-core synchronization (two volatile flags):
+ *   hart0_ready  — set by hart 0 after data init; hart 1 spins on it
+ *   hart1_done   — set by hart 1 after its computation; hart 0 spins on it
+ *
+ * Cycle measurement: t0 just before hart 0 starts, t1 just after hart1_done.
  */
 
-#define M  64
-#define N  64
-#define K  64
+#ifdef DUAL_CORE
+# define M       128
+# define N       128
+# define K       128
+# define M_HALF   64
+#else
+# define M  64
+# define N  64
+# define K  64
+#endif
 
 #include <stdint.h>
 #include <stdio.h>
@@ -33,6 +35,14 @@
 #include "chip_config.h"
 
 #include "riscv_vector.h"
+
+/* -------------------------------------------------------------------------
+ * Dual-core synchronization flags (file-scope so both harts share them)
+ * ------------------------------------------------------------------------- */
+#ifdef DUAL_CORE
+static volatile int hart0_ready = 0;  /* hart 0 sets this after data init  */
+static volatile int hart1_done  = 0;  /* hart 1 sets this after computation */
+#endif
 
 /* -------------------------------------------------------------------------
  * Cycle counter
@@ -545,37 +555,86 @@ void app_init(void) {
  * ------------------------------------------------------------------------- */
 
 void app_main(void) {
-    printf("=== i8_i32_matmul RVV TEST  A_T[%dx%d] * B[%dx%d] ===\n",
-           K, M, K, N);
-
-    /* Static buffers to avoid stack overflow on baremetal */
-    static int8_t  A_T   [K * M];       /* [K x M] row-major              */
-    static int8_t  B     [K * N];       /* [K x N] actual weights          */
-    static int8_t  B_pack[(K+1) * N];   /* [(K+1) x N]: zero row + B rows  */
+    /* Static buffers — file-scope lifetime, shared between harts */
+    static int8_t  A_T   [K * M];
+    static int8_t  B     [K * N];
+    static int8_t  B_pack[(K+1) * N];
     static int32_t C_rvv [M * N];
     static int32_t C_ref [M * N];
 
-    /* Deterministic fill: small values to keep int32 sums in range */
+#ifdef DUAL_CORE
+    /* -----------------------------------------------------------------------
+     * Dual-core path: read hart ID and branch
+     * --------------------------------------------------------------------- */
+    unsigned long hartid;
+    asm volatile("csrr %0, mhartid" : "=r"(hartid));
+
+    if (hartid == 0) {
+        printf("=== dual-core i8_i32_matmul  A_T[%dx%d] * B[%dx%d] ===\n",
+               K, M, K, N);
+        printf("    Hart 0: rows 0..%d   Hart 1: rows %d..%d\n",
+               M_HALF - 1, M_HALF, M - 1);
+
+        /* Hart 0 fills all shared buffers */
+        for (int k = 0; k < K; k++) {
+            for (int i = 0; i < M; i++)
+                A_T[k * M + i] = (int8_t)((k * 3 + i * 7 + 1) % 17 - 8);
+            for (int j = 0; j < N; j++)
+                B[k * N + j]   = (int8_t)((k * 5 + j * 2 + 3) % 13 - 6);
+        }
+        memset(B_pack, 0, N);
+        memcpy(B_pack + N, B, K * N);
+        memset(C_rvv, 0, sizeof(C_rvv));
+
+        /* Signal hart 1 that data is ready */
+        hart0_ready = 1;
+
+        /* Hart 0 computes rows 0 .. M_HALF-1 */
+        uint64_t t0 = rdcycle64();
+        i8_i32_matmul(M_HALF, N, K,
+                      A_T,          /* A_T column 0  */
+                      M,
+                      B_pack,
+                      C_rvv, N, 1);
+
+        /* Wait for hart 1 to finish rows M_HALF .. M-1 */
+        while (!hart1_done);
+        uint64_t t1 = rdcycle64();
+
+        printf("\n  Cycles (both harts, wall-clock): %lu\n",
+               (unsigned long)(t1 - t0));
+
+    } else {
+        /* Hart 1: wait for data, compute rows M_HALF .. M-1 */
+        while (!hart0_ready);
+
+        i8_i32_matmul(M_HALF, N, K,
+                      A_T + M_HALF, /* A_T column M_HALF */
+                      M,
+                      B_pack,
+                      C_rvv + M_HALF * N, N, 1);
+
+        hart1_done = 1;
+    }
+
+#else
+    /* -----------------------------------------------------------------------
+     * Single-core path (original 64x64 test)
+     * --------------------------------------------------------------------- */
+    printf("=== i8_i32_matmul RVV TEST  A_T[%dx%d] * B[%dx%d] ===\n",
+           K, M, K, N);
+
     for (int k = 0; k < K; k++) {
         for (int i = 0; i < M; i++)
             A_T[k * M + i] = (int8_t)((k * 3 + i * 7 + 1) % 17 - 8);
         for (int j = 0; j < N; j++)
             B[k * N + j]   = (int8_t)((k * 5 + j * 2 + 3) % 13 - 6);
     }
+    memset(B_pack, 0, N);
+    memcpy(B_pack + N, B, K * N);
 
-    /* Build B_pack: row 0 = all zeros (bias = 0), rows 1..K = B[0..K-1].
-     * The kernel reads K+1 rows: row 0 initializes the accumulator,
-     * rows 1..K are the actual per-k weights. */
-    memset(B_pack, 0, N);                          /* zero bias row        */
-    memcpy(B_pack + N, B, K * N);                  /* actual B rows follow */
-
-    /* CPU reference: C = A * B (no bias) */
     // ref_matmul(A_T, B, C_ref);
 
-    /* RVV kernel under test (pass B_pack so bias row is zero):
-     *   A_T stored as [K x M] row-major  → a_row_stride = M
-     *   C   stored as [M x N] row-major  → c_row_stride = N
-     */
     memset(C_rvv, 0, sizeof(C_rvv));
     uint64_t t0 = rdcycle64();
     i8_i32_matmul(M, N, K,
@@ -586,11 +645,11 @@ void app_main(void) {
 
     // print_matrix_i32("RVV output", C_rvv, M, N, N);
     // print_matrix_i32("Reference ", C_ref, M, N, N);
-
     // int rc = compare(C_rvv, C_ref);
 
     printf("\n  Cycles: %lu\n", (unsigned long)(t1 - t0));
     // printf("  Result: %s\n", rc == 0 ? "PASS" : "FAIL");
+#endif
 }
 
 int main(void) {

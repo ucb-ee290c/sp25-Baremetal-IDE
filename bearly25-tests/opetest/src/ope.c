@@ -188,29 +188,10 @@ void gemm_i8_i32_8xm1(
     register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
     // register vint32m4_t vacc7 asm("v28") = __riscv_vmv_v_v_i32m4(vacc0, vl);
 
-    // Software-pipelined multiply-accumulate across kc.
-    //
-    // Register budget after 7×m4 accumulators (v0-v27) and vb in v28-v29:
-    //   v30-v31 are free → a second vint16m2_t fits with zero spilling.
-    //
-    // Double-buffer: vb_e (v28) holds the "even" k-step's weights;
-    //                vb_o (v30) holds the "odd"  k-step's weights.
-    // Each load is issued before the 7 scalar A-loads that fill its latency,
-    // so the vle8+vwcvt is fully hidden behind integer-pipeline work.
-    //
-    // Prologue: load weights for k=0 into v28 before the loop starts.
-    register vint16m2_t vb_e asm("v28") =
-        __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
-    w += nr;
-    register vint16m2_t vb_o asm("v30");
-
+    // Multiply-accumulate across kc
     size_t k = kc;
-    while (k >= 2) {
-      // Issue odd-half prefetch (k+1) into v30 BEFORE computing even half (k).
-      // The 7 scalar loads below fill the vle8+vwcvt latency.
-      vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
-      w += nr;
-
+    do {
+      // Load 1 int8 from each row; advance by a_stride to next k step
       const int8_t va0 = *a0; a0 += a_stride;
       const int8_t va1 = *a1; a1 += a_stride;
       const int8_t va2 = *a2; a2 += a_stride;
@@ -218,59 +199,24 @@ void gemm_i8_i32_8xm1(
       const int8_t va4 = *a4; a4 += a_stride;
       const int8_t va5 = *a5; a5 += a_stride;
       const int8_t va6 = *a6; a6 += a_stride;
+      // const int8_t va7 = *a7; a7 += a_stride;
 
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
-      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
-      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
-      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb_e, vl);
-      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb_e, vl);
-      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
-      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
+      // Load one vector of int8 from the weights
+      register vint16m2_t vb asm("v28") = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
+      w = w + nr;
 
-      // Issue next-pair prefetch (k+2) into v28 BEFORE computing odd half (k+1).
-      // Only when a future iteration exists (k >= 3); skipped on the final pair
-      // so we never read past the end of w.
-      if (k >= 3) {
-        vb_e = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
-        w += nr;
-      }
+      // Widening multiply-accumulate into int32
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
+      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb, vl);
+      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb, vl);
+      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb, vl);
+      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb, vl);
+      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb, vl);
+      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb, vl);
+      // vacc7 = __riscv_vwmacc_vx_i32m4(vacc7, va7, vb, vl);
 
-      const int8_t wb0 = *a0; a0 += a_stride;
-      const int8_t wb1 = *a1; a1 += a_stride;
-      const int8_t wb2 = *a2; a2 += a_stride;
-      const int8_t wb3 = *a3; a3 += a_stride;
-      const int8_t wb4 = *a4; a4 += a_stride;
-      const int8_t wb5 = *a5; a5 += a_stride;
-      const int8_t wb6 = *a6; a6 += a_stride;
-
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_o, vl);
-      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, wb1, vb_o, vl);
-      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, wb2, vb_o, vl);
-      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, wb3, vb_o, vl);
-      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, wb4, vb_o, vl);
-      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, wb5, vb_o, vl);
-      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, wb6, vb_o, vl);
-
-      k -= 2;
-    }
-
-    // Epilogue for odd kc: vb_e was preloaded in the last pair's middle step.
-    if (k == 1) {
-      const int8_t va0 = *a0; a0 += a_stride;
-      const int8_t va1 = *a1; a1 += a_stride;
-      const int8_t va2 = *a2; a2 += a_stride;
-      const int8_t va3 = *a3; a3 += a_stride;
-      const int8_t va4 = *a4; a4 += a_stride;
-      const int8_t va5 = *a5; a5 += a_stride;
-      const int8_t va6 = *a6; a6 += a_stride;
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
-      vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
-      vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
-      vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, va3, vb_e, vl);
-      vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb_e, vl);
-      vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
-      vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
-    }
+      k -= 1;
+    } while (k != 0);
 
     a0 -= kc * a_stride;
     a1 -= kc * a_stride;
@@ -321,44 +267,15 @@ void gemm_i8_i32_1xm4(
     vint32m4_t vacc0 = __riscv_vwcvt_x_x_v_i32m4(__riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl), vl);
     w = w + nr;
 
-    // Software-pipelined multiply-accumulate across kc.
-    // Same double-buffer scheme as gemm_i8_i32_8xm1: vb holds the "even"
-    // k-step's weights; vb_nxt holds the "odd" k-step's weights.
-    // Only 1 accumulator (4 regs) + 2 vb buffers (2 regs each) = 8/32 regs,
-    // so the compiler assigns freely with no spill risk.
-    //
-    // Prologue: load weights for k=0 before the loop.
-    vint16m2_t vb     = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
-    w += nr;
-    vint16m2_t vb_nxt;
-
     size_t k = kc;
-    while (k >= 2) {
-      // Prefetch odd-half weights (k+1) BEFORE computing even half (k).
-      vb_nxt = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
-      w += nr;
-
+    do {
       const int8_t va0 = *a0; a0 += a_stride;
+      vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
+      w = w + nr;
       vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
 
-      // Prefetch next-pair weights (k+2) into vb BEFORE computing odd half (k+1).
-      // Guard prevents reading past the end of w on the final pair.
-      if (k >= 3) {
-        vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
-        w += nr;
-      }
-
-      const int8_t wb0 = *a0; a0 += a_stride;
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_nxt, vl);
-
-      k -= 2;
-    }
-
-    // Epilogue for odd kc: vb was preloaded in the last pair's middle step.
-    if (k == 1) {
-      const int8_t va0 = *a0; a0 += a_stride;
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
-    }
+      k -= 1;
+    } while (k != 0);
 
     a0 -= kc*a_stride;
 

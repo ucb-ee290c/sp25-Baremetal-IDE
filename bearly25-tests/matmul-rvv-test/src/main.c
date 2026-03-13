@@ -45,6 +45,7 @@ static inline uint64_t rdcycle64(void) {
 }
 
 
+
 void gemm_i8_i32_8xm1(
     size_t mr,        // number of rows to process (1..8)
     size_t nc,        // number of columns to process
@@ -61,28 +62,15 @@ void gemm_i8_i32_8xm1(
   // A is transposed: stored as A^T [K x M] row-major.
   // Row i of A = column i of A^T => rows are adjacent (offset +1).
   // Advancing along k = advancing by a_stride (leading dim of A^T = M).
-  const int8_t* a0 = a;
+  // ak is declared inside the nc loop so it resets automatically each iteration.
   int32_t* c0 = c;
-
-  const int8_t* a1 = a0 + 1;
   int32_t* c1 = (int32_t*) ((uintptr_t) c0 + cm_stride);
-
-  const int8_t* a2 = a0 + 2;
   int32_t* c2 = (int32_t*) ((uintptr_t) c1 + cm_stride);
-
-  const int8_t* a3 = a0 + 3;
   int32_t* c3 = (int32_t*) ((uintptr_t) c2 + cm_stride);
-
-  const int8_t* a4 = a0 + 4;
   int32_t* c4 = (int32_t*) ((uintptr_t) c3 + cm_stride);
-
-  const int8_t* a5 = a0 + 5;
   int32_t* c5 = (int32_t*) ((uintptr_t) c4 + cm_stride);
-
-  const int8_t* a6 = a0 + 6;
   int32_t* c6 = (int32_t*) ((uintptr_t) c5 + cm_stride);
 
-  // const int8_t* a7 = a0 + 7;
   // int32_t* c7 = (int32_t*) ((uintptr_t) c6 + cm_stride);
 
   size_t nr = nc;
@@ -105,6 +93,10 @@ void gemm_i8_i32_8xm1(
     register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_v_i32m4(vacc0, vl);
     register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
     // register vint32m4_t vacc7 asm("v28") = __riscv_vmv_v_v_i32m4(vacc0, vl);
+
+    // Single pointer into A^T; offset addressing (ak[0..6]) replaces 7
+    // separate advancing pointers, saving 6 scalar add instructions per k-step.
+    const int8_t *ak = a;
 
     // Software-pipelined multiply-accumulate across kc.
     //
@@ -129,13 +121,14 @@ void gemm_i8_i32_8xm1(
       vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w += nr;
 
-      const int8_t va0 = *a0; a0 += a_stride;
-      const int8_t va1 = *a1; a1 += a_stride;
-      const int8_t va2 = *a2; a2 += a_stride;
-      const int8_t va3 = *a3; a3 += a_stride;
-      const int8_t va4 = *a4; a4 += a_stride;
-      const int8_t va5 = *a5; a5 += a_stride;
-      const int8_t va6 = *a6; a6 += a_stride;
+      const int8_t va0 = ak[0];
+      const int8_t va1 = ak[1];
+      const int8_t va2 = ak[2];
+      const int8_t va3 = ak[3];
+      const int8_t va4 = ak[4];
+      const int8_t va5 = ak[5];
+      const int8_t va6 = ak[6];
+      ak += a_stride;
 
       vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
       vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
@@ -153,13 +146,14 @@ void gemm_i8_i32_8xm1(
         w += nr;
       }
 
-      const int8_t wb0 = *a0; a0 += a_stride;
-      const int8_t wb1 = *a1; a1 += a_stride;
-      const int8_t wb2 = *a2; a2 += a_stride;
-      const int8_t wb3 = *a3; a3 += a_stride;
-      const int8_t wb4 = *a4; a4 += a_stride;
-      const int8_t wb5 = *a5; a5 += a_stride;
-      const int8_t wb6 = *a6; a6 += a_stride;
+      const int8_t wb0 = ak[0];
+      const int8_t wb1 = ak[1];
+      const int8_t wb2 = ak[2];
+      const int8_t wb3 = ak[3];
+      const int8_t wb4 = ak[4];
+      const int8_t wb5 = ak[5];
+      const int8_t wb6 = ak[6];
+      ak += a_stride;
 
       vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_o, vl);
       vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, wb1, vb_o, vl);
@@ -174,13 +168,13 @@ void gemm_i8_i32_8xm1(
 
     // Epilogue for odd kc: vb_e was preloaded in the last pair's middle step.
     if (k == 1) {
-      const int8_t va0 = *a0; a0 += a_stride;
-      const int8_t va1 = *a1; a1 += a_stride;
-      const int8_t va2 = *a2; a2 += a_stride;
-      const int8_t va3 = *a3; a3 += a_stride;
-      const int8_t va4 = *a4; a4 += a_stride;
-      const int8_t va5 = *a5; a5 += a_stride;
-      const int8_t va6 = *a6; a6 += a_stride;
+      const int8_t va0 = ak[0];
+      const int8_t va1 = ak[1];
+      const int8_t va2 = ak[2];
+      const int8_t va3 = ak[3];
+      const int8_t va4 = ak[4];
+      const int8_t va5 = ak[5];
+      const int8_t va6 = ak[6];
       vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
       vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
       vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
@@ -189,15 +183,7 @@ void gemm_i8_i32_8xm1(
       vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
       vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
     }
-
-    a0 -= kc * a_stride;
-    a1 -= kc * a_stride;
-    a2 -= kc * a_stride;
-    a3 -= kc * a_stride;
-    a4 -= kc * a_stride;
-    a5 -= kc * a_stride;
-    a6 -= kc * a_stride;
-    // a7 -= kc * a_stride;
+    // No pointer resets needed: ak is local to this nc iteration.
 
     // Store results
     __riscv_vse32_v_i32m4(c0, vacc0, vl); c0 += vl;

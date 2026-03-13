@@ -111,9 +111,38 @@ typedef struct {
     float* value_cache; // (layer, seq_len, dim)
 } RunState;
 
+/*
+ * Transposed weight matrices for efficient vectorized inference.
+ *
+ * Original matmul: W(d,n) @ x(n,) → xout(d,)
+ *   Called as f32_gemm(M=d, N=1, K=n) — N=1 means vl=1, effectively scalar.
+ *
+ * Transposed matmul: x(1,n) @ W_T(n,d) → xout(1,d)
+ *   Called as f32_gemm(M=1, N=d, K=n) — N=d means vl=VLMAX, full vector use.
+ *
+ * Each field mirrors the corresponding TransformerWeights field but with
+ * rows and columns swapped. Sizes (in elements) are the same; only layout
+ * differs. All fields are heap-allocated once in build_transformer().
+ *
+ * Memory cost: sum of all weight elements × sizeof(float).
+ * The per-layer weights (wq..w3) are the same size as the originals.
+ * wcls_T is [vocab_size × dim] (same element count as wcls).
+ */
+typedef struct {
+    float* wq_T;   // (layer, dim, dim)        transposed: W_T[k*dim+j] = W[j*dim+k]
+    float* wk_T;   // (layer, kv_dim, dim)
+    float* wv_T;   // (layer, kv_dim, dim)
+    float* wo_T;   // (layer, dim, dim)
+    float* w1_T;   // (layer, dim, hidden_dim)
+    float* w2_T;   // (layer, hidden_dim, dim)
+    float* w3_T;   // (layer, dim, hidden_dim)
+    float* wcls_T; // (vocab_size, dim)
+} TransformerWeightsT;
+
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
-    TransformerWeights weights; // the weights of the model
+    TransformerWeights weights; // the weights of the model (original, read-only)
+    TransformerWeightsT weights_t; // transposed copies for vectorized inference
     RunState state; // buffers for the "wave" of activations in the forward pass
     // some more state needed to properly clean up the memory mapping (sigh)
     float* data; // memory mapped data pointer
@@ -183,6 +212,13 @@ void free_transformer(Transformer* t);
 void rmsnorm(float* o, float* x, float* weight, int size);
 void softmax(float* x, int size);
 void matmul(float* xout, float* x, float* w, int n, int d);
+// matmul_t: same semantics as matmul() but w_t is pre-transposed [n×d].
+// Calls f32_gemm(M=1, N=d, K=n) so the nc-loop vectorizes over d.
+void matmul_t(float* xout, const float* x, const float* w_t, int n, int d);
+void alloc_and_transpose_weights(TransformerWeightsT* wt,
+                                  const TransformerWeights* w,
+                                  const Config* p);
+void free_transposed_weights(TransformerWeightsT* wt);
 float* forward(Transformer* transformer, int token, int pos);
 
 // Byte-Pair Encoding Tokenizer (strings <--> tokens)

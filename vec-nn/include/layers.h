@@ -55,14 +55,46 @@ void fully_connected_f32 (
 );
 
 void quant_fully_connected_int8 (
-    size_t input_size, 
-    size_t output_size, 
-    size_t batches, 
-    int8_t* input, 
+    size_t input_size,
+    size_t output_size,
+    size_t batches,
+    int8_t* input,
     const void* weights_with_bias,
-    int8_t* output, 
+    int8_t* output,
     int relu, int bias32,
-    requantization_params_t requant_params 
+    requantization_params_t requant_params
+);
+
+/*
+ * quant_fully_connected_int8_t — transposed int8 fully-connected layer.
+ *
+ * Equivalent semantics to quant_fully_connected_int8 but expects the weight
+ * matrix already transposed and packed, so that the vectorized dimension is
+ * output_size (N) rather than the batch dimension.
+ *
+ * Changes vs. quant_fully_connected_int8:
+ *   - Requantization: single scalar `scale` applied to the int32 accumulator
+ *     to produce float32 output (no per-channel scale, no int8 narrowing).
+ *   - Input bias term: zero — weights must be pre-converted from uint8 to
+ *     int8 by subtracting 128 before calling (done once at model load time),
+ *     so no zero-point correction is required at inference.
+ *
+ * weights_t_pack layout: [(input_size+1) × output_size] int8 bytes
+ *   Row 0             : output_size zero bytes  (zero bias)
+ *   Rows 1..input_size: rows of W_T as signed int8 (= original_uint8 − 128)
+ *
+ * Typical call for single-token transformer inference (batches=1):
+ *   quant_fully_connected_int8_t(n, d, 1, x_q, w_t_pack, xout,
+ *                                1.0f / (127.0f * 127.0f));
+ */
+void quant_fully_connected_int8_t(
+    size_t input_size,
+    size_t output_size,
+    size_t batches,
+    const int8_t* input,
+    const void* weights_t_pack,
+    float* output,
+    float scale
 );
 
 /*---------------------------------------------*/

@@ -8,12 +8,23 @@ add_executable(borai
 
 target_include_directories(borai PUBLIC fp32/include)
 
+option(BORAIQ_TRANSPOSED_WEIGHTS
+  "Enable transposed-weight vectorized matmul in boraiq (requires vecnn)" OFF)
+
 add_executable(boraiq
   int8/src/main.c
 )
 
 target_include_directories(boraiq PUBLIC int8/include)
 target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
+
+if(BORAIQ_TRANSPOSED_WEIGHTS)
+  target_compile_definitions(boraiq PRIVATE TRANSPOSED_WEIGHTS)
+  target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
+  if(BUILD_VECNN)
+    target_link_libraries(boraiq PRIVATE vecnn)
+  endif()
+endif()
 
 ### Dependencies ###
 

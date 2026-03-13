@@ -33,6 +33,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
+#ifdef TRANSPOSED_WEIGHTS
+#include "layers.h"
+#endif
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -142,6 +145,9 @@ typedef struct {
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
     TransformerWeights weights; // the weights of the model
+#ifdef TRANSPOSED_WEIGHTS
+    TransformerWeightsT weights_t; // transposed B_pack copies for vectorized inference
+#endif
     RunState state; // buffers for the "wave" of activations in the forward pass
     // some more state needed to properly clean up the memory mapping (sigh)
     int fd; // file descriptor for memory mapping
@@ -380,9 +386,16 @@ void build_transformer(Transformer *t) {
     read_checkpoint_from_header(&t->config, &t->weights, &t->data, &t->file_size);
     // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
+#ifdef TRANSPOSED_WEIGHTS
+    // transpose all weight matrices once; forward() will use weights_t exclusively
+    alloc_and_transpose_weights_i8(&t->weights_t, &t->weights, &t->config);
+#endif
 }
 
 void free_transformer(Transformer* t) {
+#ifdef TRANSPOSED_WEIGHTS
+    free_transposed_weights_i8(&t->weights_t);
+#endif
   // Free quantized tensors
     free(t->weights.q_tokens);
     free(t->weights.token_embedding_table);
@@ -460,12 +473,137 @@ void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     }
 }
 
+#ifdef TRANSPOSED_WEIGHTS
+/* ---------------------------------------------------------------------------
+ * make_b_pack_i8 — build a B_pack from a quantized weight matrix.
+ *
+ * W is stored as W[n_out × n_in] row-major int8 (from QuantizedTensor.q).
+ * Output B_pack is [(n_in+1) × n_out] bytes:
+ *   Row 0       : n_out zero bytes  (zero bias)
+ *   Rows 1..K   : rows of W_T as int8  (W_T[k][j] = W[j*n_in+k])
+ *
+ * The weights are already signed int8 from QuantizedTensor, so no bias-128
+ * subtraction is needed (unlike uint8-biased formats).
+ * ------------------------------------------------------------------------- */
+static void make_b_pack_i8(
+    unsigned char* pack,
+    const int8_t* W,
+    int n_out, int n_in)
+{
+    int8_t* ipack = (int8_t*)pack;
+    /* bias row: zeros */
+    for (int j = 0; j < n_out; j++)
+        ipack[j] = 0;
+    /* weight rows: W_T */
+    for (int k = 0; k < n_in; k++)
+        for (int j = 0; j < n_out; j++)
+            ipack[(k + 1) * n_out + j] = W[j * n_in + k];
+}
+
+/* ---------------------------------------------------------------------------
+ * alloc_and_transpose_weights_i8 — allocate and fill transposed B_packs.
+ * Called once in build_transformer().
+ * ------------------------------------------------------------------------- */
+void alloc_and_transpose_weights_i8(
+    TransformerWeightsT* wt,
+    const TransformerWeights* w,
+    const Config* p)
+{
+    int dim        = p->dim;
+    int hidden_dim = p->hidden_dim;
+    int n_layers   = p->n_layers;
+    int kv_dim     = (p->dim * p->n_kv_heads) / p->n_heads;
+
+    /* wq: W[dim × dim], B_pack [(dim+1) × dim] per layer */
+    wt->wq_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->wq_T + l * (size_t)(dim + 1) * dim,
+                       w->wq[l].q, dim, dim);
+
+    /* wk: W[kv_dim × dim], B_pack [(dim+1) × kv_dim] per layer */
+    wt->wk_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * kv_dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->wk_T + l * (size_t)(dim + 1) * kv_dim,
+                       w->wk[l].q, kv_dim, dim);
+
+    /* wv: same layout as wk */
+    wt->wv_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * kv_dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->wv_T + l * (size_t)(dim + 1) * kv_dim,
+                       w->wv[l].q, kv_dim, dim);
+
+    /* wo: W[dim × dim], same layout as wq */
+    wt->wo_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->wo_T + l * (size_t)(dim + 1) * dim,
+                       w->wo[l].q, dim, dim);
+
+    /* w1: W[hidden_dim × dim], B_pack [(dim+1) × hidden_dim] per layer */
+    wt->w1_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->w1_T + l * (size_t)(dim + 1) * hidden_dim,
+                       w->w1[l].q, hidden_dim, dim);
+
+    /* w2: W[dim × hidden_dim], B_pack [(hidden_dim+1) × dim] per layer */
+    wt->w2_T = (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->w2_T + l * (size_t)(hidden_dim + 1) * dim,
+                       w->w2[l].q, dim, hidden_dim);
+
+    /* w3: same layout as w1 */
+    wt->w3_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->w3_T + l * (size_t)(dim + 1) * hidden_dim,
+                       w->w3[l].q, hidden_dim, dim);
+
+    /* wcls: W[vocab_size × dim], B_pack [(dim+1) × vocab_size] */
+    wt->wcls_T = (unsigned char*)malloc((size_t)(dim + 1) * p->vocab_size);
+    make_b_pack_i8(wt->wcls_T, w->wcls[0].q, p->vocab_size, dim);
+}
+
+void free_transposed_weights_i8(TransformerWeightsT* wt) {
+    free(wt->wq_T);
+    free(wt->wk_T);
+    free(wt->wv_T);
+    free(wt->wo_T);
+    free(wt->w1_T);
+    free(wt->w2_T);
+    free(wt->w3_T);
+    free(wt->wcls_T);
+}
+
+/* ---------------------------------------------------------------------------
+ * matmul_t — vectorized matmul using pre-transposed B_pack.
+ *
+ * Computes xout(n_out,) = W(n_out,n_in) @ xq(n_in,) exactly like matmul(),
+ * but w_t_pack is W stored as B_pack (transposed + bias row).
+ *
+ * Reformulated as: xout(1,n_out) = xq(1,n_in) @ W_T(n_in,n_out)
+ *   → int8_qgemm_fout(M=1, N=n_out, K=n_in) — vectorises over n_out.
+ * ------------------------------------------------------------------------- */
+static void matmul_t(
+    float* xout,
+    QuantizedTensor* xq,
+    const void* w_t_pack,
+    float w_scale,
+    int n_in, int n_out)
+{
+    float scale = xq->s * w_scale;
+    quant_fully_connected_int8_t(
+        (size_t)n_in, (size_t)n_out, 1,
+        xq->q, w_t_pack, xout, scale);
+}
+#endif /* TRANSPOSED_WEIGHTS */
+
 float* forward(Transformer* transformer, int token, int pos) {
 
     // a few convenience variables
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
     RunState* s = &transformer->state;
+#ifdef TRANSPOSED_WEIGHTS
+    TransformerWeightsT* wt = &transformer->weights_t;
+#endif
     float *x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -484,9 +622,15 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // qkv matmuls for this position
         quantize(&s->xq, s->xb, dim);
+#ifdef TRANSPOSED_WEIGHTS
+        matmul_t(s->q, &s->xq, wt->wq_T + l*(size_t)(dim+1)*dim,    w->wq[l].s, dim, dim);
+        matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
+        matmul_t(s->v, &s->xq, wt->wv_T + l*(size_t)(dim+1)*kv_dim, w->wv[l].s, dim, kv_dim);
+#else
         matmul(s->q, &s->xq, w->wq + l, dim, dim);
         matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
         matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
+#endif
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -554,7 +698,11 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // final matmul to get the output of the attention
         quantize(&s->xq, s->xb, dim);
+#ifdef TRANSPOSED_WEIGHTS
+        matmul_t(s->xb2, &s->xq, wt->wo_T + l*(size_t)(dim+1)*dim, w->wo[l].s, dim, dim);
+#else
         matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
+#endif
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -567,8 +715,13 @@ float* forward(Transformer* transformer, int token, int pos) {
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
         quantize(&s->xq, s->xb, dim);
+#ifdef TRANSPOSED_WEIGHTS
+        matmul_t(s->hb,  &s->xq, wt->w1_T + l*(size_t)(dim+1)*hidden_dim,    w->w1[l].s, dim, hidden_dim);
+        matmul_t(s->hb2, &s->xq, wt->w3_T + l*(size_t)(dim+1)*hidden_dim,    w->w3[l].s, dim, hidden_dim);
+#else
         matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
         matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
+#endif
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
@@ -582,7 +735,11 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
+#ifdef TRANSPOSED_WEIGHTS
+        matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
+#else
         matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
+#endif
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -595,7 +752,11 @@ float* forward(Transformer* transformer, int token, int pos) {
 
     // classifier into logits
     quantize(&s->xq, x, dim);
+#ifdef TRANSPOSED_WEIGHTS
+    matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
+#else
     matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
+#endif
     return s->logits;
 }
 

@@ -33,7 +33,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
-#ifdef TRANSPOSED_WEIGHTS
+#if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
 #include "layers.h"
 #endif
 
@@ -595,6 +595,309 @@ static void matmul_t(
 }
 #endif /* TRANSPOSED_WEIGHTS */
 
+// ----------------------------------------------------------------------------
+// Multicore prefill support
+#ifdef PREFILL_MULTICORE
+
+static Transformer  _mc_transformer;   /* shared transformer, built by hart 0 */
+static volatile int _mc_token_val = 0;
+static volatile int _mc_pos_val   = 0;
+static volatile int _mc_fwd_rdy   = 0; /* hart 0 sets → hart 1 starts forward */
+static volatile int _mc_all_done  = 0; /* hart 0 sets → hart 1 exits worker  */
+
+/* 2-hart sense-reversing barrier.
+ * Hart 0: waits for hart 1 to arrive, then flips the shared sense to release.
+ * Hart 1: signals arrival, then waits for sense to flip. */
+static volatile int _bar_h1_arrived = 0;
+static volatile int _bar_sense      = 0;
+
+static void barrier2(int hartid) {
+    int s = _bar_sense;
+    if (hartid == 0) {
+        while (!_bar_h1_arrived) {}
+        _bar_h1_arrived = 0;
+        _bar_sense = !s;
+    } else {
+        _bar_h1_arrived = 1;
+        while (_bar_sense == s) {}
+    }
+}
+
+/* Scalar matmul over output rows [row_start, row_end).
+ * Computes xout[i] = W[i,:] dot x  for i in [row_start, row_end). */
+static void matmul_rows(float* xout, QuantizedTensor* x, QuantizedTensor* w,
+                        int n, int d, int row_start, int row_end) {
+    (void)d;
+    for (int i = row_start; i < row_end; i++) {
+        int32_t ival = 0;
+        int in = i * n;
+        for (int j = 0; j < n; j++) {
+            ival += (int32_t)x->q[j] * (int32_t)w->q[in + j];
+        }
+        xout[i] = (float)ival * w->s * x->s;
+    }
+}
+
+/* forward_mc — parallel forward pass for two harts.
+ *
+ * Mutual-exclusion assignment: each independent matmul is owned exclusively
+ * by one hart, so both harts run full-size (optionally vectorized) kernels
+ * simultaneously rather than each computing half-rows of a single matrix.
+ *
+ * Assignment per layer:
+ *   QKV  : hart 0 → wq + wk  |  hart 1 → wv
+ *   Attn : both — each handles n_heads/2 heads
+ *   FFN  : hart 0 → w1       |  hart 1 → w3  (key parallelism win)
+ *   wcls : hart 0 vectorized (TRANSPOSED_WEIGHTS) or both split rows (scalar)
+ *
+ * All sequential work (rmsnorm, RoPE, kv-store, residual, SwiGLU, w2, wcls
+ * when transposed) is done by hart 0; hart 1 spins at barriers.
+ *
+ * When TRANSPOSED_WEIGHTS is also defined, w1/w3/wq/wk/wv/wo all use the
+ * vectorized matmul_t kernel on their full matrices.
+ *
+ * Returns logits (hart 0) or NULL (hart 1). */
+static float* forward_mc(Transformer* transformer, int token, int pos, int hartid) {
+    Config* p             = &transformer->config;
+    TransformerWeights* w = &transformer->weights;
+    RunState* s           = &transformer->state;
+#ifdef TRANSPOSED_WEIGHTS
+    TransformerWeightsT* wt = &transformer->weights_t;
+#endif
+    float* x        = s->x;
+    int dim         = p->dim;
+    int kv_dim      = (p->dim * p->n_kv_heads) / p->n_heads;
+    int kv_mul      = p->n_heads / p->n_kv_heads;
+    int hidden_dim  = p->hidden_dim;
+    int head_size   = dim / p->n_heads;
+
+    /* embedding copy (hart 0 only; hart 1 waits at first barrier in the loop) */
+    if (hartid == 0) {
+        memcpy(x, w->token_embedding_table + token * dim, dim * sizeof(float));
+    }
+
+    for (int l = 0; l < p->n_layers; l++) {
+
+        /* rmsnorm + quantize input (hart 0) */
+        if (hartid == 0) {
+            rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
+            quantize(&s->xq, s->xb, dim);
+        }
+        barrier2(hartid);
+
+        /* QKV projections — mutual exclusion:
+         *   hart 0 → wq (s->q) + wk (s->k)
+         *   hart 1 → wv (s->v)                              */
+        if (hartid == 0) {
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->q, &s->xq, wt->wq_T + l*(size_t)(dim+1)*dim,    w->wq[l].s, dim, dim);
+            matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
+#else
+            matmul(s->q, &s->xq, w->wq + l, dim, dim);
+            matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
+#endif
+        } else {
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->v, &s->xq, wt->wv_T + l*(size_t)(dim+1)*kv_dim, w->wv[l].s, dim, kv_dim);
+#else
+            matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
+#endif
+        }
+        barrier2(hartid);
+
+        /* RoPE relative positional encoding + KV cache store (hart 0) */
+        if (hartid == 0) {
+            for (int i = 0; i < dim; i += 2) {
+                int head_dim = i % head_size;
+                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                float val  = pos * freq;
+                float fcr  = cosf(val);
+                float fci  = sinf(val);
+                int rotn = i < kv_dim ? 2 : 1;
+                for (int v = 0; v < rotn; v++) {
+                    float* vec = v == 0 ? s->q : s->k;
+                    float v0 = vec[i];
+                    float v1 = vec[i + 1];
+                    vec[i]     = v0 * fcr - v1 * fci;
+                    vec[i + 1] = v0 * fci + v1 * fcr;
+                }
+            }
+            int loff = l * p->seq_len * kv_dim;
+            memcpy(s->key_cache   + loff + pos * kv_dim, s->k, kv_dim * sizeof(float));
+            memcpy(s->value_cache + loff + pos * kv_dim, s->v, kv_dim * sizeof(float));
+        }
+        barrier2(hartid);
+
+        /* multihead attention — each hart owns n_heads/2 heads exclusively */
+        {
+            int h_start = hartid * (p->n_heads / 2);
+            int h_end   = h_start + p->n_heads / 2;
+            int loff    = l * p->seq_len * kv_dim;
+            for (int h = h_start; h < h_end; h++) {
+                float* q   = s->q   + h * head_size;
+                float* att = s->att + h * p->seq_len;
+                for (int t = 0; t <= pos; t++) {
+                    float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                    float score = 0.0f;
+                    for (int i = 0; i < head_size; i++) score += q[i] * k[i];
+                    att[t] = score / sqrtf(head_size);
+                }
+#ifdef VEC_SOFTMAX
+                softmax_vec(att, att, 1, (size_t)(pos + 1));
+#else
+                softmax(att, pos + 1);
+#endif
+                float* xb = s->xb + h * head_size;
+                memset(xb, 0, head_size * sizeof(float));
+                for (int t = 0; t <= pos; t++) {
+                    float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                    float a  = att[t];
+                    for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
+                }
+            }
+        }
+        barrier2(hartid);
+
+        /* wo matmul + residual + FFN rmsnorm + quantize (hart 0) */
+        if (hartid == 0) {
+            quantize(&s->xq, s->xb, dim);
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->xb2, &s->xq, wt->wo_T + l*(size_t)(dim+1)*dim, w->wo[l].s, dim, dim);
+#else
+            matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
+#endif
+            for (int i = 0; i < dim; i++) x[i] += s->xb2[i];
+            rmsnorm(s->xb, x, w->rms_ffn_weight + l * dim, dim);
+            quantize(&s->xq, s->xb, dim);
+        }
+        barrier2(hartid);
+
+        /* FFN w1 + w3 — mutual exclusion (biggest parallelism win):
+         *   hart 0 → w1 (s->hb)   hart 1 → w3 (s->hb2)
+         * Both run simultaneously on their full output buffer. */
+        if (hartid == 0) {
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->hb,  &s->xq, wt->w1_T + l*(size_t)(dim+1)*hidden_dim, w->w1[l].s, dim, hidden_dim);
+#else
+            matmul(s->hb,  &s->xq, w->w1 + l, dim, hidden_dim);
+#endif
+        } else {
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->hb2, &s->xq, wt->w3_T + l*(size_t)(dim+1)*hidden_dim, w->w3[l].s, dim, hidden_dim);
+#else
+            matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
+#endif
+        }
+        barrier2(hartid);
+
+        /* SwiGLU + quantize hq + w2 matmul + residual (hart 0) */
+        if (hartid == 0) {
+            for (int i = 0; i < hidden_dim; i++) {
+                float val = s->hb[i];
+                val *= 1.0f / (1.0f + expf(-val));
+                val *= s->hb2[i];
+                s->hb[i] = val;
+            }
+            quantize(&s->hq, s->hb, hidden_dim);
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
+#else
+            matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
+#endif
+            for (int i = 0; i < dim; i++) x[i] += s->xb[i];
+        }
+        barrier2(hartid);
+    }
+
+    /* final rmsnorm + quantize (hart 0) */
+    if (hartid == 0) {
+        rmsnorm(x, x, w->rms_final_weight, dim);
+        quantize(&s->xq, x, dim);
+    }
+    barrier2(hartid);
+
+    /* wcls:
+     *   TRANSPOSED_WEIGHTS → hart 0 runs full vectorized matmul_t; hart 1 idles.
+     *   scalar             → both harts split vocab_size rows (mutual exclusion
+     *                        via non-overlapping [0, vs_half) / [vs_half, end)). */
+#ifdef TRANSPOSED_WEIGHTS
+    if (hartid == 0) {
+        matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
+    }
+#else
+    {
+        int vs_half  = p->vocab_size / 2;
+        int vs_start = hartid * vs_half;
+        int vs_end   = vs_start + vs_half;
+        matmul_rows(s->logits, &s->xq, w->wcls, dim, p->vocab_size, vs_start, vs_end);
+    }
+#endif
+    barrier2(hartid);
+
+    return hartid == 0 ? s->logits : NULL;
+}
+
+/* generate_mc — same as generate() but uses forward_mc(hartid=0) and
+ * signals hart 1 before each token via _mc_fwd_rdy. */
+void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
+                 char *prompt, int steps) {
+    char *empty_prompt = "";
+    if (prompt == NULL) { prompt = empty_prompt; }
+
+    int num_prompt_tokens = 0;
+    int* prompt_tokens = (int*)malloc((strlen(prompt) + 3) * sizeof(int));
+    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    if (num_prompt_tokens < 1) {
+        printf("STDERR: something is wrong, expected at least 1 prompt token\r\n");
+    }
+
+    unsigned long start = 0;
+    int next;
+    int token = prompt_tokens[0];
+    int pos   = 0;
+    while (pos < steps) {
+        /* publish token/pos, then signal hart 1 to start its half */
+        _mc_token_val = token;
+        _mc_pos_val   = pos;
+        _mc_fwd_rdy   = 1;
+        float* logits = forward_mc(transformer, token, pos, 0);
+
+        if (pos < num_prompt_tokens - 1) {
+            next = prompt_tokens[pos + 1];
+        } else {
+            next = sample(sampler, logits);
+        }
+        pos++;
+
+        if (next == 1) { break; }
+
+        char* piece = decode(tokenizer, token, next);
+        safe_printf(piece);
+        fflush(stdout);
+        token = next;
+
+        if (start == 0) { start = READ_CSR("mcycle"); }
+    }
+    printf("\r\n");
+
+    _mc_all_done = 1;  /* signal hart 1 worker to exit */
+
+    if (pos > 1) {
+        unsigned long end = READ_CSR("mcycle");
+        printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end - start);
+        printf("BENCHMARK: Total tokens:\t%d\r\n", pos - 1);
+        printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end - start) / (pos - 1));
+        printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end - start) / target_frequency) / (pos - 1));
+        printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end - start) / (float)target_frequency) / (float)(pos - 1));
+        printf("BENCHMARK: CLOCK Frequency:\t%u\r\n", target_frequency);
+        printf("STDERR: achieved tok/s: %f\r\n", (pos - 1) / (((double)(end - start)) / target_frequency));
+    }
+
+    free(prompt_tokens);
+}
+
+#endif /* PREFILL_MULTICORE */
+
 float* forward(Transformer* transformer, int token, int pos) {
 
     // a few convenience variables
@@ -679,7 +982,11 @@ float* forward(Transformer* transformer, int token, int pos) {
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
+#ifdef VEC_SOFTMAX
+            softmax_vec(att, att, 1, (size_t)(pos + 1));
+#else
             softmax(att, pos + 1);
+#endif
 
             // weighted sum of the values, store back into xb
             float* xb = s->xb + h * head_size;
@@ -1380,17 +1687,22 @@ void app_main() {
   if (steps < 0) steps = 0;
 
   // Import from transformer binary
-  Transformer transformer;
-  build_transformer(&transformer);
-  if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len;
+#ifdef PREFILL_MULTICORE
+  Transformer* p_tfm = &_mc_transformer;
+#else
+  Transformer _tfm_buf;
+  Transformer* p_tfm = &_tfm_buf;
+#endif
+  build_transformer(p_tfm);
+  if (steps == 0 || steps > p_tfm->config.seq_len) steps = p_tfm->config.seq_len;
 
   // Import the tokenizer binary
   Tokenizer tokenizer;
-  build_tokenizer_from_header(&tokenizer, transformer.config.vocab_size);
+  build_tokenizer_from_header(&tokenizer, p_tfm->config.vocab_size);
 
   // build the Sampler
   Sampler sampler;
-  build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
+  build_sampler(&sampler, p_tfm->config.vocab_size, temperature, topp, rng_seed);
 
 
   while (1) {
@@ -1400,9 +1712,14 @@ void app_main() {
 
     // run!
     if (mode == GENERATE) {
-        generate(&transformer, &tokenizer, &sampler, prompt, steps);
+#ifdef PREFILL_MULTICORE
+        _mc_all_done = 0;
+        generate_mc(p_tfm, &tokenizer, &sampler, prompt, steps);
+#else
+        generate(p_tfm, &tokenizer, &sampler, prompt, steps);
+#endif
     } else {
-        chat(&transformer, &tokenizer, &sampler, NULL, NULL, steps);
+        chat(p_tfm, &tokenizer, &sampler, NULL, NULL, steps);
     }
 
     printf("========================================\r\n");
@@ -1440,7 +1757,21 @@ int main(int argc, char **argv) {
 
 // Alternative HART runner. Multithreading, anyone?
 void __attribute__((weak, noreturn)) __main(void) {
+#ifdef PREFILL_MULTICORE
+  unsigned long long hartid;
+  asm volatile("csrr %0, mhartid" : "=r"(hartid));
+  if (hartid == 1) {
+    /* Hart 1 worker: spin until hart 0 signals work, then execute the
+     * hart-1 half of each forward pass alongside hart 0. */
+    while (!_mc_all_done) {
+      if (_mc_fwd_rdy) {
+        _mc_fwd_rdy = 0;
+        forward_mc(&_mc_transformer, _mc_token_val, _mc_pos_val, 1);
+      }
+    }
+  }
+#endif
   while (1) {
-   asm volatile ("wfi");
+    asm volatile ("wfi");
   }
 }

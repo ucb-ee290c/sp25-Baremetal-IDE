@@ -26,6 +26,24 @@ if(BORAIQ_TRANSPOSED_WEIGHTS)
   endif()
 endif()
 
+option(BORAIQ_PREFILL_MULTICORE
+  "Enable dual-hart multicore prefill in boraiq (splits attention heads and FFN rows)" OFF)
+
+if(BORAIQ_PREFILL_MULTICORE)
+  target_compile_definitions(boraiq PRIVATE PREFILL_MULTICORE)
+endif()
+
+option(BORAIQ_VEC_SOFTMAX
+  "Use vectorized RVV softmax for attention in boraiq (requires vecnn)" OFF)
+
+if(BORAIQ_VEC_SOFTMAX)
+  target_compile_definitions(boraiq PRIVATE VEC_SOFTMAX)
+  target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
+  if(BUILD_VECNN)
+    target_link_libraries(boraiq PRIVATE vecnn)
+  endif()
+endif()
+
 ### Dependencies ###
 
 if(BUILD_VECNN)

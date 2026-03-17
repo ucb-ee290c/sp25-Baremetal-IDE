@@ -43,6 +43,23 @@ void fully_connected_f32_nobias (
         output, output_size, 1);
 }
 
+void quant_fully_connected_int8_t(
+    size_t input_size,
+    size_t output_size,
+    size_t batches,
+    const int8_t* input,
+    const void* weights_t_pack,
+    float* output,
+    float scale)
+{
+    int8_qgemm_fout(
+        batches, output_size, input_size,
+        input, input_size,
+        (const int8_t*)weights_t_pack,
+        output, output_size * sizeof(float), 1,
+        scale);
+}
+
 void quant_fully_connected_int8 (
     size_t input_size, 
     size_t output_size, 

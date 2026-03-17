@@ -71,12 +71,32 @@
 #define RVV_BENCH_ENABLE_PACKED 1
 #endif
 
+// Hart that is allowed to print benchmark logs.
+#ifndef RVV_BENCH_PRINT_HART
+#define RVV_BENCH_PRINT_HART 0u
+#endif
+
+// Number of harts participating in post-GEMM synchronization.
+#ifndef RVV_BENCH_SYNC_HARTS
+#define RVV_BENCH_SYNC_HARTS 2u
+#endif
+
 typedef struct {
   const char *name;
   size_t M;
   size_t N;
   size_t K;
 } RvvMatmulCase;
+
+static inline uint32_t rvv_bench_hart_id(void) {
+  uint64_t x;
+  asm volatile("csrr %0, mhartid" : "=r"(x));
+  return (uint32_t)x;
+}
+
+static inline bool rvv_bench_is_print_hart(void) {
+  return rvv_bench_hart_id() == RVV_BENCH_PRINT_HART;
+}
 
 static inline uint64_t rdcycle64(void) {
   uint64_t x;

@@ -155,13 +155,12 @@ void build_transformer(Transformer *t) {
     read_checkpoint_from_header(&t->config, &t->weights, &t->data, &t->file_size);
     // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
+    // transpose all weight matrices once; forward() will use weights_t exclusively
+    alloc_and_transpose_weights(&t->weights_t, &t->weights, &t->config);
 }
 
 void free_transformer(Transformer* t) {
-    // close the memory mapping
-    // if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
-    // if (t->fd != -1) { close(t->fd); }
-    // free the RunState buffers
+    free_transposed_weights(&t->weights_t);
     free_run_state(&t->state);
 }
 
@@ -228,11 +227,134 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
     );
 }
 
+/* ---------------------------------------------------------------------------
+ * Transpose a [rows × cols] float matrix in-place into out [cols × rows].
+ * out[j * rows + i] = in[i * cols + j]
+ * ------------------------------------------------------------------------- */
+static void transpose_f32(const float* in, float* out, int rows, int cols) {
+    for (int i = 0; i < rows; i++)
+        for (int j = 0; j < cols; j++)
+            out[j * rows + i] = in[i * cols + j];
+}
+
+/* ---------------------------------------------------------------------------
+ * matmul_t: vectorized matmul using pre-transposed weights.
+ *
+ * Computes xout(d,) = W(d,n) @ x(n,) exactly like matmul(), but expects
+ * w_t to be W stored transposed as W_T[n×d].
+ *
+ * Reformulated as:  xout(1,d) = x(1,n) @ W_T(n,d)
+ *   → f32_gemm(M=1, N=d, K=n)
+ *   → nc-loop runs with vl = min(d, VLMAX) instead of vl=1.
+ *   → For dim=288, VLMAX=16: 16 output elements per vector iteration.
+ * ------------------------------------------------------------------------- */
+void matmul_t(float* xout, const float* x, const float* w_t, int n, int d) {
+    fully_connected_f32_nobias(
+        (size_t)n,          // input_size  = n (reduction dimension)
+        (size_t)d,          // output_size = d (vectorized over this)
+        (size_t)1,          // batches     = 1 (single input vector)
+        (float*)x,          // input  = x   [1 × n]
+        w_t,                // weights= W_T [n × d]
+        xout,               // output = xout[1 × d]
+        0                   // relu off
+    );
+}
+
+/* ---------------------------------------------------------------------------
+ * alloc_and_transpose_weights: allocate transposed copies of all weight
+ * matrices and fill them from the original (read-only) weight pointers.
+ * Called once at startup by build_transformer().
+ *
+ * Memory layout after this call:
+ *   wq_T  [n_layers × dim × dim]
+ *   wk_T  [n_layers × kv_dim × dim]    (kv_dim = dim*n_kv_heads/n_heads)
+ *   wv_T  same as wk_T
+ *   wo_T  [n_layers × dim × dim]
+ *   w1_T  [n_layers × dim × hidden_dim]
+ *   w2_T  [n_layers × hidden_dim × dim]
+ *   w3_T  same as w1_T
+ *   wcls_T[vocab_size × dim]
+ * ------------------------------------------------------------------------- */
+void alloc_and_transpose_weights(TransformerWeightsT* wt,
+                                  const TransformerWeights* w,
+                                  const Config* p) {
+    int dim        = p->dim;
+    int hidden_dim = p->hidden_dim;
+    int n_layers   = p->n_layers;
+    int kv_dim     = (p->dim * p->n_kv_heads) / p->n_heads;
+    int vocab_size = p->vocab_size;
+
+    /* Allocate transposed buffers (same element count as originals). */
+    wt->wq_T   = malloc(n_layers * dim     * dim        * sizeof(float));
+    wt->wk_T   = malloc(n_layers * kv_dim  * dim        * sizeof(float));
+    wt->wv_T   = malloc(n_layers * kv_dim  * dim        * sizeof(float));
+    wt->wo_T   = malloc(n_layers * dim     * dim        * sizeof(float));
+    wt->w1_T   = malloc(n_layers * dim     * hidden_dim * sizeof(float));
+    wt->w2_T   = malloc(n_layers * hidden_dim * dim     * sizeof(float));
+    wt->w3_T   = malloc(n_layers * dim     * hidden_dim * sizeof(float));
+    wt->wcls_T = malloc(vocab_size * dim                * sizeof(float));
+
+    if (!wt->wq_T || !wt->wk_T || !wt->wv_T || !wt->wo_T ||
+        !wt->w1_T || !wt->w2_T || !wt->w3_T || !wt->wcls_T) {
+        printf("STDERR: alloc_and_transpose_weights malloc failed!\r\n");
+        return;
+    }
+
+    /* Transpose each layer's weight matrices.
+     * Original W[d×n] → W_T[n×d]:  W_T[k*d+j] = W[j*n+k]
+     * (first arg = rows of original, second = cols of original) */
+    for (int l = 0; l < n_layers; l++) {
+        /* wq: [dim × dim] */
+        transpose_f32(w->wq + l * dim * dim,
+                      wt->wq_T + l * dim * dim,
+                      dim, dim);
+        /* wk: [dim × kv_dim] */
+        transpose_f32(w->wk + l * dim * kv_dim,
+                      wt->wk_T + l * kv_dim * dim,
+                      dim, kv_dim);
+        /* wv: [dim × kv_dim] */
+        transpose_f32(w->wv + l * dim * kv_dim,
+                      wt->wv_T + l * kv_dim * dim,
+                      dim, kv_dim);
+        /* wo: [dim × dim] */
+        transpose_f32(w->wo + l * dim * dim,
+                      wt->wo_T + l * dim * dim,
+                      dim, dim);
+        /* w1: [hidden_dim × dim] */
+        transpose_f32(w->w1 + l * hidden_dim * dim,
+                      wt->w1_T + l * dim * hidden_dim,
+                      hidden_dim, dim);
+        /* w2: [dim × hidden_dim] */
+        transpose_f32(w->w2 + l * dim * hidden_dim,
+                      wt->w2_T + l * hidden_dim * dim,
+                      dim, hidden_dim);
+        /* w3: [hidden_dim × dim] */
+        transpose_f32(w->w3 + l * hidden_dim * dim,
+                      wt->w3_T + l * dim * hidden_dim,
+                      hidden_dim, dim);
+    }
+
+    /* wcls: [dim × vocab_size] */
+    transpose_f32(w->wcls, wt->wcls_T, dim, vocab_size);
+}
+
+void free_transposed_weights(TransformerWeightsT* wt) {
+    free(wt->wq_T);
+    free(wt->wk_T);
+    free(wt->wv_T);
+    free(wt->wo_T);
+    free(wt->w1_T);
+    free(wt->w2_T);
+    free(wt->w3_T);
+    free(wt->wcls_T);
+}
+
 float* forward(Transformer* transformer, int token, int pos) {
 
     // a few convenience variables
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
+    TransformerWeightsT* wt = &transformer->weights_t;
     RunState* s = &transformer->state;
     float *x = s->x;
     int dim = p->dim;
@@ -256,10 +378,10 @@ float* forward(Transformer* transformer, int token, int pos) {
         s->k = s->key_cache + loff + pos * kv_dim;
         s->v = s->value_cache + loff + pos * kv_dim;
 
-        // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
+        // qkv matmuls for this position (using pre-transposed weights)
+        matmul_t(s->q,  s->xb, wt->wq_T + l*dim*dim,    dim, dim);
+        matmul_t(s->k,  s->xb, wt->wk_T + l*kv_dim*dim, dim, kv_dim);
+        matmul_t(s->v,  s->xb, wt->wv_T + l*kv_dim*dim, dim, kv_dim);
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -318,7 +440,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the attention
-        matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
+        matmul_t(s->xb2, s->xb, wt->wo_T + l*dim*dim, dim, dim);
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -330,8 +452,8 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        matmul_t(s->hb,  s->xb, wt->w1_T + l*dim*hidden_dim, dim, hidden_dim);
+        matmul_t(s->hb2, s->xb, wt->w3_T + l*dim*hidden_dim, dim, hidden_dim);
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
@@ -344,7 +466,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the ffn
-        matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
+        matmul_t(s->xb, s->hb, wt->w2_T + l*hidden_dim*dim, hidden_dim, dim);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -356,7 +478,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     rmsnorm(x, x, w->rms_final_weight, dim);
 
     // classifier into logits
-    matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    matmul_t(s->logits, x, wt->wcls_T, p->dim, p->vocab_size);
     return s->logits;
 }
 

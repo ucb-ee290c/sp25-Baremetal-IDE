@@ -41,6 +41,33 @@ typedef struct {
   int32_t *C_i32;
 } rvv_case_ctx_t;
 
+#if RVV_BENCH_SYNC_HARTS >= 2u
+static volatile uint32_t g_post_gemm_phase[RVV_BENCH_SYNC_HARTS];
+#endif
+
+static inline void rvv_post_gemm_barrier(void) {
+#if RVV_BENCH_SYNC_HARTS >= 2u
+  const uint32_t hart = rvv_bench_hart_id();
+  if (hart >= RVV_BENCH_SYNC_HARTS) {
+    return;
+  }
+
+  const uint32_t phase = g_post_gemm_phase[hart] + 1u;
+  g_post_gemm_phase[hart] = phase;
+  asm volatile("fence rw, rw" ::: "memory");
+
+  for (uint32_t h = 0; h < RVV_BENCH_SYNC_HARTS; ++h) {
+    if (h == hart) {
+      continue;
+    }
+    while (g_post_gemm_phase[h] < phase) {
+      asm volatile("nop");
+    }
+  }
+  asm volatile("fence rw, rw" ::: "memory");
+#endif
+}
+
 static inline void bench_stats_init(bench_stats_t *stats) {
   stats->sum = 0;
   stats->best = ULLONG_MAX;
@@ -111,7 +138,9 @@ static int rvv_case_ctx_init(rvv_case_ctx_t *ctx, const RvvMatmulCase *cs) {
   if (!ctx->A_f32 || !ctx->B_f32 || !ctx->B_f32_packed || !ctx->C_f32 ||
       !ctx->A_i8 || !ctx->B_i8 || !ctx->B_i8_packed_i16 || !ctx->B_i8_packed_i32 ||
       !ctx->C_i16 || !ctx->C_i32) {
-    printf("  ERROR: allocation failed\n");
+    if (rvv_bench_is_print_hart()) {
+      printf("  ERROR: allocation failed\n");
+    }
     rvv_case_ctx_destroy(ctx);
     return -1;
   }
@@ -183,6 +212,10 @@ static void run_i32_once(const rvv_case_ctx_t *ctx, bool packed) {
 static void print_stats_line(const char *tag,
                              const bench_stats_t *cold,
                              const bench_stats_t *hot) {
+  if (!rvv_bench_is_print_hart()) {
+    return;
+  }
+
   if (cold->runs > 0 && hot->runs > 0) {
     printf("  %-20s COLD(runs=%d best=%llu avg=%llu) HOT(runs=%d best=%llu avg=%llu)\n",
            tag,
@@ -217,6 +250,9 @@ static void print_stats_line(const char *tag,
 }
 
 static void print_disabled_line(const char *tag, const char *reason) {
+  if (!rvv_bench_is_print_hart()) {
+    return;
+  }
   printf("  %-20s DISABLED (%s)\n", tag, reason);
 }
 
@@ -233,16 +269,19 @@ static void bench_run_f32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
     uint64_t t0 = rdcycle64();
     run_f32_once(ctx, packed);
     uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
     bench_stats_update(&cold, t1 - t0);
   }
 
   bench_cache_flush();
   run_f32_once(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
 
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
     uint64_t t0 = rdcycle64();
     run_f32_once(ctx, packed);
     uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
     bench_stats_update(&hot, t1 - t0);
   }
 
@@ -262,16 +301,19 @@ static void bench_run_i16_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
     uint64_t t0 = rdcycle64();
     run_i16_once(ctx, packed);
     uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
     bench_stats_update(&cold, t1 - t0);
   }
 
   bench_cache_flush();
   run_i16_once(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
 
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
     uint64_t t0 = rdcycle64();
     run_i16_once(ctx, packed);
     uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
     bench_stats_update(&hot, t1 - t0);
   }
 
@@ -291,16 +333,19 @@ static void bench_run_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
     uint64_t t0 = rdcycle64();
     run_i32_once(ctx, packed);
     uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
     bench_stats_update(&cold, t1 - t0);
   }
 
   bench_cache_flush();
   run_i32_once(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
 
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
     uint64_t t0 = rdcycle64();
     run_i32_once(ctx, packed);
     uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
     bench_stats_update(&hot, t1 - t0);
   }
 
@@ -308,15 +353,19 @@ static void bench_run_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
 }
 
 void bench_run_case(const RvvMatmulCase *cs) {
-  printf("\n=== Case: %s (M=%llu N=%llu K=%llu) ===\n",
-         cs->name,
-         (unsigned long long)cs->M,
-         (unsigned long long)cs->N,
-         (unsigned long long)cs->K);
+  if (rvv_bench_is_print_hart()) {
+    printf("\n=== Case: %s (M=%llu N=%llu K=%llu) ===\n",
+           cs->name,
+           (unsigned long long)cs->M,
+           (unsigned long long)cs->N,
+           (unsigned long long)cs->K);
+  }
 
   rvv_case_ctx_t ctx;
   if (rvv_case_ctx_init(&ctx, cs) != 0) {
-    printf("  ERROR: skipping case due to setup failure\n");
+    if (rvv_bench_is_print_hart()) {
+      printf("  ERROR: skipping case due to setup failure\n");
+    }
     return;
   }
 

@@ -47,7 +47,7 @@
 /* Number of cycles to busy-wait between consecutive perform_convolution calls.
  * Set to 0 to disable (default). Override via -DCONV_BENCH_INTER_CALL_CYCLES=N. */
 #ifndef CONV_BENCH_INTER_CALL_CYCLES
-#define CONV_BENCH_INTER_CALL_CYCLES 0ULL
+#define CONV_BENCH_INTER_CALL_CYCLES 10000ULL
 #endif
 
 typedef struct {

@@ -168,6 +168,7 @@ add_subdirectory(app)
 add_subdirectory(bearly25-tests)
 add_subdirectory(bearly25-bmarks)
 add_subdirectory(bearly25-demos)
+add_subdirectory(c2c25)
 
 
 #################################

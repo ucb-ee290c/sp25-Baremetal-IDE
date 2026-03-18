@@ -34,9 +34,17 @@ option(CHIP                         "Build for a specific platform"           OF
 option(PROF_COV                     "Build with profiling and coverage"       OFF )
 option(GCNO_ONLY                    "Only build gcno files"                   OFF )
 option(USE_PGO                      "Build with profile guided optimization"  OFF )
-option(OPT_INFO                     "Build with optimization information"      OFF )
+option(OPT_INFO                     "Build with optimization information"     OFF )
 
 option(USE_FREERTOS                 "Build with FreeRTOS"                     OFF )
+option(ENABLE_RVV                   "Build for RVV targets"                   ON)
+option(BUILD_VECNN                  "Build vec-nn library"                    OFF)
+option(THREAD_LIB                   "Build thread-lib library"                OFF)
+option(BMARK_LIB                    "Build bmark-lib library"                 OFF)
+
+# Specify whether we are trying to run on the physical chip or in sims/spike
+set(PLATFORM                        "CHIP" CACHE STRING "Runtime platform: CHIP or SIMS")
+
 # Define the variable with a default empty value
 set(AFDO_PATH "" CACHE STRING "Path to autofdo profile data")
 #################################
@@ -51,7 +59,11 @@ set(CMAKE_EXECUTABLE_SUFFIX            ".elf")
 #################################
 
 # CPU architecture
-set(ARCH                "rv64imafd")
+if (ENABLE_RVV)
+  set(ARCH                "rv64gcv_zfh")
+else()
+  set(ARCH                "rv64imafd")
+endif()
 set(ABI                 "lp64d")
 set(CMODEL              "medany")
 set(ARCH_FLAGS          -march=${ARCH} -mabi=${ABI} -mcmodel=${CMODEL})
@@ -133,6 +145,19 @@ add_subdirectory(driver)
 add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
+add_subdirectory(bmark-lib)
+
+if(BUILD_VECNN)
+  add_subdirectory(vec-nn)
+endif()
+
+if(THREAD_LIB)
+  add_subdirectory(thread-lib)
+endif()
+
+if(BMARK_LIB)
+  add_subdirectory(bmark-lib)
+endif()
 
 
 #################################
@@ -140,8 +165,10 @@ add_subdirectory(examples)
 #################################
 
 add_subdirectory(app)
-# Add your custom subdirectories here!
-
+add_subdirectory(bearly25-tests)
+add_subdirectory(bearly25-bmarks)
+add_subdirectory(bearly25-demos)
+add_subdirectory(c2c25)
 
 
 #################################

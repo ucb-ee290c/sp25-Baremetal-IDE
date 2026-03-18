@@ -1,0 +1,93 @@
+/*
+ * Test vectors for depthwise conv validation in bearly25-tests/mobilenet_tests.
+ */
+/* Auto-generated depthwise conv2D 3x3 int8 + residual add test case. */
+#pragma once
+
+#include <stdint.h>
+
+#define DWCONV_P1S1_5X5_C3_H 7
+#define DWCONV_P1S1_5X5_C3_W 7
+#define DWCONV_P1S1_5X5_C3_CIN 1
+#define DWCONV_P1S1_5X5_C3_STRIDE 1
+#define DWCONV_P1S1_5X5_C3_PADDING 1
+#define DWCONV_P1S1_5X5_C3_H_OUT 7
+#define DWCONV_P1S1_5X5_C3_W_OUT 7
+
+#define DWCONV_P1S1_5X5_C3_HAS_RELU6 1
+
+static const int8_t dwconv_p1s1_5x5_c3_input[49] = {
+    -20, -17, 53, 0, 3, 59, 3, 39, -55, 19, -43, 50, -28, 23, 6, 24, 
+    24, -52, -6, 1, 38, -25, 23, -18, 24, 17, -27, -39, 13, 8, -55, -44, 
+    51, 16, 51, 5, 62, 15, -17, 0, 18, 35, 24, -15, 51, -35, -45, -45, 
+    -50
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_weights[13] = {
+    0, 0, 0, 0, -1, -8, -7, 1, 1, 7, -8, 7, 2
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_ref_norelu[49] = {
+    3, -35, 57, -30, 114, -51, 49, 2, 8, -95, -34, -27, -20, 18, 13, 86, 
+    -41, 27, -37, -14, -19, 3, -71, -23, 86, 74, -81, -15, 29, 3, -90, -30, 
+    35, 119, 55, 45, 31, 120, -75, -53, -36, -39, -60, -26, -30, -19, -55, -90, 
+    -43
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_ref_relu[49] = {
+    3, 0, 57, 0, 114, 0, 49, 2, 8, 0, 0, 0, 0, 18, 13, 86, 
+    0, 27, 0, 0, 0, 3, 0, 0, 86, 74, 0, 0, 29, 3, 0, 0, 
+    35, 119, 55, 45, 31, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_ref_relu6[49] = {
+    3, 0, 55, 0, 55, 0, 49, 2, 8, 0, 0, 0, 0, 18, 13, 55, 
+    0, 27, 0, 0, 0, 3, 0, 0, 55, 55, 0, 0, 29, 3, 0, 0, 
+    35, 55, 55, 45, 31, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0
+};
+
+static const float dwconv_p1s1_5x5_c3_scales[1] = {
+    0.10859729f
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_weights_b[13] = {
+    0, 0, 0, 0, -4, -1, -5, 6, 3, -6, -1, 4, -6
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_ref_b_norelu[49] = {
+    53, -87, 45, -19, 7, -12, 49, 44, -27, 39, -74, -22, -23, -19, -13, -1, 
+    71, -25, 13, -44, 8, -34, 21, 12, -58, 72, -21, -13, -45, 76, 5, -89, 
+    -28, 6, 52, -23, -5, 120, 13, -4, -47, -6, -15, -37, 10, 43, -10, -30, 
+    -53
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_ref_b_relu[49] = {
+    53, 0, 45, 0, 7, 0, 49, 44, 0, 39, 0, 0, 0, 0, 0, 0, 
+    71, 0, 13, 0, 8, 0, 21, 12, 0, 72, 0, 0, 0, 76, 5, 0, 
+    0, 6, 52, 0, 0, 120, 13, 0, 0, 0, 0, 0, 10, 43, 0, 0, 
+    0
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_ref_b_relu6[49] = {
+    53, 0, 45, 0, 7, 0, 49, 44, 0, 39, 0, 0, 0, 0, 0, 0, 
+    59, 0, 13, 0, 8, 0, 21, 12, 0, 59, 0, 0, 0, 59, 5, 0, 
+    0, 6, 52, 0, 0, 59, 13, 0, 0, 0, 0, 0, 10, 43, 0, 0, 
+    0
+};
+
+static const float dwconv_p1s1_5x5_c3_scales_b[1] = {
+    0.10075567f
+};
+
+static const int8_t dwconv_p1s1_5x5_c3_res_ref[49] = {
+    28, -61, 51, -24, 60, -32, 49, 23, -10, -28, -54, -24, -22, 0, 0, 42, 
+    15, 1, -12, -29, -6, -16, -25, -6, 14, 73, -51, -14, -8, 40, -42, -60, 
+    4, 62, 54, 11, 13, 120, -31, -28, -42, -22, -38, -32, -10, 12, -32, -60, 
+    -48
+};
+
+static const float dwconv_p1s1_5x5_c3_res_scales[1] = {
+    0.50000000f
+};

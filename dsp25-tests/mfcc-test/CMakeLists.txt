@@ -126,12 +126,17 @@ set(MFCC_HOTSPOT_SOURCES
 )
 set_source_files_properties(${MFCC_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O3")
 
-set(MFCC_F16_STABLE_SOURCES
+set(MFCC_F16_HOTSPOT_SOURCES
+  src/nmsis/TransformFunctions/riscv_mfcc_f16.c
   src/nmsis/TransformFunctions/riscv_cfft_f16.c
   src/nmsis/TransformFunctions/riscv_cfft_radix4_f16.c
   src/nmsis/TransformFunctions/riscv_rfft_fast_f16.c
+  src/nmsis/ComplexMathFunctions/riscv_cmplx_mag_f16.c
+  src/nmsis/MatrixFunctions/riscv_mat_vec_mult_f16.c
+  src/nmsis/BasicMathFunctions/riscv_dot_prod_f16.c
+  src/nmsis/FastMathFunctions/riscv_vlog_f16.c
 )
-set_source_files_properties(${MFCC_F16_STABLE_SOURCES} PROPERTIES COMPILE_OPTIONS "-O1;-fno-strict-aliasing")
+set_source_files_properties(${MFCC_F16_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O3;-fno-strict-aliasing")
 
 target_include_directories(mfcc-test PUBLIC include)
 target_include_directories(mfcc-test PUBLIC ${CMAKE_SOURCE_DIR}/platform/dsp25/include)

@@ -88,6 +88,9 @@ static void print_kernel_mode_summary(void) {
   printf("    f32 path : vector-enabled (RVV)\n");
 #else
   printf("    f32 path : scalar\n");
+#if defined(__riscv_vector)
+  printf("    note     : RVV present but disabled (missing __RISCV_VXRM_RNU API)\n");
+#endif
 #endif
 
 #if defined(RISCV_MATH_VECTOR) && defined(__RISCV_XLEN) && (__RISCV_XLEN == 64)

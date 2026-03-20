@@ -45,18 +45,35 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_f16(
     uint8_t ifftFlag,
     uint8_t bitReverseFlag)
 {
-    uint32_t  L = S->fftLen, l;
-    float16_t invL, * pSrc;
+    uint32_t  L = S->fftLen;
+    float16_t invL;
 
     if (ifftFlag == 1U)
     {
         /*  Conjugate input data  */
+#if defined(RISCV_MATH_VECTOR_F16)
+        uint32_t blkCnt = L;
+        size_t vl;
+        float16_t *pImag = p1 + 1;
+        ptrdiff_t stride = (ptrdiff_t)(2U * sizeof(float16_t));
+        while ((vl = __riscv_vsetvl_e16m8(blkCnt)) > 0)
+        {
+            vfloat16m8_t vI = __riscv_vlse16_v_f16m8(pImag, stride, vl);
+            vI = __riscv_vfmul_vf_f16m8(vI, -1.0f16, vl);
+            __riscv_vsse16_v_f16m8(pImag, stride, vI, vl);
+            pImag += (2U * (uint32_t)vl);
+            blkCnt -= (uint32_t)vl;
+        }
+#else
+        uint32_t l;
+        float16_t *pSrc;
         pSrc = p1 + 1;
         for(l=0; l<L; l++)
         {
             *pSrc = -(_Float16)*pSrc;
             pSrc += 2;
         }
+#endif
     }
 
     switch (L)
@@ -86,6 +103,28 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_f16(
     {
         invL = 1.0f16/(_Float16)L;
         /*  Conjugate and scale output data */
+#if defined(RISCV_MATH_VECTOR_F16)
+        uint32_t blkCnt = L;
+        size_t vl;
+        float16_t *pReal = p1;
+        float16_t *pImag = p1 + 1;
+        ptrdiff_t stride = (ptrdiff_t)(2U * sizeof(float16_t));
+        const float16_t negInvL = -invL;
+        while ((vl = __riscv_vsetvl_e16m8(blkCnt)) > 0)
+        {
+            vfloat16m8_t vR = __riscv_vlse16_v_f16m8(pReal, stride, vl);
+            vfloat16m8_t vI = __riscv_vlse16_v_f16m8(pImag, stride, vl);
+            vR = __riscv_vfmul_vf_f16m8(vR, invL, vl);
+            vI = __riscv_vfmul_vf_f16m8(vI, negInvL, vl);
+            __riscv_vsse16_v_f16m8(pReal, stride, vR, vl);
+            __riscv_vsse16_v_f16m8(pImag, stride, vI, vl);
+            pReal += (2U * (uint32_t)vl);
+            pImag += (2U * (uint32_t)vl);
+            blkCnt -= (uint32_t)vl;
+        }
+#else
+        uint32_t l;
+        float16_t *pSrc;
         pSrc = p1;
         for(l=0; l<L; l++)
         {
@@ -93,6 +132,7 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_f16(
             *pSrc  = -(_Float16)(*pSrc) * (_Float16)invL;
             pSrc++;
         }
+#endif
     }
 }
 #endif /* if defined(RISCV_FLOAT16_SUPPORTED) */

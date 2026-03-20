@@ -74,7 +74,11 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_q15(const riscv_matrix_instance_q15 
           va0m2 = __riscv_vlse16_v_i16m2(pInA1, numCols * bstride, l);
           vres0m8 = __riscv_vwmacc_vx_i64m8(vres0m8, *(pInVec++), __riscv_vwadd_vx_i32m4(va0m2, 0, l), l);
       }
+#if defined(__RISCV_VXRM_RNU)
       va0m2 = __riscv_vnclip_wx_i16m2(__riscv_vnsra_wx_i32m4(vres0m8, 15, l), 0, __RISCV_VXRM_RNU, l);
+#else
+      va0m2 = __riscv_vnclip_wx_i16m2(__riscv_vnsra_wx_i32m4(vres0m8, 15, l), 0, l);
+#endif
       __riscv_vse16_v_i16m2(px, va0m2, l);
       px += l;
       pSrcA += l * numCols;

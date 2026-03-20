@@ -124,14 +124,8 @@ extern "C"
 
 #endif
 
-/* evaluate RISCV Vector feature
- *
- * NMSIS vector kernels in this test expect the newer RVV intrinsic API
- * with VXRM rounding-mode constants (for example __RISCV_VXRM_RNU).
- * If those are unavailable in the active toolchain, force scalar/DSP
- * fallback instead of compiling incompatible RVV call signatures.
- */
-#if (defined(__riscv_vector) && defined(__RISCV_VXRM_RNU))
+/* evaluate RISCV Vector feature */
+#if (defined(__riscv_vector))
   /* previous RISCV_VECTOR is replaced by RISCV_MATH_VECTOR  */
   #define RISCV_MATH_VECTOR                 1
 #endif

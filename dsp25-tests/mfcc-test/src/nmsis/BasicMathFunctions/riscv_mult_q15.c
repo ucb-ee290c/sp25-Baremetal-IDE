@@ -39,7 +39,11 @@ RISCV_DSP_ATTRIBUTE void riscv_mult_q15(
     pSrcA += l;
     vy = __riscv_vle16_v_i16m8(pSrcB, l);
     pSrcB += l;
+#if defined(__RISCV_VXRM_RNU)
     __riscv_vse16_v_i16m8(pDst, __riscv_vsmul_vv_i16m8(vx, vy, __RISCV_VXRM_RNU, l), l);
+#else
+    __riscv_vse16_v_i16m8(pDst, __riscv_vsmul_vv_i16m8(vx, vy, l), l);
+#endif
     pDst += l;
   }
 #else

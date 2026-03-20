@@ -50,7 +50,11 @@ void riscv_scale_q31(
     for (; (l = __riscv_vsetvl_e32m4(blkCnt)) > 0; blkCnt -= l) {
       v_in = __riscv_vle32_v_i32m4(pSrc, l);
       pSrc += l;
+#if defined(__RISCV_VXRM_RNU)
       v_out = __riscv_vnclip_wx_i32m4(__riscv_vsll_vx_i64m8(__riscv_vsra_vx_i64m8(__riscv_vwmul_vx_i64m8(v_in, scaleFract, l), 32U, l), (uint8_t)kShift, l), 0, __RISCV_VXRM_RNU, l);
+#else
+      v_out = __riscv_vnclip_wx_i32m4(__riscv_vsll_vx_i64m8(__riscv_vsra_vx_i64m8(__riscv_vwmul_vx_i64m8(v_in, scaleFract, l), 32U, l), (uint8_t)kShift, l), 0, l);
+#endif
       __riscv_vse32_v_i32m4(pDst, v_out, l);
       pDst += l;
     }

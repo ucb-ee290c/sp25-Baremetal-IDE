@@ -58,7 +58,11 @@ RISCV_DSP_ATTRIBUTE void riscv_shift_q31(
     {
       vx = __riscv_vle32_v_i32m4(pSrc, l);
       pSrc += l;
+#if defined(__RISCV_VXRM_RNU)
       __riscv_vse32_v_i32m4(pDst, __riscv_vnclip_wx_i32m4(__riscv_vsll_vx_i64m8(__riscv_vwadd_vx_i64m8(vx, 0, l), shiftBits, l), 0, __RISCV_VXRM_RNU, l), l);
+#else
+      __riscv_vse32_v_i32m4(pDst, __riscv_vnclip_wx_i32m4(__riscv_vsll_vx_i64m8(__riscv_vwadd_vx_i64m8(vx, 0, l), shiftBits, l), 0, l), l);
+#endif
       pDst += l;
     }
   }

@@ -40,7 +40,11 @@ RISCV_DSP_ATTRIBUTE void riscv_scale_q15(
   for (; (l = __riscv_vsetvl_e16m4(blkCnt)) > 0; blkCnt -= l) {
     vx = __riscv_vle16_v_i16m4(pSrc, l);
     pSrc += l;
+#if defined(__RISCV_VXRM_RNU)
     __riscv_vse16_v_i16m4(pDst, __riscv_vnclip_wx_i16m4(__riscv_vwmul_vx_i32m8(vx, scaleFract, l), kShift, __RISCV_VXRM_RNU, l), l);
+#else
+    __riscv_vse16_v_i16m4(pDst, __riscv_vnclip_wx_i16m4(__riscv_vwmul_vx_i32m8(vx, scaleFract, l), kShift, l), l);
+#endif
     pDst += l;
   }
 #else

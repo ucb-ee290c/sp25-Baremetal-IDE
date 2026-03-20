@@ -46,12 +46,56 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_radix4by2_f16(
     uint32_t fftLen,
     const float16_t * pCoef)
 {
-    uint32_t i, l;
-    uint32_t n2, ia;
+    uint32_t n2 = fftLen >> 1;
+#if defined(RISCV_MATH_VECTOR_F16)
+    {
+        uint32_t blkCnt = n2;
+        size_t vl;
+        ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float16_t));
+        float16_t *pLoR = pSrc;
+        float16_t *pLoI = pSrc + 1;
+        float16_t *pHiR = pSrc + (2U * n2);
+        float16_t *pHiI = pHiR + 1;
+        const float16_t *pTwR = pCoef;
+        const float16_t *pTwI = pCoef + 1;
+
+        while ((vl = __riscv_vsetvl_e16m8(blkCnt)) > 0)
+        {
+            vfloat16m8_t vAR = __riscv_vlse16_v_f16m8(pLoR, cplxStride, vl);
+            vfloat16m8_t vAI = __riscv_vlse16_v_f16m8(pLoI, cplxStride, vl);
+            vfloat16m8_t vBR = __riscv_vlse16_v_f16m8(pHiR, cplxStride, vl);
+            vfloat16m8_t vBI = __riscv_vlse16_v_f16m8(pHiI, cplxStride, vl);
+            vfloat16m8_t vCos = __riscv_vlse16_v_f16m8(pTwR, cplxStride, vl);
+            vfloat16m8_t vSin = __riscv_vlse16_v_f16m8(pTwI, cplxStride, vl);
+
+            vfloat16m8_t vA0 = __riscv_vfadd_vv_f16m8(vAR, vBR, vl);
+            vfloat16m8_t vXT = __riscv_vfsub_vv_f16m8(vAR, vBR, vl);
+            vfloat16m8_t vYT = __riscv_vfsub_vv_f16m8(vAI, vBI, vl);
+            vfloat16m8_t vA1 = __riscv_vfadd_vv_f16m8(vBI, vAI, vl);
+
+            vfloat16m8_t vP0 = __riscv_vfmul_vv_f16m8(vXT, vCos, vl);
+            vfloat16m8_t vP1 = __riscv_vfmul_vv_f16m8(vYT, vSin, vl);
+            vfloat16m8_t vP2 = __riscv_vfmul_vv_f16m8(vYT, vCos, vl);
+            vfloat16m8_t vP3 = __riscv_vfmul_vv_f16m8(vXT, vSin, vl);
+
+            __riscv_vsse16_v_f16m8(pLoR, cplxStride, vA0, vl);
+            __riscv_vsse16_v_f16m8(pLoI, cplxStride, vA1, vl);
+            __riscv_vsse16_v_f16m8(pHiR, cplxStride, __riscv_vfadd_vv_f16m8(vP0, vP1, vl), vl);
+            __riscv_vsse16_v_f16m8(pHiI, cplxStride, __riscv_vfsub_vv_f16m8(vP2, vP3, vl), vl);
+
+            pLoR += (uint32_t)(2U * vl);
+            pLoI += (uint32_t)(2U * vl);
+            pHiR += (uint32_t)(2U * vl);
+            pHiI += (uint32_t)(2U * vl);
+            pTwR += (uint32_t)(2U * vl);
+            pTwI += (uint32_t)(2U * vl);
+            blkCnt -= (uint32_t)vl;
+        }
+    }
+#else
+    uint32_t i, l, ia;
     float16_t xt, yt, cosVal, sinVal;
     float16_t p0, p1,p2,p3,a0,a1;
-
-    n2 = fftLen >> 1;
     ia = 0;
     for (i = 0; i < n2; i++)
     {
@@ -80,6 +124,7 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_radix4by2_f16(
         pSrc[2 * l + 1] = (_Float16)p2 - (_Float16)p3;
 
     }
+#endif
 
     // first col
     riscv_radix4_butterfly_f16( pSrc, n2, (float16_t*)pCoef, 2U);
@@ -544,6 +589,95 @@ uint16_t twidCoefModifier)
          ia1 = ia1 + twidCoefModifier;
 
          i0 = j;
+#if defined(RISCV_MATH_VECTOR_F16)
+         {
+            uint32_t blkCnt = fftLen / n1;
+            size_t vl;
+            ptrdiff_t bstride = (ptrdiff_t)(2U * n1 * sizeof(float16_t));
+            float16_t *p0r = &pSrc[(2U * j)];
+            float16_t *p0i = &pSrc[(2U * j) + 1U];
+            float16_t *p1r = &pSrc[2U * (j + n2)];
+            float16_t *p1i = &pSrc[(2U * (j + n2)) + 1U];
+            float16_t *p2r = &pSrc[2U * (j + (2U * n2))];
+            float16_t *p2i = &pSrc[(2U * (j + (2U * n2))) + 1U];
+            float16_t *p3r = &pSrc[2U * (j + (3U * n2))];
+            float16_t *p3i = &pSrc[(2U * (j + (3U * n2))) + 1U];
+            uint32_t elemInc;
+
+            while ((vl = __riscv_vsetvl_e16m8(blkCnt)) > 0)
+            {
+               vfloat16m8_t v0r = __riscv_vlse16_v_f16m8(p0r, bstride, vl);
+               vfloat16m8_t v0i = __riscv_vlse16_v_f16m8(p0i, bstride, vl);
+               vfloat16m8_t v1r = __riscv_vlse16_v_f16m8(p1r, bstride, vl);
+               vfloat16m8_t v1i = __riscv_vlse16_v_f16m8(p1i, bstride, vl);
+               vfloat16m8_t v2r = __riscv_vlse16_v_f16m8(p2r, bstride, vl);
+               vfloat16m8_t v2i = __riscv_vlse16_v_f16m8(p2i, bstride, vl);
+               vfloat16m8_t v3r = __riscv_vlse16_v_f16m8(p3r, bstride, vl);
+               vfloat16m8_t v3i = __riscv_vlse16_v_f16m8(p3i, bstride, vl);
+
+               vfloat16m8_t vr1 = __riscv_vfadd_vv_f16m8(v0r, v2r, vl);
+               vfloat16m8_t vr2 = __riscv_vfsub_vv_f16m8(v0r, v2r, vl);
+               vfloat16m8_t vs1 = __riscv_vfadd_vv_f16m8(v0i, v2i, vl);
+               vfloat16m8_t vs2 = __riscv_vfsub_vv_f16m8(v0i, v2i, vl);
+
+               vfloat16m8_t vt1 = __riscv_vfadd_vv_f16m8(v1r, v3r, vl);
+               vfloat16m8_t v0rOut = __riscv_vfadd_vv_f16m8(vr1, vt1, vl);
+               vr1 = __riscv_vfsub_vv_f16m8(vr1, vt1, vl);
+
+               vfloat16m8_t vt2 = __riscv_vfadd_vv_f16m8(v1i, v3i, vl);
+               vfloat16m8_t v0iOut = __riscv_vfadd_vv_f16m8(vs1, vt2, vl);
+               vs1 = __riscv_vfsub_vv_f16m8(vs1, vt2, vl);
+
+               vt1 = __riscv_vfsub_vv_f16m8(v1i, v3i, vl);
+               vt2 = __riscv_vfsub_vv_f16m8(v1r, v3r, vl);
+
+               vfloat16m8_t v1rOut = __riscv_vfadd_vv_f16m8(
+                   __riscv_vfmul_vf_f16m8(vr1, co2, vl),
+                   __riscv_vfmul_vf_f16m8(vs1, si2, vl), vl);
+               vfloat16m8_t v1iOut = __riscv_vfsub_vv_f16m8(
+                   __riscv_vfmul_vf_f16m8(vs1, co2, vl),
+                   __riscv_vfmul_vf_f16m8(vr1, si2, vl), vl);
+
+               vfloat16m8_t vr1b = __riscv_vfadd_vv_f16m8(vr2, vt1, vl);
+               vfloat16m8_t vr2b = __riscv_vfsub_vv_f16m8(vr2, vt1, vl);
+               vfloat16m8_t vs1b = __riscv_vfsub_vv_f16m8(vs2, vt2, vl);
+               vfloat16m8_t vs2b = __riscv_vfadd_vv_f16m8(vs2, vt2, vl);
+
+               vfloat16m8_t v2rOut = __riscv_vfadd_vv_f16m8(
+                   __riscv_vfmul_vf_f16m8(vr1b, co1, vl),
+                   __riscv_vfmul_vf_f16m8(vs1b, si1, vl), vl);
+               vfloat16m8_t v2iOut = __riscv_vfsub_vv_f16m8(
+                   __riscv_vfmul_vf_f16m8(vs1b, co1, vl),
+                   __riscv_vfmul_vf_f16m8(vr1b, si1, vl), vl);
+               vfloat16m8_t v3rOut = __riscv_vfadd_vv_f16m8(
+                   __riscv_vfmul_vf_f16m8(vr2b, co3, vl),
+                   __riscv_vfmul_vf_f16m8(vs2b, si3, vl), vl);
+               vfloat16m8_t v3iOut = __riscv_vfsub_vv_f16m8(
+                   __riscv_vfmul_vf_f16m8(vs2b, co3, vl),
+                   __riscv_vfmul_vf_f16m8(vr2b, si3, vl), vl);
+
+               __riscv_vsse16_v_f16m8(p0r, bstride, v0rOut, vl);
+               __riscv_vsse16_v_f16m8(p0i, bstride, v0iOut, vl);
+               __riscv_vsse16_v_f16m8(p1r, bstride, v1rOut, vl);
+               __riscv_vsse16_v_f16m8(p1i, bstride, v1iOut, vl);
+               __riscv_vsse16_v_f16m8(p2r, bstride, v2rOut, vl);
+               __riscv_vsse16_v_f16m8(p2i, bstride, v2iOut, vl);
+               __riscv_vsse16_v_f16m8(p3r, bstride, v3rOut, vl);
+               __riscv_vsse16_v_f16m8(p3i, bstride, v3iOut, vl);
+
+               elemInc = 2U * n1 * (uint32_t)vl;
+               p0r += elemInc;
+               p0i += elemInc;
+               p1r += elemInc;
+               p1i += elemInc;
+               p2r += elemInc;
+               p2i += elemInc;
+               p3r += elemInc;
+               p3i += elemInc;
+               blkCnt -= (uint32_t)vl;
+            }
+         }
+#else
          do
          {
             /*  index calculation for the input as, */
@@ -620,6 +754,7 @@ uint16_t twidCoefModifier)
 
             i0 += n1;
          } while ( i0 < fftLen);
+#endif
          j++;
       } while (j <= (n2 - 1U));
       twidCoefModifier <<= 2U;

@@ -130,6 +130,16 @@ extern "C"
   #define RISCV_MATH_VECTOR                 1
 #endif
 
+/* Some newer toolchains require an explicit VXRM argument for fixed-point RVV
+ * intrinsics but do not provide the rounding-mode macro names. Provide the
+ * default "round-to-nearest-up" encoding expected by NMSIS code paths.
+ */
+#if defined(RISCV_MATH_VECTOR) && !defined(__RISCV_VXRM_RNU)
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 14)
+#define __RISCV_VXRM_RNU 0
+#endif
+#endif
+
 /* evaluate RISCV Bitmanip feature */
 #if (defined(__riscv_bitmanip))
   #define RISCV_MATH_BITMANIP               1

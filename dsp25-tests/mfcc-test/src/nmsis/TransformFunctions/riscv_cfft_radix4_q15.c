@@ -1184,6 +1184,67 @@ void riscv_radix4_butterfly_q15(
   /* start of last stage process */
 
   /*  Butterfly implementation */
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+  {
+    uint32_t blkCnt = fftLen >> 2U;
+    q15_t *pBase = pSrc16;
+    ptrdiff_t bstride = (ptrdiff_t)(8U * sizeof(q15_t));
+    size_t vl;
+
+    while (blkCnt > 0U)
+    {
+      vint16m4_t va0 = __riscv_vlse16_v_i16m4(pBase, bstride, vl = __riscv_vsetvl_e16m4(blkCnt));
+      vint16m4_t va1 = __riscv_vlse16_v_i16m4(pBase + 1, bstride, vl);
+      vint16m4_t vb0 = __riscv_vlse16_v_i16m4(pBase + 2, bstride, vl);
+      vint16m4_t vb1 = __riscv_vlse16_v_i16m4(pBase + 3, bstride, vl);
+      vint16m4_t vc0 = __riscv_vlse16_v_i16m4(pBase + 4, bstride, vl);
+      vint16m4_t vc1 = __riscv_vlse16_v_i16m4(pBase + 5, bstride, vl);
+      vint16m4_t vd0 = __riscv_vlse16_v_i16m4(pBase + 6, bstride, vl);
+      vint16m4_t vd1 = __riscv_vlse16_v_i16m4(pBase + 7, bstride, vl);
+
+      vint16m4_t vR0 = __riscv_vsadd_vv_i16m4(va0, vc0, vl);
+      vint16m4_t vR1 = __riscv_vsadd_vv_i16m4(va1, vc1, vl);
+      vint16m4_t vS0 = __riscv_vssub_vv_i16m4(va0, vc0, vl);
+      vint16m4_t vS1 = __riscv_vssub_vv_i16m4(va1, vc1, vl);
+
+      vint16m4_t vT0s = __riscv_vsadd_vv_i16m4(vb0, vd0, vl);
+      vint16m4_t vT1s = __riscv_vsadd_vv_i16m4(vb1, vd1, vl);
+      vint16m4_t vR0h = __riscv_vsra_vx_i16m4(vR0, 1U, vl);
+      vint16m4_t vR1h = __riscv_vsra_vx_i16m4(vR1, 1U, vl);
+      vint16m4_t vT0sh = __riscv_vsra_vx_i16m4(vT0s, 1U, vl);
+      vint16m4_t vT1sh = __riscv_vsra_vx_i16m4(vT1s, 1U, vl);
+
+      vint16m4_t vOut0r = __riscv_vadd_vv_i16m4(vR0h, vT0sh, vl);
+      vint16m4_t vOut0i = __riscv_vadd_vv_i16m4(vR1h, vT1sh, vl);
+      vint16m4_t vOut1r = __riscv_vsub_vv_i16m4(vR0h, vT0sh, vl);
+      vint16m4_t vOut1i = __riscv_vsub_vv_i16m4(vR1h, vT1sh, vl);
+
+      vint16m4_t vT0d = __riscv_vssub_vv_i16m4(vb0, vd0, vl);
+      vint16m4_t vT1d = __riscv_vssub_vv_i16m4(vb1, vd1, vl);
+      vint16m4_t vS0h = __riscv_vsra_vx_i16m4(vS0, 1U, vl);
+      vint16m4_t vS1h = __riscv_vsra_vx_i16m4(vS1, 1U, vl);
+      vint16m4_t vT0dh = __riscv_vsra_vx_i16m4(vT0d, 1U, vl);
+      vint16m4_t vT1dh = __riscv_vsra_vx_i16m4(vT1d, 1U, vl);
+
+      vint16m4_t vOut2r = __riscv_vadd_vv_i16m4(vS0h, vT1dh, vl);
+      vint16m4_t vOut2i = __riscv_vsub_vv_i16m4(vS1h, vT0dh, vl);
+      vint16m4_t vOut3r = __riscv_vsub_vv_i16m4(vS0h, vT1dh, vl);
+      vint16m4_t vOut3i = __riscv_vadd_vv_i16m4(vS1h, vT0dh, vl);
+
+      __riscv_vsse16_v_i16m4(pBase, bstride, vOut0r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 1, bstride, vOut0i, vl);
+      __riscv_vsse16_v_i16m4(pBase + 2, bstride, vOut1r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 3, bstride, vOut1i, vl);
+      __riscv_vsse16_v_i16m4(pBase + 4, bstride, vOut2r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 5, bstride, vOut2i, vl);
+      __riscv_vsse16_v_i16m4(pBase + 6, bstride, vOut3r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 7, bstride, vOut3i, vl);
+
+      pBase += (uint32_t)(8U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+  }
+#else
   for (i0 = 0U; i0 <= (fftLen - n1); i0 += n1)
   {
     /*  index calculation for the input as, */
@@ -1260,6 +1321,7 @@ void riscv_radix4_butterfly_q15(
     pSrc16[(i3 * 2U) + 1U] = (S1 >> 1U) + (T0 >> 1U);
 
   }
+#endif
 
   /* end of last stage process */
 
@@ -1989,6 +2051,67 @@ void riscv_radix4_butterfly_inverse_q15(
   n2 >>= 2U;
 
   /*  Butterfly implementation */
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+  {
+    uint32_t blkCnt = fftLen >> 2U;
+    q15_t *pBase = pSrc16;
+    ptrdiff_t bstride = (ptrdiff_t)(8U * sizeof(q15_t));
+    size_t vl;
+
+    while (blkCnt > 0U)
+    {
+      vint16m4_t va0 = __riscv_vlse16_v_i16m4(pBase, bstride, vl = __riscv_vsetvl_e16m4(blkCnt));
+      vint16m4_t va1 = __riscv_vlse16_v_i16m4(pBase + 1, bstride, vl);
+      vint16m4_t vb0 = __riscv_vlse16_v_i16m4(pBase + 2, bstride, vl);
+      vint16m4_t vb1 = __riscv_vlse16_v_i16m4(pBase + 3, bstride, vl);
+      vint16m4_t vc0 = __riscv_vlse16_v_i16m4(pBase + 4, bstride, vl);
+      vint16m4_t vc1 = __riscv_vlse16_v_i16m4(pBase + 5, bstride, vl);
+      vint16m4_t vd0 = __riscv_vlse16_v_i16m4(pBase + 6, bstride, vl);
+      vint16m4_t vd1 = __riscv_vlse16_v_i16m4(pBase + 7, bstride, vl);
+
+      vint16m4_t vR0 = __riscv_vsadd_vv_i16m4(va0, vc0, vl);
+      vint16m4_t vR1 = __riscv_vsadd_vv_i16m4(va1, vc1, vl);
+      vint16m4_t vS0 = __riscv_vssub_vv_i16m4(va0, vc0, vl);
+      vint16m4_t vS1 = __riscv_vssub_vv_i16m4(va1, vc1, vl);
+
+      vint16m4_t vT0s = __riscv_vsadd_vv_i16m4(vb0, vd0, vl);
+      vint16m4_t vT1s = __riscv_vsadd_vv_i16m4(vb1, vd1, vl);
+      vint16m4_t vR0h = __riscv_vsra_vx_i16m4(vR0, 1U, vl);
+      vint16m4_t vR1h = __riscv_vsra_vx_i16m4(vR1, 1U, vl);
+      vint16m4_t vT0sh = __riscv_vsra_vx_i16m4(vT0s, 1U, vl);
+      vint16m4_t vT1sh = __riscv_vsra_vx_i16m4(vT1s, 1U, vl);
+
+      vint16m4_t vOut0r = __riscv_vadd_vv_i16m4(vR0h, vT0sh, vl);
+      vint16m4_t vOut0i = __riscv_vadd_vv_i16m4(vR1h, vT1sh, vl);
+      vint16m4_t vOut1r = __riscv_vsub_vv_i16m4(vR0h, vT0sh, vl);
+      vint16m4_t vOut1i = __riscv_vsub_vv_i16m4(vR1h, vT1sh, vl);
+
+      vint16m4_t vT0d = __riscv_vssub_vv_i16m4(vb0, vd0, vl);
+      vint16m4_t vT1d = __riscv_vssub_vv_i16m4(vb1, vd1, vl);
+      vint16m4_t vS0h = __riscv_vsra_vx_i16m4(vS0, 1U, vl);
+      vint16m4_t vS1h = __riscv_vsra_vx_i16m4(vS1, 1U, vl);
+      vint16m4_t vT0dh = __riscv_vsra_vx_i16m4(vT0d, 1U, vl);
+      vint16m4_t vT1dh = __riscv_vsra_vx_i16m4(vT1d, 1U, vl);
+
+      vint16m4_t vOut2r = __riscv_vsub_vv_i16m4(vS0h, vT1dh, vl);
+      vint16m4_t vOut2i = __riscv_vadd_vv_i16m4(vS1h, vT0dh, vl);
+      vint16m4_t vOut3r = __riscv_vadd_vv_i16m4(vS0h, vT1dh, vl);
+      vint16m4_t vOut3i = __riscv_vsub_vv_i16m4(vS1h, vT0dh, vl);
+
+      __riscv_vsse16_v_i16m4(pBase, bstride, vOut0r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 1, bstride, vOut0i, vl);
+      __riscv_vsse16_v_i16m4(pBase + 2, bstride, vOut1r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 3, bstride, vOut1i, vl);
+      __riscv_vsse16_v_i16m4(pBase + 4, bstride, vOut2r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 5, bstride, vOut2i, vl);
+      __riscv_vsse16_v_i16m4(pBase + 6, bstride, vOut3r, vl);
+      __riscv_vsse16_v_i16m4(pBase + 7, bstride, vOut3i, vl);
+
+      pBase += (uint32_t)(8U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+  }
+#else
   for (i0 = 0U; i0 <= (fftLen - n1); i0 += n1)
   {
     /*  index calculation for the input as, */
@@ -2064,6 +2187,7 @@ void riscv_radix4_butterfly_inverse_q15(
     pSrc16[i3 * 2U] = (S0 >> 1U) + (T1 >> 1U);
     pSrc16[(i3 * 2U) + 1U] = (S1 >> 1U) - (T0 >> 1U);
   }
+#endif
   /* end of last stage  process */
 
   /* output is in 11.5(q5) format for the 1024 point */

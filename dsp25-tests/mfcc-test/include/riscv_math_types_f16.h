@@ -28,7 +28,7 @@ won't be built.
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 
-#if defined(RISCV_MATH_VECTOR) && defined(__riscv_zvfh) && (__riscv_zvfh > 0)
+#if (defined(RISCV_MATH_VECTOR) || defined(__riscv_vector)) && defined(__riscv_zvfh) && (__riscv_zvfh > 0)
 #define RISCV_MATH_VECTOR_F16 1
 #endif
 

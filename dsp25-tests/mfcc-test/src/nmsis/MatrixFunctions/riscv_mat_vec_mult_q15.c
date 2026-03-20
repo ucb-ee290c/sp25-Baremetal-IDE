@@ -37,6 +37,21 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_q15(const riscv_matrix_instance_q15 
     ptrdiff_t bstride = 2;       //  16bit/8bit = 2
     vint64m8_t vres0m8;
     vint16m2_t va0m2, va1m2, va2m2, va3m2;
+
+    if (numCols & 1u) {
+      uint32_t r, c;
+      px = pDst;
+      for (r = 0; r < numRows; r++) {
+        q63_t sum = 0;
+        const q15_t *rowPtr = pSrcA + (r * numCols);
+        for (c = 0; c < numCols; c++) {
+          sum += (q63_t)rowPtr[c] * pVec[c];
+        }
+        *px++ = (q15_t)(__SSAT((sum >> 15), 16));
+      }
+      return;
+    }
+
     px = pDst;
     for (jj = numRows; jj > 0; jj -= l) {
       l = __riscv_vsetvl_e64m8(jj);

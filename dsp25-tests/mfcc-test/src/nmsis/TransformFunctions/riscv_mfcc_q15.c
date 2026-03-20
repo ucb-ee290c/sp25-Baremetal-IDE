@@ -151,7 +151,7 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
     riscv_shift_q31(pTmp,-19,pTmp,S->nbMelFilters);
     for(i=0; i<S->nbMelFilters; i++)
     {
-      pSrc[i] = __SSAT((q15_t)pTmp[i],16);
+      pSrc[i] = (q15_t)__SSAT(pTmp[i],16);
     }
 
     // q8.7

@@ -33,7 +33,7 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_f16(const riscv_matrix_instance_f16 
     uint16_t i, row, colCnt; /* loop counters */
     float16_t matData, matData2, vecData, vecData2;
 
-#if defined(RISCV_MATH_VECTOR)
+#if defined(RISCV_MATH_VECTOR_F16)
     uint32_t ii, jj;
     size_t l;
     ptrdiff_t bstride = 2;       //  16bit/8bit = 2
@@ -142,7 +142,7 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_f16(const riscv_matrix_instance_f16 
         i = i + numCols;
         row--;
     }
-#endif /*defined(RISCV_MATH_VECTOR)*/
+#endif /*defined(RISCV_MATH_VECTOR_F16)*/
 }
 
 /**

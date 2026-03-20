@@ -28,6 +28,11 @@ won't be built.
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 
+#if defined(RISCV_MATH_VECTOR) && defined(__riscv_zvfh)
+#define RISCV_MATH_VECTOR_F16 1
+#endif
+
+
 typedef _Float16 float16_t;
 
 #define F16INFINITY ((float16_t)__builtin_inf())

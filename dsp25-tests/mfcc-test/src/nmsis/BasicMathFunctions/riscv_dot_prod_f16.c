@@ -27,7 +27,7 @@ RISCV_DSP_ATTRIBUTE void riscv_dot_prod_f16(
 {
         _Float16 sum = 0.0f;                          /* Temporary return variable */
 
-#if defined(RISCV_MATH_VECTOR)
+#if defined(RISCV_MATH_VECTOR_F16)
   size_t blkCnt = blockSize;                               /* Loop counter */
   size_t l;
   vfloat16m8_t v_A, v_B;
@@ -97,7 +97,7 @@ RISCV_DSP_ATTRIBUTE void riscv_dot_prod_f16(
     /* Decrement loop counter */
     blkCnt--;
   }
-#endif /* defined(RISCV_MATH_VECTOR) */
+#endif /* defined(RISCV_MATH_VECTOR_F16) */
   /* Store result in destination buffer */
   *result = sum;
 }

@@ -66,14 +66,14 @@ static inline State i2c_get_flag(I2C_Type *I2Cx, I2C_Flag flag) {
 
 #ifndef I2C0_BASE
   #define I2C0_BASE                 0x10040000U
-  #define I2C0                      ((I2C0_Type *)I2C0_BASE)
+  #define I2C0                      ((I2C_Type *)I2C0_BASE)
 #endif
 
 void i2c_init(I2C_Type *I2Cx, I2C_InitType *I2C_init);
 
-Status i2c_wait_for_flag(I2C_Type *I2Cx, I2C_Flag flag, State state, uint32_t timestart, uint32_t timeout);
+Status i2c_wait_for_flag(I2C_Type *I2Cx, I2C_Flag flag, State state, uint64_t timestart, uint64_t timeout);
 
-Status i2c_wait_for_transaction(I2C_Type *I2Cx, uint32_t timestart, uint32_t timeout);
+Status i2c_wait_for_transaction(I2C_Type *I2Cx, uint64_t timestart, uint64_t timeout);
 
 Status i2c_master_receive(I2C_Type *I2Cx, uint16_t device_addr, uint8_t *buffer, uint16_t size, uint64_t timeout);
 

@@ -38,6 +38,8 @@ option(OPT_INFO                     "Build with optimization information"     OF
 
 option(USE_FREERTOS                 "Build with FreeRTOS"                     OFF )
 option(ENABLE_RVV                   "Build for RVV targets"                   ON)
+set(RVV_TYPE                        "" CACHE STRING "RVV mode: 0=No RVV, 1=RVV (rv64gcv_zfh), 2=RVV+Zvfh (rv64gcv_zfh_zvfh)")
+set_property(CACHE RVV_TYPE PROPERTY STRINGS 0 1 2)
 option(BUILD_VECNN                  "Build vec-nn library"                    OFF)
 option(THREAD_LIB                   "Build thread-lib library"                OFF)
 option(BMARK_LIB                    "Build bmark-lib library"                 OFF)
@@ -59,11 +61,31 @@ set(CMAKE_EXECUTABLE_SUFFIX            ".elf")
 #################################
 
 # CPU architecture
-if (ENABLE_RVV)
-  set(ARCH                "rv64gcv_zfh")
+# RVV_TYPE takes precedence when provided:
+#   0 -> no RVV
+#   1 -> existing RVV config (default)
+#   2 -> RVV + Zvfh (f16 vector capable toolchain/ISA required)
+if (NOT RVV_TYPE STREQUAL "")
+  set(_RVV_MODE "${RVV_TYPE}")
 else()
-  set(ARCH                "rv64imafd")
+  if (ENABLE_RVV)
+    set(_RVV_MODE "1")
+  else()
+    set(_RVV_MODE "0")
+  endif()
 endif()
+
+if (_RVV_MODE STREQUAL "0")
+  set(ARCH "rv64imafd")
+elseif (_RVV_MODE STREQUAL "1")
+  set(ARCH "rv64gcv_zfh")
+elseif (_RVV_MODE STREQUAL "2")
+  set(ARCH "rv64gcv_zfh_zvfh")
+else()
+  message(FATAL_ERROR "Invalid RVV_TYPE='${_RVV_MODE}'. Use 0, 1, or 2.")
+endif()
+
+message(STATUS "RVV mode=${_RVV_MODE} ARCH=${ARCH}")
 set(ABI                 "lp64d")
 set(CMODEL              "medany")
 set(ARCH_FLAGS          -march=${ARCH} -mabi=${ABI} -mcmodel=${CMODEL})

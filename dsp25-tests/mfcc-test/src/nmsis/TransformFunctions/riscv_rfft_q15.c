@@ -200,6 +200,69 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rfft_q15(
 
 #else
 
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+    {
+        uint32_t blkCnt = fftLen - 1U;
+        size_t vl;
+        const q15_t *pSrc1v = pSrc1;
+        const q15_t *pSrc2v = pSrc2;
+        const q15_t *pCoefAv = pCoefA;
+        const q15_t *pCoefBv = pCoefB;
+        q15_t *pOut1v = pDst + 2;
+        q15_t *pOut2v = pDst + (4U * fftLen) - 1U;
+        ptrdiff_t srcFwdStride = (ptrdiff_t)(2U * sizeof(q15_t));
+        ptrdiff_t srcRevStride = -srcFwdStride;
+        ptrdiff_t coefStride = (ptrdiff_t)(2U * modifier * sizeof(q15_t));
+
+        while (blkCnt > 0U)
+        {
+            vint16m4_t vSrc1Re, vSrc1Im, vSrc2Re, vSrc2Im;
+            vint16m4_t vA1, vA2, vB1, vB2;
+            vint16m4_t vOutRq15, vOutIq15, vZero;
+            vint32m8_t vOutR, vOutI;
+
+            vl = __riscv_vsetvl_e16m4(blkCnt);
+
+            vSrc1Re = __riscv_vlse16_v_i16m4(pSrc1v, srcFwdStride, vl);
+            vSrc1Im = __riscv_vlse16_v_i16m4(pSrc1v + 1, srcFwdStride, vl);
+            vSrc2Re = __riscv_vlse16_v_i16m4(pSrc2v, srcRevStride, vl);
+            vSrc2Im = __riscv_vlse16_v_i16m4(pSrc2v + 1, srcRevStride, vl);
+
+            vA1 = __riscv_vlse16_v_i16m4(pCoefAv, coefStride, vl);
+            vA2 = __riscv_vlse16_v_i16m4(pCoefAv + 1, coefStride, vl);
+            vB1 = __riscv_vlse16_v_i16m4(pCoefBv, coefStride, vl);
+            vB2 = __riscv_vlse16_v_i16m4(pCoefBv + 1, coefStride, vl);
+
+            vOutR = __riscv_vwmul_vv_i32m8(vSrc1Re, vA1, vl);
+            vOutR = __riscv_vsub_vv_i32m8(vOutR, __riscv_vwmul_vv_i32m8(vSrc1Im, vA2, vl), vl);
+            vOutR = __riscv_vadd_vv_i32m8(vOutR, __riscv_vwmul_vv_i32m8(vSrc2Re, vB1, vl), vl);
+            vOutR = __riscv_vadd_vv_i32m8(vOutR, __riscv_vwmul_vv_i32m8(vSrc2Im, vB2, vl), vl);
+
+            vOutI = __riscv_vwmul_vv_i32m8(vSrc2Re, vB2, vl);
+            vOutI = __riscv_vsub_vv_i32m8(vOutI, __riscv_vwmul_vv_i32m8(vSrc2Im, vB1, vl), vl);
+            vOutI = __riscv_vadd_vv_i32m8(vOutI, __riscv_vwmul_vv_i32m8(vSrc1Im, vA1, vl), vl);
+            vOutI = __riscv_vadd_vv_i32m8(vOutI, __riscv_vwmul_vv_i32m8(vSrc1Re, vA2, vl), vl);
+
+            vOutRq15 = __riscv_vnsra_wx_i16m4(vOutR, 16U, vl);
+            vOutIq15 = __riscv_vnsra_wx_i16m4(vOutI, 16U, vl);
+            vZero = __riscv_vmv_v_x_i16m4(0, vl);
+
+            __riscv_vsse16_v_i16m4(pOut1v, srcFwdStride, vOutRq15, vl);
+            __riscv_vsse16_v_i16m4(pOut1v + 1, srcFwdStride, vOutIq15, vl);
+
+            __riscv_vsse16_v_i16m4(pOut2v - 1, srcRevStride, vOutRq15, vl);
+            __riscv_vsse16_v_i16m4(pOut2v, srcRevStride, __riscv_vsub_vv_i16m4(vZero, vOutIq15, vl), vl);
+
+            pSrc1v += (uint32_t)(2U * vl);
+            pSrc2v -= (uint32_t)(2U * vl);
+            pCoefAv += (uint32_t)(2U * modifier * vl);
+            pCoefBv += (uint32_t)(2U * modifier * vl);
+            pOut1v += (uint32_t)(2U * vl);
+            pOut2v -= (uint32_t)(2U * vl);
+            blkCnt -= (uint32_t)vl;
+        }
+    }
+#else
     i = 1U;
 
     while (i < fftLen)
@@ -246,6 +309,7 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rfft_q15(
 
         i++;
     }
+#endif
 
     pDst[2U * fftLen] = (pSrc[0] - pSrc[1]) >> 1;
     pDst[2U * fftLen + 1U] = 0;

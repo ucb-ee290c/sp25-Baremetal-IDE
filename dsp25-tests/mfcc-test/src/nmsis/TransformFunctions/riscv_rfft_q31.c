@@ -1,5 +1,17 @@
 #include "dsp/transform_functions.h"
 
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+__STATIC_FORCEINLINE vint32m4_t riscv_q31_mul_round_shift32_vec(
+  vint32m4_t a,
+  vint32m4_t b,
+  size_t vl)
+{
+  vint64m8_t prod = __riscv_vwmul_vv_i64m8(a, b, vl);
+  prod = __riscv_vadd_vx_i64m8(prod, (int64_t)0x80000000LL, vl);
+  return __riscv_vnsra_wx_i32m4(prod, 32U, vl);
+}
+#endif
+
 /* ----------------------------------------------------------------------
  * Internal functions prototypes
  * -------------------------------------------------------------------- */
@@ -139,6 +151,63 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rfft_q31(
   pCoefA = &pATable[modifier * 2];
   pCoefB = &pBTable[modifier * 2];
 
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+  {
+     uint32_t blkCnt = fftLen - 1U;
+     size_t vl;
+     const q31_t *pCoefAv = pCoefA;
+     const q31_t *pCoefBv = pCoefB;
+     q31_t *pIn1v = pIn1;
+     q31_t *pIn2v = pIn2;
+     q31_t *pOut1v = pOut1;
+     q31_t *pOut2v = pOut2;
+     ptrdiff_t srcFwdStride = (ptrdiff_t)(2U * sizeof(q31_t));
+     ptrdiff_t srcRevStride = -srcFwdStride;
+     ptrdiff_t coefStride = (ptrdiff_t)(2U * modifier * sizeof(q31_t));
+
+     while (blkCnt > 0U)
+     {
+        vint32m4_t vX0, vX1, vY0, vY1;
+        vint32m4_t vA1, vA2, vB1, vOutR, vOutI, vZero;
+
+        vl = __riscv_vsetvl_e32m4(blkCnt);
+
+        vX0 = __riscv_vlse32_v_i32m4(pIn1v, srcFwdStride, vl);
+        vX1 = __riscv_vlse32_v_i32m4(pIn1v + 1, srcFwdStride, vl);
+        vY1 = __riscv_vlse32_v_i32m4(pIn2v, srcRevStride, vl);
+        vY0 = __riscv_vlse32_v_i32m4(pIn2v - 1, srcRevStride, vl);
+
+        vA1 = __riscv_vlse32_v_i32m4(pCoefAv, coefStride, vl);
+        vA2 = __riscv_vlse32_v_i32m4(pCoefAv + 1, coefStride, vl);
+        vB1 = __riscv_vlse32_v_i32m4(pCoefBv, coefStride, vl);
+
+        vOutR = riscv_q31_mul_round_shift32_vec(vX0, vA1, vl);
+        vOutR = __riscv_vsub_vv_i32m4(vOutR, riscv_q31_mul_round_shift32_vec(vX1, vA2, vl), vl);
+        vOutR = __riscv_vsub_vv_i32m4(vOutR, riscv_q31_mul_round_shift32_vec(vY1, vA2, vl), vl);
+        vOutR = __riscv_vadd_vv_i32m4(vOutR, riscv_q31_mul_round_shift32_vec(vY0, vB1, vl), vl);
+
+        vOutI = riscv_q31_mul_round_shift32_vec(vX0, vA2, vl);
+        vOutI = __riscv_vadd_vv_i32m4(vOutI, riscv_q31_mul_round_shift32_vec(vX1, vA1, vl), vl);
+        vOutI = __riscv_vsub_vv_i32m4(vOutI, riscv_q31_mul_round_shift32_vec(vY1, vB1, vl), vl);
+        vOutI = __riscv_vsub_vv_i32m4(vOutI, riscv_q31_mul_round_shift32_vec(vY0, vA2, vl), vl);
+
+        __riscv_vsse32_v_i32m4(pOut1v, srcFwdStride, vOutR, vl);
+        __riscv_vsse32_v_i32m4(pOut1v + 1, srcFwdStride, vOutI, vl);
+
+        vZero = __riscv_vmv_v_x_i32m4(0, vl);
+        __riscv_vsse32_v_i32m4(pOut2v - 1, srcRevStride, vOutR, vl);
+        __riscv_vsse32_v_i32m4(pOut2v, srcRevStride, __riscv_vsub_vv_i32m4(vZero, vOutI, vl), vl);
+
+        pIn1v += (uint32_t)(2U * vl);
+        pIn2v -= (uint32_t)(2U * vl);
+        pOut1v += (uint32_t)(2U * vl);
+        pOut2v -= (uint32_t)(2U * vl);
+        pCoefAv += (uint32_t)(2U * modifier * vl);
+        pCoefBv += (uint32_t)(2U * modifier * vl);
+        blkCnt -= (uint32_t)vl;
+     }
+  }
+#else
   i = fftLen - 1U;
 
   while (i > 0U)
@@ -198,6 +267,7 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rfft_q31(
      /* Decrement loop count */
      i--;
   }
+#endif
 
   pDst[2 * fftLen]     = (pSrc[0] - pSrc[1]) >> 1U;
   pDst[2 * fftLen + 1] = 0;
@@ -287,4 +357,3 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rifft_q31(
   }
 
 }
-

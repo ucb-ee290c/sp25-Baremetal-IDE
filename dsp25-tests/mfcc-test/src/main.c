@@ -58,11 +58,11 @@ static q15_t g_input_q15[MFCC_TEST_FFT_LEN];
 static float16_t g_input_f16[MFCC_TEST_FFT_LEN];
 #endif
 
-static float32_t g_tmp_f32[MFCC_TEST_FFT_LEN + 2];
+static float32_t g_tmp_f32[2 * MFCC_TEST_FFT_LEN];
 static q31_t g_tmp_q31[2 * MFCC_TEST_FFT_LEN];
 static q31_t g_tmp_q15_as_q31[2 * MFCC_TEST_FFT_LEN];
 #if MFCC_TEST_ENABLE_F16
-static float16_t g_tmp_f16[MFCC_TEST_FFT_LEN + 2];
+static float16_t g_tmp_f16[2 * MFCC_TEST_FFT_LEN];
 #endif
 
 static float32_t g_out_f32[MFCC_TEST_NUM_DCT];
@@ -508,28 +508,36 @@ void app_main(void) {
     printf("\n[CASE %lu] %s\n", (unsigned long)tc, g_cases[tc].name);
     print_input_preview(in);
 
+    printf("    [run] f32 begin\n");
     uint64_t f0 = rdcycle64();
     riscv_mfcc_f32(&g_mfcc_f32, g_input_f32, g_out_f32, g_tmp_f32);
     uint64_t f1 = rdcycle64();
+    printf("    [run] f32 done\n");
 
+    printf("    [run] q31 begin\n");
     uint64_t q0 = rdcycle64();
     riscv_status st_q31 = riscv_mfcc_q31(&g_mfcc_q31,
                                          g_input_q31,
                                          g_out_q31,
                                          g_tmp_q31);
     uint64_t q1 = rdcycle64();
+    printf("    [run] q31 done\n");
 
+    printf("    [run] q15 begin\n");
     uint64_t h0 = rdcycle64();
     riscv_status st_q15 = riscv_mfcc_q15(&g_mfcc_q15,
                                          g_input_q15,
                                          g_out_q15,
                                          g_tmp_q15_as_q31);
     uint64_t h1 = rdcycle64();
+    printf("    [run] q15 done\n");
 
 #if MFCC_TEST_ENABLE_F16
+    printf("    [run] f16 begin\n");
     uint64_t e0 = rdcycle64();
     riscv_mfcc_f16(&g_mfcc_f16, g_input_f16, g_out_f16, g_tmp_f16);
     uint64_t e1 = rdcycle64();
+    printf("    [run] f16 done\n");
 #endif
 
     print_output_f32(g_out_f32);

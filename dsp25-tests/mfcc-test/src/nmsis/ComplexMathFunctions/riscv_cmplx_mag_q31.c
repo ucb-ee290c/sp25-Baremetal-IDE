@@ -32,17 +32,15 @@ RISCV_DSP_ATTRIBUTE void riscv_cmplx_mag_q31(
 #if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
   blkCnt = numSamples;                               /* Loop counter */
   size_t l;
-  vint32m4x2_t v_tuple;
+  ptrdiff_t bstride = 8; /* complex q31: (real,imag) => 2*32b = 8 bytes */
   vint32m4_t v_R, v_I;
   vint32m4_t v_sum, v_res;
   vfloat32m4_t tmp00m4;
 
   for (; (l = __riscv_vsetvl_e32m4(blkCnt)) > 0; blkCnt -= l)
   {
-    //vlseg2e32_v_i32m4(&v_R, &v_I, pSrc, l);
-    v_tuple = __riscv_vlseg2e32_v_i32m4x2 (pSrc, l);
-    v_R = __riscv_vget_v_i32m4x2_i32m4(v_tuple, 0);
-    v_I = __riscv_vget_v_i32m4x2_i32m4(v_tuple, 1);
+    v_R = __riscv_vlse32_v_i32m4(pSrc, bstride, l);
+    v_I = __riscv_vlse32_v_i32m4(pSrc + 1, bstride, l);
     pSrc += l * 2;
     v_R = __riscv_vnsra_wx_i32m4(__riscv_vwmul_vv_i64m8(v_R, v_R, l), 33, l);
     v_I = __riscv_vnsra_wx_i32m4(__riscv_vwmul_vv_i64m8(v_I, v_I, l), 33, l);

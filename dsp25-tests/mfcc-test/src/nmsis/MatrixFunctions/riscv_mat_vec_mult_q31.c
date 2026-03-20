@@ -41,7 +41,6 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_q31(const riscv_matrix_instance_q31 
     size_t l;
     ptrdiff_t bstride = 4;       //  32bit/8bit = 4
     vint64m8_t vres0m8;
-    vint32m4x2_t v_tuple;
     vint32m4_t va0m4, va1m4;
     px = pDst;
     for (jj = numRows; jj > 0; jj -= l) {
@@ -51,10 +50,8 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_q31(const riscv_matrix_instance_q31 
       pInA1 = pSrcA;
       colCnt = numCols;
       for (ii = 0; ii < colCnt / 2; ii ++) {
-        //vlsseg2e32_v_i32m4(&va0m4, &va1m4, pInA1, numCols * bstride, l);
-        v_tuple = __riscv_vlsseg2e32_v_i32m4x2 (pInA1, numCols * bstride, l);
-        va0m4 = __riscv_vget_v_i32m4x2_i32m4 (v_tuple, 0);
-        va1m4 = __riscv_vget_v_i32m4x2_i32m4 (v_tuple, 1);
+        va0m4 = __riscv_vlse32_v_i32m4(pInA1, numCols * bstride, l);
+        va1m4 = __riscv_vlse32_v_i32m4(pInA1 + 1, numCols * bstride, l);
         vres0m8 = __riscv_vwmacc_vx_i64m8(vres0m8, *(pInVec++), va0m4, l);
         vres0m8 = __riscv_vwmacc_vx_i64m8(vres0m8, *(pInVec++), va1m4, l);
         pInA1 += 2;

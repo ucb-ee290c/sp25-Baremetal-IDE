@@ -114,6 +114,9 @@ add_executable(mfcc-test
 )
 
 set(MFCC_HOTSPOT_SOURCES
+  src/nmsis/FastMathFunctions/riscv_vlog_q31.c
+  src/nmsis/MatrixFunctions/riscv_mat_vec_mult_q31.c
+  src/nmsis/MatrixFunctions/riscv_mat_vec_mult_q15.c
   src/nmsis/TransformFunctions/riscv_cfft_q31.c
   src/nmsis/TransformFunctions/riscv_cfft_q15.c
   src/nmsis/TransformFunctions/riscv_cfft_radix4_q31.c

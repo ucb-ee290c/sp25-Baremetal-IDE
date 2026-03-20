@@ -355,6 +355,64 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rifft_q15(
   pSrc2 = &pSrc[2 * fftLen];
 
   i = fftLen;
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+  {
+      uint32_t blkCnt = fftLen;
+      size_t vl;
+      const q15_t *pSrc1v = pSrc1;
+      const q15_t *pSrc2v = pSrc2;
+      const q15_t *pCoefAv = pCoefA;
+      const q15_t *pCoefBv = pCoefB;
+      q15_t *pDstv = pDst1;
+      ptrdiff_t inFwdStride = (ptrdiff_t)(2U * sizeof(q15_t));
+      ptrdiff_t inRevStride = -inFwdStride;
+      ptrdiff_t coefStride = (ptrdiff_t)(2U * modifier * sizeof(q15_t));
+      ptrdiff_t outStride = inFwdStride;
+
+      while (blkCnt > 0U)
+      {
+          vint16m4_t vX0, vX1, vY0, vY1;
+          vint16m4_t vA0, vA1, vB0, vB1;
+          vint16m4_t vOutRq15, vOutIq15;
+          vint32m8_t vOutR, vOutI;
+
+          vl = __riscv_vsetvl_e16m4(blkCnt);
+
+          vX0 = __riscv_vlse16_v_i16m4(pSrc1v, inFwdStride, vl);
+          vX1 = __riscv_vlse16_v_i16m4(pSrc1v + 1, inFwdStride, vl);
+          vY0 = __riscv_vlse16_v_i16m4(pSrc2v, inRevStride, vl);
+          vY1 = __riscv_vlse16_v_i16m4(pSrc2v + 1, inRevStride, vl);
+
+          vA0 = __riscv_vlse16_v_i16m4(pCoefAv, coefStride, vl);
+          vA1 = __riscv_vlse16_v_i16m4(pCoefAv + 1, coefStride, vl);
+          vB0 = __riscv_vlse16_v_i16m4(pCoefBv, coefStride, vl);
+          vB1 = __riscv_vlse16_v_i16m4(pCoefBv + 1, coefStride, vl);
+
+          vOutR = __riscv_vwmul_vv_i32m8(vY0, vB0, vl);
+          vOutR = __riscv_vsub_vv_i32m8(vOutR, __riscv_vwmul_vv_i32m8(vY1, vB1, vl), vl);
+          vOutR = __riscv_vadd_vv_i32m8(vOutR, __riscv_vwmul_vv_i32m8(vX0, vA0, vl), vl);
+          vOutR = __riscv_vadd_vv_i32m8(vOutR, __riscv_vwmul_vv_i32m8(vX1, vA1, vl), vl);
+
+          vOutI = __riscv_vwmul_vv_i32m8(vX1, vA0, vl);
+          vOutI = __riscv_vsub_vv_i32m8(vOutI, __riscv_vwmul_vv_i32m8(vX0, vA1, vl), vl);
+          vOutI = __riscv_vsub_vv_i32m8(vOutI, __riscv_vwmul_vv_i32m8(vY0, vB1, vl), vl);
+          vOutI = __riscv_vsub_vv_i32m8(vOutI, __riscv_vwmul_vv_i32m8(vY1, vB0, vl), vl);
+
+          vOutRq15 = __riscv_vnsra_wx_i16m4(vOutR, 16U, vl);
+          vOutIq15 = __riscv_vnsra_wx_i16m4(vOutI, 16U, vl);
+
+          __riscv_vsse16_v_i16m4(pDstv, outStride, vOutRq15, vl);
+          __riscv_vsse16_v_i16m4(pDstv + 1, outStride, vOutIq15, vl);
+
+          pSrc1v += (uint32_t)(2U * vl);
+          pSrc2v -= (uint32_t)(2U * vl);
+          pDstv += (uint32_t)(2U * vl);
+          pCoefAv += (uint32_t)(2U * modifier * vl);
+          pCoefBv += (uint32_t)(2U * modifier * vl);
+          blkCnt -= (uint32_t)vl;
+      }
+  }
+#else
   while (i > 0U)
   {
       /*
@@ -415,5 +473,6 @@ RISCV_DSP_ATTRIBUTE void riscv_split_rifft_q15(
 
       i--;
   }
+#endif
 
 }

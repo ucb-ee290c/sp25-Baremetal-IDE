@@ -115,11 +115,23 @@ RISCV_DSP_ATTRIBUTE void riscv_vlog_q31(
 {
   uint32_t  blkCnt;           /* loop counters */
 
-  blkCnt = blockSize;
+  blkCnt = blockSize >> 2U;
 
   while (blkCnt > 0U)
   {
-     *pDst++=riscv_scalar_log_q31(*pSrc++);
+     *pDst++ = riscv_scalar_log_q31(*pSrc++);
+     *pDst++ = riscv_scalar_log_q31(*pSrc++);
+     *pDst++ = riscv_scalar_log_q31(*pSrc++);
+     *pDst++ = riscv_scalar_log_q31(*pSrc++);
+
+     blkCnt--;
+  }
+
+  blkCnt = blockSize & 3U;
+
+  while (blkCnt > 0U)
+  {
+     *pDst++ = riscv_scalar_log_q31(*pSrc++);
 
      blkCnt--;
   }

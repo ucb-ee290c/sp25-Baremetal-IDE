@@ -128,7 +128,7 @@ set(MFCC_F16_STABLE_SOURCES
   src/nmsis/TransformFunctions/riscv_cfft_radix4_f16.c
   src/nmsis/TransformFunctions/riscv_rfft_fast_f16.c
 )
-set_source_files_properties(${MFCC_F16_STABLE_SOURCES} PROPERTIES COMPILE_OPTIONS "-O1 -fno-strict-aliasing")
+set_source_files_properties(${MFCC_F16_STABLE_SOURCES} PROPERTIES COMPILE_OPTIONS "-O1;-fno-strict-aliasing")
 
 target_include_directories(mfcc-test PUBLIC include)
 target_include_directories(mfcc-test PUBLIC ${CMAKE_SOURCE_DIR}/platform/dsp25/include)

@@ -28,14 +28,14 @@ typedef struct {
 
 static float32_t g_window_f32[MFCC_TEST_FFT_LEN];
 static q31_t g_window_q31[MFCC_TEST_FFT_LEN];
-static q15_t g_window_q15[MFCC_TEST_FFT_LEN];
+static q15_t g_window_q15[MFCC_TEST_FFT_LEN] __attribute__((aligned(4)));
 #if MFCC_TEST_ENABLE_F16
 static float16_t g_window_f16[MFCC_TEST_FFT_LEN];
 #endif
 
 static float32_t g_dct_f32[MFCC_TEST_NUM_DCT * MFCC_TEST_NUM_MEL];
 static q31_t g_dct_q31[MFCC_TEST_NUM_DCT * MFCC_TEST_NUM_MEL];
-static q15_t g_dct_q15[MFCC_TEST_NUM_DCT * MFCC_TEST_NUM_MEL];
+static q15_t g_dct_q15[MFCC_TEST_NUM_DCT * MFCC_TEST_NUM_MEL] __attribute__((aligned(4)));
 #if MFCC_TEST_ENABLE_F16
 static float16_t g_dct_f16[MFCC_TEST_NUM_DCT * MFCC_TEST_NUM_MEL];
 #endif
@@ -46,14 +46,14 @@ static uint32_t g_filter_coef_count = 0;
 
 static float32_t g_filter_f32[MFCC_TEST_MAX_FILTER_COEFS];
 static q31_t g_filter_q31[MFCC_TEST_MAX_FILTER_COEFS];
-static q15_t g_filter_q15[MFCC_TEST_MAX_FILTER_COEFS];
+static q15_t g_filter_q15[MFCC_TEST_MAX_FILTER_COEFS] __attribute__((aligned(4)));
 #if MFCC_TEST_ENABLE_F16
 static float16_t g_filter_f16[MFCC_TEST_MAX_FILTER_COEFS];
 #endif
 
 static float32_t g_input_f32[MFCC_TEST_FFT_LEN];
 static q31_t g_input_q31[MFCC_TEST_FFT_LEN];
-static q15_t g_input_q15[MFCC_TEST_FFT_LEN];
+static q15_t g_input_q15[MFCC_TEST_FFT_LEN] __attribute__((aligned(4)));
 #if MFCC_TEST_ENABLE_F16
 static float16_t g_input_f16[MFCC_TEST_FFT_LEN];
 #endif
@@ -67,7 +67,7 @@ static float16_t g_tmp_f16[2 * MFCC_TEST_FFT_LEN];
 
 static float32_t g_out_f32[MFCC_TEST_NUM_DCT];
 static q31_t g_out_q31[MFCC_TEST_NUM_DCT];
-static q15_t g_out_q15[MFCC_TEST_NUM_DCT];
+static q15_t g_out_q15[MFCC_TEST_NUM_DCT] __attribute__((aligned(4)));
 #if MFCC_TEST_ENABLE_F16
 static float16_t g_out_f16[MFCC_TEST_NUM_DCT];
 #endif

@@ -589,7 +589,7 @@ uint16_t twidCoefModifier)
          ia1 = ia1 + twidCoefModifier;
 
          i0 = j;
-#if defined(RISCV_MATH_VECTOR_F16)
+#if defined(RISCV_MATH_VECTOR_F16) && defined(RISCV_MFCC_F16_RADIX4_VEC_EXPERIMENTAL)
          {
             uint32_t blkCnt = fftLen / n1;
             size_t vl;

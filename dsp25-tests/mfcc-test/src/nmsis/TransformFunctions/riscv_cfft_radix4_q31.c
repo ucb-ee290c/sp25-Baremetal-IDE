@@ -601,9 +601,9 @@ void riscv_radix4_butterfly_q31(
   ptr1 = &pSrc[0];
 
   /*  Calculations of last stage */
+#if defined (RISCV_MATH_DSP) && (defined (NUCLEI_DSP_N3) || (__RISCV_XLEN == 64))
   do
   {
-#if defined (RISCV_MATH_DSP) && (defined (NUCLEI_DSP_N3) || (__RISCV_XLEN == 64))
     xa64 = read_q31x2_ia((q31_t **)&ptr1);
     xb64 = read_q31x2_ia((q31_t **)&ptr1);
     xc64 = read_q31x2_ia((q31_t **)&ptr1);
@@ -638,11 +638,67 @@ void riscv_radix4_butterfly_q31(
     xa_out64 = __RV_DCRAS32( __RV_DSUB32( __RV_DCRSA32(xa64, xb64), xc64), xd64);
     write_q31x2_ia((q31_t **)&ptr1, xa_out64);
     /*        xd_out = (xa - yb - xc + yd); yd_out = (ya + xb - yc - xd);*/
-    xa_out64 = __RV_DCRSA32( __RV_DSUB32( __RV_DCRAS32(xa64, xb64), xc64), xd64);
-    write_q31x2_ia((q31_t **)&ptr1, xa_out64);
+	    xa_out64 = __RV_DCRSA32( __RV_DSUB32( __RV_DCRAS32(xa64, xb64), xc64), xd64);
+	    write_q31x2_ia((q31_t **)&ptr1, xa_out64);
 #endif /* defined (NUCLEI_DSP_N3) */
 #endif /* __RISCV_XLEN == 64 */
+  } while (--j);
 #else
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+  {
+    uint32_t blkCnt = j;
+    q31_t *pBase = ptr1;
+    ptrdiff_t bstride = (ptrdiff_t)(8U * sizeof(q31_t));
+    size_t vl;
+
+    while (blkCnt > 0U)
+    {
+      vint32m4_t v_xa = __riscv_vlse32_v_i32m4(pBase, bstride, vl = __riscv_vsetvl_e32m4(blkCnt));
+      vint32m4_t v_ya = __riscv_vlse32_v_i32m4(pBase + 1, bstride, vl);
+      vint32m4_t v_xb = __riscv_vlse32_v_i32m4(pBase + 2, bstride, vl);
+      vint32m4_t v_yb = __riscv_vlse32_v_i32m4(pBase + 3, bstride, vl);
+      vint32m4_t v_xc = __riscv_vlse32_v_i32m4(pBase + 4, bstride, vl);
+      vint32m4_t v_yc = __riscv_vlse32_v_i32m4(pBase + 5, bstride, vl);
+      vint32m4_t v_xd = __riscv_vlse32_v_i32m4(pBase + 6, bstride, vl);
+      vint32m4_t v_yd = __riscv_vlse32_v_i32m4(pBase + 7, bstride, vl);
+
+      vint32m4_t v_out0_r = __riscv_vadd_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_xb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xc, v_xd, vl), vl);
+      vint32m4_t v_out0_i = __riscv_vadd_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_yb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yc, v_yd, vl), vl);
+
+      vint32m4_t v_out1_r = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_xc, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xb, v_xd, vl), vl);
+      vint32m4_t v_out1_i = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_yc, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yb, v_yd, vl), vl);
+
+      vint32m4_t v_out2_r = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_yb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xc, v_yd, vl), vl);
+      vint32m4_t v_out2_i = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_xd, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xb, v_yc, vl), vl);
+
+      vint32m4_t v_out3_r = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_yd, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yb, v_xc, vl), vl);
+      vint32m4_t v_out3_i = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_xb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yc, v_xd, vl), vl);
+
+      __riscv_vsse32_v_i32m4(pBase, bstride, v_out0_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 1, bstride, v_out0_i, vl);
+      __riscv_vsse32_v_i32m4(pBase + 2, bstride, v_out1_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 3, bstride, v_out1_i, vl);
+      __riscv_vsse32_v_i32m4(pBase + 4, bstride, v_out2_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 5, bstride, v_out2_i, vl);
+      __riscv_vsse32_v_i32m4(pBase + 6, bstride, v_out3_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 7, bstride, v_out3_i, vl);
+
+      pBase += (uint32_t)(8U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+    ptr1 = pBase;
+  }
+#else
+  do
+  {
     /* Read xa (real), ya(imag) input */
     xa = *ptr1++;
     ya = *ptr1++;
@@ -693,8 +749,9 @@ void riscv_radix4_butterfly_q31(
     *ptr1++ = xd_out;
     *ptr1++ = yd_out;
 
-#endif /* defined (RISCV_MATH_DSP) && (defined (NUCLEI_DSP_N3) || (__RISCV_XLEN == 64)) */
   } while (--j);
+#endif
+#endif /* defined (RISCV_MATH_DSP) && (defined (NUCLEI_DSP_N3) || (__RISCV_XLEN == 64)) */
 
   /* output is in 11.21(q21) format for the 1024 point */
   /* output is in 9.23(q23) format for the 256 point */
@@ -1008,9 +1065,9 @@ void riscv_radix4_butterfly_inverse_q31(
   ptr1 = &pSrc[0];
 
   /*  Calculations of last stage */
+#if defined RISCV_MATH_DSP && (__RISCV_XLEN == 64)
   do
   {
-#if defined RISCV_MATH_DSP && (__RISCV_XLEN == 64)
     xa64 = read_q31x2_ia((q31_t **)&ptr1);
     xb64 = read_q31x2_ia((q31_t **)&ptr1);
     xc64 = read_q31x2_ia((q31_t **)&ptr1);
@@ -1027,10 +1084,66 @@ void riscv_radix4_butterfly_inverse_q31(
     xa_out64 = __RV_KCRAS32( __RV_KSUB32( __RV_KCRSA32(xa64, xb64), xc64), xd64);
     write_q31x2_ia((q31_t **)&ptr1, xa_out64);
     /* xd_out = (xa - yb - xc + yd); yd_out = (ya + xb - yc - xd);*/
-    xa_out64 = __RV_KCRSA32( __RV_KSUB32( __RV_KCRAS32(xa64, xb64), xc64), xd64);
-    write_q31x2_ia((q31_t **)&ptr1, xa_out64);
+	    xa_out64 = __RV_KCRSA32( __RV_KSUB32( __RV_KCRAS32(xa64, xb64), xc64), xd64);
+	    write_q31x2_ia((q31_t **)&ptr1, xa_out64);
 
+  } while (--j);
 #else
+#if defined(RISCV_MATH_VECTOR) && (__RISCV_XLEN == 64)
+  {
+    uint32_t blkCnt = j;
+    q31_t *pBase = ptr1;
+    ptrdiff_t bstride = (ptrdiff_t)(8U * sizeof(q31_t));
+    size_t vl;
+
+    while (blkCnt > 0U)
+    {
+      vint32m4_t v_xa = __riscv_vlse32_v_i32m4(pBase, bstride, vl = __riscv_vsetvl_e32m4(blkCnt));
+      vint32m4_t v_ya = __riscv_vlse32_v_i32m4(pBase + 1, bstride, vl);
+      vint32m4_t v_xb = __riscv_vlse32_v_i32m4(pBase + 2, bstride, vl);
+      vint32m4_t v_yb = __riscv_vlse32_v_i32m4(pBase + 3, bstride, vl);
+      vint32m4_t v_xc = __riscv_vlse32_v_i32m4(pBase + 4, bstride, vl);
+      vint32m4_t v_yc = __riscv_vlse32_v_i32m4(pBase + 5, bstride, vl);
+      vint32m4_t v_xd = __riscv_vlse32_v_i32m4(pBase + 6, bstride, vl);
+      vint32m4_t v_yd = __riscv_vlse32_v_i32m4(pBase + 7, bstride, vl);
+
+      vint32m4_t v_out0_r = __riscv_vadd_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_xb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xc, v_xd, vl), vl);
+      vint32m4_t v_out0_i = __riscv_vadd_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_yb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yc, v_yd, vl), vl);
+
+      vint32m4_t v_out1_r = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_xc, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xb, v_xd, vl), vl);
+      vint32m4_t v_out1_i = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_yc, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yb, v_yd, vl), vl);
+
+      vint32m4_t v_out2_r = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_yd, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yb, v_xc, vl), vl);
+      vint32m4_t v_out2_i = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_xb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_yc, v_xd, vl), vl);
+
+      vint32m4_t v_out3_r = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_xa, v_yb, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xc, v_yd, vl), vl);
+      vint32m4_t v_out3_i = __riscv_vsub_vv_i32m4(__riscv_vadd_vv_i32m4(v_ya, v_xd, vl),
+                                                  __riscv_vadd_vv_i32m4(v_xb, v_yc, vl), vl);
+
+      __riscv_vsse32_v_i32m4(pBase, bstride, v_out0_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 1, bstride, v_out0_i, vl);
+      __riscv_vsse32_v_i32m4(pBase + 2, bstride, v_out1_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 3, bstride, v_out1_i, vl);
+      __riscv_vsse32_v_i32m4(pBase + 4, bstride, v_out2_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 5, bstride, v_out2_i, vl);
+      __riscv_vsse32_v_i32m4(pBase + 6, bstride, v_out3_r, vl);
+      __riscv_vsse32_v_i32m4(pBase + 7, bstride, v_out3_i, vl);
+
+      pBase += (uint32_t)(8U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+    ptr1 = pBase;
+  }
+#else
+  do
+  {
     /* Read xa (real), ya(imag) input */
     xa = *ptr1++;
     ya = *ptr1++;
@@ -1074,15 +1187,15 @@ void riscv_radix4_butterfly_inverse_q31(
     *ptr1++ = xb_out;
     *ptr1++ = yb_out;
 
-    xd_out = (xa + yb - xc - yd);
-    yd_out = (ya - xb - yc + xd);
+	    xd_out = (xa + yb - xc - yd);
+	    yd_out = (ya - xb - yc + xd);
 
-    /* writing xd' and yd' */
-    *ptr1++ = xd_out;
-    *ptr1++ = yd_out;
+	    /* writing xd' and yd' */
+	    *ptr1++ = xd_out;
+	    *ptr1++ = yd_out;
+	  } while (--j);
+#endif
 #endif /* defined RISCV_MATH_DSP && (__RISCV_XLEN == 64) */
-
-  } while (--j);
 
   /* output is in 11.21(q21) format for the 1024 point */
   /* output is in 9.23(q23) format for the 256 point */

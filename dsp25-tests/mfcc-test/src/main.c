@@ -81,6 +81,39 @@ static riscv_mfcc_instance_f16 g_mfcc_f16;
 
 static mfcc_case_t g_cases[MFCC_TEST_NUM_CASES];
 
+static void print_kernel_mode_summary(void) {
+  printf("  kernel-mode summary:\n");
+
+#if defined(RISCV_MATH_VECTOR)
+  printf("    f32 path : vector-enabled (RVV)\n");
+#else
+  printf("    f32 path : scalar\n");
+#endif
+
+#if defined(RISCV_MATH_VECTOR) && defined(__RISCV_XLEN) && (__RISCV_XLEN == 64)
+  printf("    q31 path : vector-enabled (RVV, XLEN=64)\n");
+  printf("    q15 path : vector-enabled (RVV, XLEN=64)\n");
+#else
+#if defined(RISCV_MATH_DSP)
+  printf("    q31 path : scalar + DSP intrinsics\n");
+  printf("    q15 path : scalar + DSP intrinsics\n");
+#else
+  printf("    q31 path : scalar\n");
+  printf("    q15 path : scalar\n");
+#endif
+#endif
+
+#if MFCC_TEST_ENABLE_F16
+#if defined(RISCV_MATH_VECTOR_F16)
+  printf("    f16 path : vector-enabled (RVV + Zvfh)\n");
+#else
+  printf("    f16 path : scalar (no Zvfh RVV support)\n");
+#endif
+#else
+  printf("    f16 path : disabled (no Zfh scalar support)\n");
+#endif
+}
+
 static inline uint64_t rdcycle64(void) {
   uint64_t x;
   asm volatile("rdcycle %0" : "=r"(x));
@@ -439,6 +472,7 @@ void app_main(void) {
 #else
   printf("  f16 path disabled (toolchain missing __riscv_zfh)\n");
 #endif
+  print_kernel_mode_summary();
 
   generate_window();
   generate_dct();

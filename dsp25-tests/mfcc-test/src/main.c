@@ -14,6 +14,9 @@
 
 #define MFCC_TEST_Q31_SCALE 2147483647.0f
 #define MFCC_TEST_Q15_SCALE 32767.0f
+#define MFCC_TEST_TOL_Q31_VS_F32 1.0f
+#define MFCC_TEST_TOL_Q15_VS_F32 6.0f
+#define MFCC_TEST_TOL_F16_VS_F32 0.5f
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 #define MFCC_TEST_ENABLE_F16 1
@@ -398,6 +401,65 @@ static int compare_output_f32_to_reference(uint32_t case_idx, const float32_t *x
   return pass ? 1 : 0;
 }
 
+static int compare_q31_to_f32(const q31_t *x_q31, const float32_t *x_f32) {
+  float32_t max_abs_err = 0.0f;
+  uint32_t max_abs_idx = 0;
+  for (uint32_t i = 0; i < MFCC_TEST_NUM_DCT; i++) {
+    float32_t err = fabsf(q31_to_float(x_q31[i]) - x_f32[i]);
+    if (err > max_abs_err) {
+      max_abs_err = err;
+      max_abs_idx = i;
+    }
+  }
+  int pass = (max_abs_err <= MFCC_TEST_TOL_Q31_VS_F32);
+  printf("    chk[q31~f32]= %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+         pass ? "PASS" : "FAIL",
+         max_abs_err,
+         (unsigned long)max_abs_idx,
+         MFCC_TEST_TOL_Q31_VS_F32);
+  return pass ? 1 : 0;
+}
+
+static int compare_q15_to_f32(const q15_t *x_q15, const float32_t *x_f32) {
+  float32_t max_abs_err = 0.0f;
+  uint32_t max_abs_idx = 0;
+  for (uint32_t i = 0; i < MFCC_TEST_NUM_DCT; i++) {
+    float32_t err = fabsf(q15_to_float(x_q15[i]) - x_f32[i]);
+    if (err > max_abs_err) {
+      max_abs_err = err;
+      max_abs_idx = i;
+    }
+  }
+  int pass = (max_abs_err <= MFCC_TEST_TOL_Q15_VS_F32);
+  printf("    chk[q15~f32]= %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+         pass ? "PASS" : "FAIL",
+         max_abs_err,
+         (unsigned long)max_abs_idx,
+         MFCC_TEST_TOL_Q15_VS_F32);
+  return pass ? 1 : 0;
+}
+
+#if MFCC_TEST_ENABLE_F16
+static int compare_f16_to_f32(const float16_t *x_f16, const float32_t *x_f32) {
+  float32_t max_abs_err = 0.0f;
+  uint32_t max_abs_idx = 0;
+  for (uint32_t i = 0; i < MFCC_TEST_NUM_DCT; i++) {
+    float32_t err = fabsf(f16_to_float(x_f16[i]) - x_f32[i]);
+    if (err > max_abs_err) {
+      max_abs_err = err;
+      max_abs_idx = i;
+    }
+  }
+  int pass = (max_abs_err <= MFCC_TEST_TOL_F16_VS_F32);
+  printf("    chk[f16~f32]= %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+         pass ? "PASS" : "FAIL",
+         max_abs_err,
+         (unsigned long)max_abs_idx,
+         MFCC_TEST_TOL_F16_VS_F32);
+  return pass ? 1 : 0;
+}
+#endif
+
 static int init_mfcc_instances(void) {
   riscv_status st;
 
@@ -492,6 +554,14 @@ void app_main(void) {
   uint32_t ref_pass = 0;
   uint32_t ref_fail = 0;
   uint32_t ref_skip = 0;
+  uint32_t q31_chk_pass = 0;
+  uint32_t q31_chk_fail = 0;
+  uint32_t q15_chk_pass = 0;
+  uint32_t q15_chk_fail = 0;
+#if MFCC_TEST_ENABLE_F16
+  uint32_t f16_chk_pass = 0;
+  uint32_t f16_chk_fail = 0;
+#endif
 
   for (uint32_t tc = 0; tc < MFCC_TEST_NUM_CASES; tc++) {
     const float32_t *in = g_cases[tc].samples;
@@ -508,36 +578,28 @@ void app_main(void) {
     printf("\n[CASE %lu] %s\n", (unsigned long)tc, g_cases[tc].name);
     print_input_preview(in);
 
-    printf("    [run] f32 begin\n");
     uint64_t f0 = rdcycle64();
     riscv_mfcc_f32(&g_mfcc_f32, g_input_f32, g_out_f32, g_tmp_f32);
     uint64_t f1 = rdcycle64();
-    printf("    [run] f32 done\n");
 
-    printf("    [run] q31 begin\n");
     uint64_t q0 = rdcycle64();
     riscv_status st_q31 = riscv_mfcc_q31(&g_mfcc_q31,
                                          g_input_q31,
                                          g_out_q31,
                                          g_tmp_q31);
     uint64_t q1 = rdcycle64();
-    printf("    [run] q31 done\n");
 
-    printf("    [run] q15 begin\n");
     uint64_t h0 = rdcycle64();
     riscv_status st_q15 = riscv_mfcc_q15(&g_mfcc_q15,
                                          g_input_q15,
                                          g_out_q15,
                                          g_tmp_q15_as_q31);
     uint64_t h1 = rdcycle64();
-    printf("    [run] q15 done\n");
 
 #if MFCC_TEST_ENABLE_F16
-    printf("    [run] f16 begin\n");
     uint64_t e0 = rdcycle64();
     riscv_mfcc_f16(&g_mfcc_f16, g_input_f16, g_out_f16, g_tmp_f16);
     uint64_t e1 = rdcycle64();
-    printf("    [run] f16 done\n");
 #endif
 
     print_output_f32(g_out_f32);
@@ -562,6 +624,29 @@ void app_main(void) {
     } else {
       ref_skip++;
     }
+
+    int q31_chk = compare_q31_to_f32(g_out_q31, g_out_f32);
+    if (q31_chk > 0) {
+      q31_chk_pass++;
+    } else {
+      q31_chk_fail++;
+    }
+
+    int q15_chk = compare_q15_to_f32(g_out_q15, g_out_f32);
+    if (q15_chk > 0) {
+      q15_chk_pass++;
+    } else {
+      q15_chk_fail++;
+    }
+
+#if MFCC_TEST_ENABLE_F16
+    int f16_chk = compare_f16_to_f32(g_out_f16, g_out_f32);
+    if (f16_chk > 0) {
+      f16_chk_pass++;
+    } else {
+      f16_chk_fail++;
+    }
+#endif
   }
 
   if ((MFCC_REF_NUM_CASES == MFCC_TEST_NUM_CASES) &&
@@ -572,6 +657,21 @@ void app_main(void) {
            (unsigned long)ref_skip,
            MFCC_REF_F32_TOL);
   }
+
+  printf("Correctness summary (vs f32): q31 pass=%lu fail=%lu tol=%0.3f\n",
+         (unsigned long)q31_chk_pass,
+         (unsigned long)q31_chk_fail,
+         MFCC_TEST_TOL_Q31_VS_F32);
+  printf("Correctness summary (vs f32): q15 pass=%lu fail=%lu tol=%0.3f\n",
+         (unsigned long)q15_chk_pass,
+         (unsigned long)q15_chk_fail,
+         MFCC_TEST_TOL_Q15_VS_F32);
+#if MFCC_TEST_ENABLE_F16
+  printf("Correctness summary (vs f32): f16 pass=%lu fail=%lu tol=%0.3f\n",
+         (unsigned long)f16_chk_pass,
+         (unsigned long)f16_chk_fail,
+         MFCC_TEST_TOL_F16_VS_F32);
+#endif
 
   printf("\nMFCC test complete.\n");
 }

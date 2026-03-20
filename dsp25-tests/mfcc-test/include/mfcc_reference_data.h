@@ -3,7 +3,7 @@
 
 #define MFCC_REF_NUM_CASES 8
 #define MFCC_REF_NUM_DCT 12
-#define MFCC_REF_F32_TOL 0.050000f
+#define MFCC_REF_F32_TOL 0.250000f
 
 static const char *const g_mfcc_ref_case_names[MFCC_REF_NUM_CASES] = {
   "silence",

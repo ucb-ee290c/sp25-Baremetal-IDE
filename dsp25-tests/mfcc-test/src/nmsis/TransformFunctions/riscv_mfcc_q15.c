@@ -4,17 +4,6 @@
 #include "dsp/complex_math_functions.h"
 #include "dsp/fast_math_functions.h"
 #include "dsp/matrix_functions.h"
-#include <stdio.h>
-
-#ifndef MFCC_Q15_TRACE
-#define MFCC_Q15_TRACE 1
-#endif
-
-#if MFCC_Q15_TRACE
-#define Q15_TRACE(msg) printf("      [q15] %s\n", msg)
-#else
-#define Q15_TRACE(msg) do { } while (0)
-#endif
 
 /* Constants for Q15 implementation */
 #define LOG2TOLOG_Q15 0x02C5C860
@@ -71,11 +60,8 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
     q15_t *pTmp2=(q15_t*)pTmp;
 
     riscv_status status = RISCV_MATH_SUCCESS;
-    Q15_TRACE("enter");
-
     // q15
     riscv_absmax_q15(pSrc,S->fftLen,&m,&index);
-    Q15_TRACE("after absmax");
 
     if ((m != 0) && (m != 0x7FFF))
     {
@@ -90,12 +76,10 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
 
        riscv_scale_q15(pSrc,quotient,shift,pSrc,S->fftLen);
     }
-    Q15_TRACE("after optional normalize");
 
 
     // q15
     riscv_mult_q15(pSrc,S->windowCoefs, pSrc, S->fftLen);
-    Q15_TRACE("after window multiply");
 
 
     /* Compute spectrum magnitude
@@ -120,13 +104,11 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
     /* Default RFFT based implementation */
     riscv_rfft_q15(&(S->rfft),pSrc,pTmp2);
 #endif
-    Q15_TRACE("after rfft");
     filterLimit = 1 + (S->fftLen >> 1);
 
 
     // q15 - fftShift
     riscv_cmplx_mag_q15(pTmp2,pSrc,filterLimit);
-    Q15_TRACE("after complex magnitude");
     // q14 - fftShift
 
     /* Apply MEL filters */
@@ -147,18 +129,15 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
       pTmp[i] = __SSAT(result,31) ;
 
     }
-    Q15_TRACE("after mel filters");
 
     if ((m != 0) && (m != 0x7FFF))
     {
       riscv_scale_q31(pTmp,m<<16,0,pTmp,S->nbMelFilters);
     }
-    Q15_TRACE("after optional rescale");
    
     // q34.29 - fftShift - satShift
     /* Compute the log */
     riscv_vlog_q31(pTmp,pTmp,S->nbMelFilters);
-    Q15_TRACE("after vlog");
 
 
     // q5.26
@@ -170,12 +149,10 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
     // q8.26
     riscv_offset_q31(pTmp,logExponent,pTmp,S->nbMelFilters);
     riscv_shift_q31(pTmp,-19,pTmp,S->nbMelFilters);
-    Q15_TRACE("after offset+shift");
     for(i=0; i<S->nbMelFilters; i++)
     {
       pSrc[i] = __SSAT((q15_t)pTmp[i],16);
     }
-    Q15_TRACE("after q31->q15 staging");
 
     // q8.7
 
@@ -184,7 +161,6 @@ RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_q15(
     pDctMat.pData=(q15_t*)S->dctCoefs;
 
     riscv_mat_vec_mult_q15(&pDctMat, pSrc, pDst);
-    Q15_TRACE("after dct mat-vec");
 
     return(status);
 }

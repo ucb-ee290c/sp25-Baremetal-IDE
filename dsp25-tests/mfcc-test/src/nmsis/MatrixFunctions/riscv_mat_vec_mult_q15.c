@@ -82,6 +82,24 @@ RISCV_DSP_ATTRIBUTE void riscv_mat_vec_mult_q15(const riscv_matrix_instance_q15 
     /* Set status as RISCV_MATH_SUCCESS */
 #else
 
+    if (numCols & 1u) {
+        /* Safe fallback for odd row stride: packed q15x2 reads on subsequent rows
+         * can become 2-byte misaligned and trap on cores/simulators without
+         * misaligned 32-bit support.
+         */
+        uint32_t r, c;
+        px = pDst;
+        for (r = 0; r < numRows; r++) {
+            q63_t sum = 0;
+            const q15_t *rowPtr = pSrcA + (r * numCols);
+            for (c = 0; c < numCols; c++) {
+                sum += (q63_t)rowPtr[c] * pVec[c];
+            }
+            *px++ = (q15_t)(__SSAT((sum >> 15), 16));
+        }
+        return;
+    }
+
     /* Process 4 rows at a time */
     row = numRows >> 2;
     i = 0u;

@@ -141,7 +141,7 @@ void riscv_barycenter_f16(const float16_t *in
 __STATIC_INLINE int16_t riscv_typecast_s16_f16(float16_t x)
 {
    int16_t res;
-   res=*(int16_t*)memcpy((char*)&res,(char*)&x,sizeof(float16_t));
+   memcpy(&res, &x, sizeof(res));
    return(res);
 }
 
@@ -160,7 +160,7 @@ __STATIC_INLINE int16_t riscv_typecast_s16_f16(float16_t x)
 __STATIC_INLINE float16_t riscv_typecast_f16_s16(int16_t x)
 {
    float16_t res;
-   res=*(float16_t*)memcpy((char*)&res,(char*)&x,sizeof(int16_t));
+   memcpy(&res, &x, sizeof(res));
    return(res);
 }
 

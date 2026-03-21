@@ -113,6 +113,12 @@ add_executable(mfcc-test
   ${MFCC_NMSIS_COMMON_TABLES_SOURCES}
 )
 
+option(MFCC_F16_ASM_MULT "Enable hand-written RVV fp16 multiply microkernel" ON)
+if(MFCC_F16_ASM_MULT)
+  target_sources(mfcc-test PRIVATE src/asm/riscv_mult_f16_rvv.S)
+  target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_MULT=1)
+endif()
+
 set(MFCC_F16_RADIX4_EXPERIMENTAL OFF CACHE BOOL
   "Enable experimental RVV radix4 f16 butterfly path")
 if(MFCC_F16_RADIX4_EXPERIMENTAL)
@@ -149,7 +155,7 @@ set(MFCC_F16_HOTSPOT_SOURCES
 )
 set_source_files_properties(${MFCC_F16_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O3;-fno-strict-aliasing")
 
-option(MFCC_F16_ULTRA_OPT "Enable aggressive f16 hotspot optimization" ON)
+option(MFCC_F16_ULTRA_OPT "Enable aggressive f16 hotspot optimization" OFF)
 if(MFCC_F16_ULTRA_OPT)
   set(MFCC_F16_ULTRA_SOURCES
     src/nmsis/TransformFunctions/riscv_mfcc_f16.c

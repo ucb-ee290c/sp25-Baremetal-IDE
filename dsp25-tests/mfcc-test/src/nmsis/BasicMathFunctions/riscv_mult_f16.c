@@ -20,6 +20,14 @@
 
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
+
+#if defined(RISCV_MATH_VECTOR_F16) && defined(MFCC_F16_ASM_MULT)
+extern void riscv_mult_f16_rvv_asm(const float16_t *pSrcA,
+                                   const float16_t *pSrcB,
+                                   float16_t *pDst,
+                                   uint32_t blockSize);
+#endif
+
 RISCV_DSP_ATTRIBUTE void riscv_mult_f16(
   const float16_t * pSrcA,
   const float16_t * pSrcB,
@@ -29,6 +37,9 @@ RISCV_DSP_ATTRIBUTE void riscv_mult_f16(
     uint32_t blkCnt;                               /* Loop counter */
 
 #if defined(RISCV_MATH_VECTOR_F16)
+#if defined(MFCC_F16_ASM_MULT)
+  riscv_mult_f16_rvv_asm(pSrcA, pSrcB, pDst, blockSize);
+#else
   blkCnt = blockSize;                               /* Loop counter */
   size_t l;
   vfloat16m8_t vx, vy;
@@ -41,6 +52,7 @@ RISCV_DSP_ATTRIBUTE void riscv_mult_f16(
     __riscv_vse16_v_f16m8(pDst, __riscv_vfmul_vv_f16m8(vx, vy, l), l);
     pDst += l;
   }
+#endif
 #else
 #if defined (RISCV_MATH_LOOPUNROLL)
 

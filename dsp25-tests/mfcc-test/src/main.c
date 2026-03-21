@@ -112,6 +112,11 @@ static void print_kernel_mode_summary(void) {
 #else
   printf("    f16 path : scalar (no Zvfh RVV support)\n");
 #endif
+#if defined(MFCC_F16_ASM_MULT)
+  printf("    f16 mult  : asm microkernel enabled\n");
+#else
+  printf("    f16 mult  : C/RVV kernel\n");
+#endif
 #if defined(RISCV_MFCC_F16_RADIX4_VEC_EXPERIMENTAL)
   printf("    f16 radix4: experimental RVV enabled\n");
 #else

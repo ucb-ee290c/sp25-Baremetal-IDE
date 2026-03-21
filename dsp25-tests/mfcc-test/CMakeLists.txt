@@ -127,6 +127,10 @@ set(MFCC_HOTSPOT_SOURCES
 set_source_files_properties(${MFCC_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O3")
 
 set(MFCC_F16_HOTSPOT_SOURCES
+  src/nmsis/StatisticsFunctions/riscv_absmax_f16.c
+  src/nmsis/BasicMathFunctions/riscv_mult_f16.c
+  src/nmsis/BasicMathFunctions/riscv_offset_f16.c
+  src/nmsis/BasicMathFunctions/riscv_scale_f16.c
   src/nmsis/TransformFunctions/riscv_mfcc_f16.c
   src/nmsis/TransformFunctions/riscv_cfft_f16.c
   src/nmsis/TransformFunctions/riscv_cfft_radix4_f16.c

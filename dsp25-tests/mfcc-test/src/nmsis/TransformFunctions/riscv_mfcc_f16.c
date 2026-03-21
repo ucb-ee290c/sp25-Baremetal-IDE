@@ -105,12 +105,27 @@ RISCV_DSP_ATTRIBUTE void riscv_mfcc_f16(
   /* Apply MEL filters */
   for(i=0; i<S->nbMelFilters; i++)
   {
-      riscv_dot_prod_f16(pSrc+S->filterPos[i],
-        coefs,
-        S->filterLengths[i],
-        &result);
+      const float16_t *pMel = pSrc + S->filterPos[i];
+      const float16_t *pCoef = coefs;
+      uint32_t melLen = S->filterLengths[i];
 
-      coefs += S->filterLengths[i];
+#if defined(RISCV_MATH_VECTOR_F16)
+      if (melLen <= 16U)
+      {
+        uint32_t n = melLen;
+        result = 0.0f16;
+        while (n > 0U)
+        {
+          result += (_Float16)(*pMel++) * (_Float16)(*pCoef++);
+          n--;
+        }
+      }
+      else
+#endif
+      {
+        riscv_dot_prod_f16(pMel, pCoef, melLen, &result);
+      }
+      coefs += melLen;
 
       pTmp[i] = result;
 

@@ -28,6 +28,18 @@ RISCV_DSP_ATTRIBUTE void riscv_dot_prod_f16(
         _Float16 sum = 0.0f;                          /* Temporary return variable */
 
 #if defined(RISCV_MATH_VECTOR_F16)
+  if (blockSize <= 16U)
+  {
+    uint32_t blkCnt = blockSize;
+    while (blkCnt > 0U)
+    {
+      sum += (_Float16)(*pSrcA++) * (_Float16)(*pSrcB++);
+      blkCnt--;
+    }
+    *result = sum;
+    return;
+  }
+
   size_t blkCnt = blockSize;                               /* Loop counter */
   size_t l;
   vfloat16m8_t v_A, v_B;

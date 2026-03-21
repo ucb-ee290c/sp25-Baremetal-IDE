@@ -130,7 +130,7 @@ void riscv_absmax_f16(
     out = 0;
     outIndex = 0;
     l = __riscv_vsetvl_e16m1(1);
-    vfloat16m1_t v_zero = __riscv_vfsub_vv_f16m1(v_zero, v_zero, l);
+    vfloat16m1_t v_zero = __riscv_vfmv_v_f_f16m1(0.0f16, l);
     for (; (l = __riscv_vsetvl_e16m8(blkCnt)) > 0; blkCnt -= l) {
         v_x = __riscv_vle16_v_f16m8(pIN, l);
         pIN += l;
@@ -181,4 +181,3 @@ void riscv_absmax_f16(
  */
 
 #endif /* #if defined(RISCV_FLOAT16_SUPPORTED) */
-

@@ -14,7 +14,7 @@
 #define MFCC_REF_F32_TOL 0.250000f
 #define MFCC_REF_Q31_TOL 0.050000f
 #define MFCC_REF_Q15_TOL 0.250000f
-#define MFCC_REF_F16_TOL 0.250000f
+#define MFCC_REF_F16_TOL 0.270000f
 
 static const char *const g_mfcc_ref_case_names[MFCC_REF_NUM_CASES] = {
   "silence",

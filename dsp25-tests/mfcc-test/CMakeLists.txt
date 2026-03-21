@@ -113,6 +113,8 @@ add_executable(mfcc-test
   ${MFCC_NMSIS_COMMON_TABLES_SOURCES}
 )
 
+target_compile_definitions(mfcc-test PRIVATE RISCV_MFCC_F16_RADIX4_VEC_EXPERIMENTAL=1)
+
 set(MFCC_HOTSPOT_SOURCES
   src/nmsis/FastMathFunctions/riscv_vlog_q31.c
   src/nmsis/MatrixFunctions/riscv_mat_vec_mult_q31.c

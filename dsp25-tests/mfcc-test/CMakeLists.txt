@@ -126,9 +126,9 @@ if(MFCC_F16_ASM_MODE EQUAL 1)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_RADIX4BY2=1)
 endif()
 
-set(MFCC_F16_ACCUM_MODE 1)
-# 0 = legacy native f16 accumulation
-# 1 = mixed f32 accumulation in mel and DCT stages for improved precision
+set(MFCC_F16_ACCUM_MODE 0)
+# 0 = native f16 accumulation (fast path)
+# 1 = mixed f32 accumulation in mel and DCT stages (higher cost)
 target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ACCUM_MODE=${MFCC_F16_ACCUM_MODE})
 
 set(MFCC_F16_RADIX4_EXPERIMENTAL OFF CACHE BOOL
@@ -180,7 +180,7 @@ if(MFCC_F16_ULTRA_OPT)
     src/nmsis/TransformFunctions/riscv_bitreversal2.c
   )
   set_source_files_properties(${MFCC_F16_ULTRA_SOURCES} PROPERTIES
-    COMPILE_OPTIONS "-Ofast;-fno-strict-aliasing;-fno-math-errno;-ffast-math")
+    COMPILE_OPTIONS "-O3;-fno-strict-aliasing;-fno-math-errno;-ffp-contract=fast")
 endif()
 
 target_include_directories(mfcc-test PUBLIC include)

@@ -856,7 +856,7 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 }
 
 void app_init(void) {
-  init_test(target_frequency);
+  // init_test(target_frequency);
   (void)setup_once();
 }
 

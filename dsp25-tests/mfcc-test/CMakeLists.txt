@@ -144,15 +144,6 @@ set(MFCC_F16_HOTSPOT_SOURCES
 )
 set_source_files_properties(${MFCC_F16_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O3;-fno-strict-aliasing")
 
-# These files are numerically sensitive in fp16 with aggressive optimization.
-# Keep them at O1 to preserve correctness while other fp16 hotspots stay at O3.
-set(MFCC_F16_STABLE_SOURCES
-  src/nmsis/FastMathFunctions/riscv_vlog_f16.c
-  src/nmsis/TransformFunctions/riscv_rfft_fast_f16.c
-  src/nmsis/TransformFunctions/riscv_cfft_radix4_f16.c
-)
-set_source_files_properties(${MFCC_F16_STABLE_SOURCES} PROPERTIES COMPILE_OPTIONS "-O1;-fno-strict-aliasing")
-
 target_include_directories(mfcc-test PUBLIC include)
 target_include_directories(mfcc-test PUBLIC ${CMAKE_SOURCE_DIR}/platform/dsp25/include)
 

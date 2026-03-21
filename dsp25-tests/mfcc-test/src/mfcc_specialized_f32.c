@@ -11,9 +11,9 @@
 #define MFCC_SPECIALIZED_RUNTIME_CHECK 0
 #endif
 
-static __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_mel_f32(const riscv_mfcc_instance_f32 *S,
-                                                                const float32_t *spectrum,
-                                                                float32_t *mel_out)
+__STATIC_FORCEINLINE void mfcc_tinyspeech_apply_mel_f32(const riscv_mfcc_instance_f32 *S,
+                                                         const float32_t *spectrum,
+                                                         float32_t *mel_out)
 {
   const float32_t *coef = S->filterCoefs;
 
@@ -26,9 +26,9 @@ static __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_mel_f32(const riscv_mfcc_
   }
 }
 
-static __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_dct_f32(const riscv_mfcc_instance_f32 *S,
-                                                                const float32_t *mel,
-                                                                float32_t *out)
+__STATIC_FORCEINLINE void mfcc_tinyspeech_apply_dct_f32(const riscv_mfcc_instance_f32 *S,
+                                                         const float32_t *mel,
+                                                         float32_t *out)
 {
   riscv_matrix_instance_f32 pDctMat;
   pDctMat.numRows = MFCC_TINYSPEECH_NUM_DCT;

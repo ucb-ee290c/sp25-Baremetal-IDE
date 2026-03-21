@@ -17,9 +17,9 @@
 #define MFCC_F16_ACCUM_MODE 0
 #endif
 
-static __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_mel_f16(const riscv_mfcc_instance_f16 *S,
-                                                                const float16_t *spectrum,
-                                                                float16_t *mel_out)
+__STATIC_FORCEINLINE void mfcc_tinyspeech_apply_mel_f16(const riscv_mfcc_instance_f16 *S,
+                                                         const float16_t *spectrum,
+                                                         float16_t *mel_out)
 {
   const float16_t *coef = S->filterCoefs;
 
@@ -55,9 +55,9 @@ static __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_mel_f16(const riscv_mfcc_
   }
 }
 
-static __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_dct_f16(const riscv_mfcc_instance_f16 *S,
-                                                                const float16_t *mel,
-                                                                float16_t *out)
+__STATIC_FORCEINLINE void mfcc_tinyspeech_apply_dct_f16(const riscv_mfcc_instance_f16 *S,
+                                                         const float16_t *mel,
+                                                         float16_t *out)
 {
 #if (MFCC_F16_ACCUM_MODE == 1)
   for (uint32_t i = 0; i < MFCC_TINYSPEECH_NUM_DCT; i++) {

@@ -93,6 +93,12 @@ static void print_kernel_mode_summary(void) {
 #endif
 #endif
 
+#if defined(MFCC_VLOG_VEC_APPROX) && (MFCC_VLOG_VEC_APPROX == 1)
+  printf("    vlog mode: RVV polynomial approximation\n");
+#else
+  printf("    vlog mode: scalar reference implementation\n");
+#endif
+
 #if defined(RISCV_MATH_VECTOR) && defined(__RISCV_XLEN) && (__RISCV_XLEN == 64)
   printf("    q31 path : vector-enabled (RVV, XLEN=64)\n");
   printf("    q15 path : vector-enabled (RVV, XLEN=64)\n");

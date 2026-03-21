@@ -178,9 +178,11 @@ static void riscv_cfft_radix8by2_f32 (riscv_cfft_instance_f32 * S, float32_t * p
   float32_t * pCol1, * pCol2, * pMid1, * pMid2;
   float32_t * p2 = p1 + L;
   const float32_t * tw = (float32_t *) S->pTwiddle;
+#if !defined(RISCV_MATH_VECTOR)
   float32_t t1[4], t2[4], t3[4], t4[4], twR, twI;
   float32_t m0, m1, m2, m3;
   uint32_t l;
+#endif
 
   pCol1 = p1;
   pCol2 = p2;
@@ -193,6 +195,82 @@ static void riscv_cfft_radix8by2_f32 (riscv_cfft_instance_f32 * S, float32_t * p
   pMid2 = p2 + L;
 
   /* do two dot Fourier transform */
+#if defined(RISCV_MATH_VECTOR)
+  {
+    uint32_t blkCnt = L >> 1; /* Number of complex samples in each half-column */
+    size_t vl;
+    ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float32_t));
+    float32_t *p1Vec = p1;
+    float32_t *p2Vec = p2;
+    float32_t *pMid1Vec = pMid1;
+    float32_t *pMid2Vec = pMid2;
+    const float32_t *pTwR = tw;
+    const float32_t *pTwI = tw + 1;
+
+    while ((vl = __riscv_vsetvl_e32m8(blkCnt)) > 0)
+    {
+      vfloat32m8_t v1R = __riscv_vlse32_v_f32m8(p1Vec, cplxStride, vl);
+      vfloat32m8_t v1I = __riscv_vlse32_v_f32m8(p1Vec + 1, cplxStride, vl);
+      vfloat32m8_t v2R = __riscv_vlse32_v_f32m8(p2Vec, cplxStride, vl);
+      vfloat32m8_t v2I = __riscv_vlse32_v_f32m8(p2Vec + 1, cplxStride, vl);
+      vfloat32m8_t v3R = __riscv_vlse32_v_f32m8(pMid1Vec, cplxStride, vl);
+      vfloat32m8_t v3I = __riscv_vlse32_v_f32m8(pMid1Vec + 1, cplxStride, vl);
+      vfloat32m8_t v4R = __riscv_vlse32_v_f32m8(pMid2Vec, cplxStride, vl);
+      vfloat32m8_t v4I = __riscv_vlse32_v_f32m8(pMid2Vec + 1, cplxStride, vl);
+      vfloat32m8_t vTwR = __riscv_vlse32_v_f32m8(pTwR, cplxStride, vl);
+      vfloat32m8_t vTwI = __riscv_vlse32_v_f32m8(pTwI, cplxStride, vl);
+
+      vfloat32m8_t vSum12R = __riscv_vfadd_vv_f32m8(v1R, v2R, vl);
+      vfloat32m8_t vSum12I = __riscv_vfadd_vv_f32m8(v1I, v2I, vl);
+      vfloat32m8_t vDiff12R = __riscv_vfsub_vv_f32m8(v1R, v2R, vl);
+      vfloat32m8_t vDiff12I = __riscv_vfsub_vv_f32m8(v1I, v2I, vl);
+
+      vfloat32m8_t vSum34R = __riscv_vfadd_vv_f32m8(v3R, v4R, vl);
+      vfloat32m8_t vSum34I = __riscv_vfadd_vv_f32m8(v3I, v4I, vl);
+      vfloat32m8_t vDiff43R = __riscv_vfsub_vv_f32m8(v4R, v3R, vl);
+      vfloat32m8_t vDiff43I = __riscv_vfsub_vv_f32m8(v4I, v3I, vl);
+
+      __riscv_vsse32_v_f32m8(p1Vec, cplxStride, vSum12R, vl);
+      __riscv_vsse32_v_f32m8(p1Vec + 1, cplxStride, vSum12I, vl);
+      __riscv_vsse32_v_f32m8(pMid1Vec, cplxStride, vSum34R, vl);
+      __riscv_vsse32_v_f32m8(pMid1Vec + 1, cplxStride, vSum34I, vl);
+
+      {
+        vfloat32m8_t vP0 = __riscv_vfmul_vv_f32m8(vDiff12R, vTwR, vl);
+        vfloat32m8_t vP1 = __riscv_vfmul_vv_f32m8(vDiff12I, vTwI, vl);
+        vfloat32m8_t vP2 = __riscv_vfmul_vv_f32m8(vDiff12I, vTwR, vl);
+        vfloat32m8_t vP3 = __riscv_vfmul_vv_f32m8(vDiff12R, vTwI, vl);
+
+        vfloat32m8_t vOut2R = __riscv_vfadd_vv_f32m8(vP0, vP1, vl);
+        vfloat32m8_t vOut2I = __riscv_vfsub_vv_f32m8(vP2, vP3, vl);
+
+        __riscv_vsse32_v_f32m8(p2Vec, cplxStride, vOut2R, vl);
+        __riscv_vsse32_v_f32m8(p2Vec + 1, cplxStride, vOut2I, vl);
+      }
+
+      {
+        vfloat32m8_t vP0 = __riscv_vfmul_vv_f32m8(vDiff43R, vTwI, vl);
+        vfloat32m8_t vP1 = __riscv_vfmul_vv_f32m8(vDiff43I, vTwR, vl);
+        vfloat32m8_t vP2 = __riscv_vfmul_vv_f32m8(vDiff43I, vTwI, vl);
+        vfloat32m8_t vP3 = __riscv_vfmul_vv_f32m8(vDiff43R, vTwR, vl);
+
+        vfloat32m8_t vOut4R = __riscv_vfsub_vv_f32m8(vP0, vP1, vl);
+        vfloat32m8_t vOut4I = __riscv_vfadd_vv_f32m8(vP2, vP3, vl);
+
+        __riscv_vsse32_v_f32m8(pMid2Vec, cplxStride, vOut4R, vl);
+        __riscv_vsse32_v_f32m8(pMid2Vec + 1, cplxStride, vOut4I, vl);
+      }
+
+      p1Vec += (uint32_t)(2U * vl);
+      p2Vec += (uint32_t)(2U * vl);
+      pMid1Vec += (uint32_t)(2U * vl);
+      pMid2Vec += (uint32_t)(2U * vl);
+      pTwR += (uint32_t)(2U * vl);
+      pTwI += (uint32_t)(2U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+  }
+#else
   for (l = L >> 2; l > 0; l-- )
   {
     t1[0] = p1[0];
@@ -278,6 +356,7 @@ static void riscv_cfft_radix8by2_f32 (riscv_cfft_instance_f32 * S, float32_t * p
     *pMid2++ = m0 - m1;
     *pMid2++ = m2 + m3;
   }
+#endif
 
   /* first col */
   riscv_radix8_butterfly_f32 (pCol1, L, (float32_t *) S->pTwiddle, 2U);
@@ -552,18 +631,34 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_f32(
         uint8_t ifftFlag,
         uint8_t bitReverseFlag)
 {
-  uint32_t  L = S->fftLen, l;
-  float32_t invL, * pSrc;
+  uint32_t  L = S->fftLen;
+  float32_t invL;
 
   if (ifftFlag == 1U)
   {
     /* Conjugate input data */
-    pSrc = p1 + 1;
+#if defined(RISCV_MATH_VECTOR)
+    uint32_t blkCnt = L;
+    size_t vl;
+    float32_t *pImag = p1 + 1;
+    ptrdiff_t stride = (ptrdiff_t)(2U * sizeof(float32_t));
+    while ((vl = __riscv_vsetvl_e32m8(blkCnt)) > 0)
+    {
+      vfloat32m8_t vI = __riscv_vlse32_v_f32m8(pImag, stride, vl);
+      vI = __riscv_vfmul_vf_f32m8(vI, -1.0f, vl);
+      __riscv_vsse32_v_f32m8(pImag, stride, vI, vl);
+      pImag += (uint32_t)(2U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+#else
+    uint32_t l;
+    float32_t *pSrc = p1 + 1;
     for (l = 0; l < L; l++)
     {
       *pSrc = -*pSrc;
       pSrc += 2;
     }
+#endif
   }
 
   switch (L)
@@ -593,13 +688,37 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_f32(
     invL = 1.0f / (float32_t)L;
 
     /* Conjugate and scale output data */
-    pSrc = p1;
+#if defined(RISCV_MATH_VECTOR)
+    {
+      uint32_t blkCnt = L;
+      size_t vl;
+      float32_t *pReal = p1;
+      float32_t *pImag = p1 + 1;
+      ptrdiff_t stride = (ptrdiff_t)(2U * sizeof(float32_t));
+      const float32_t negInvL = -invL;
+      while ((vl = __riscv_vsetvl_e32m8(blkCnt)) > 0)
+      {
+        vfloat32m8_t vR = __riscv_vlse32_v_f32m8(pReal, stride, vl);
+        vfloat32m8_t vI = __riscv_vlse32_v_f32m8(pImag, stride, vl);
+        vR = __riscv_vfmul_vf_f32m8(vR, invL, vl);
+        vI = __riscv_vfmul_vf_f32m8(vI, negInvL, vl);
+        __riscv_vsse32_v_f32m8(pReal, stride, vR, vl);
+        __riscv_vsse32_v_f32m8(pImag, stride, vI, vl);
+        pReal += (uint32_t)(2U * vl);
+        pImag += (uint32_t)(2U * vl);
+        blkCnt -= (uint32_t)vl;
+      }
+    }
+#else
+    uint32_t l;
+    float32_t *pSrc = p1;
     for (l= 0; l < L; l++)
     {
       *pSrc++ *=   invL ;
       *pSrc    = -(*pSrc) * invL;
       pSrc++;
     }
+#endif
   }
 }
 

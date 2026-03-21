@@ -131,6 +131,11 @@ set(MFCC_F16_ACCUM_MODE 0)
 # 1 = mixed f32 accumulation in mel and DCT stages (higher cost)
 target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ACCUM_MODE=${MFCC_F16_ACCUM_MODE})
 
+set(MFCC_VLOG_VEC_APPROX 1)
+# 0 = scalar lib/LUT log kernels
+# 1 = RVV vector polynomial approximation for f32/f16 vlog
+target_compile_definitions(mfcc-test PRIVATE MFCC_VLOG_VEC_APPROX=${MFCC_VLOG_VEC_APPROX})
+
 set(MFCC_F16_RADIX4_EXPERIMENTAL OFF CACHE BOOL
   "Enable experimental RVV radix4 f16 butterfly path")
 if(MFCC_F16_RADIX4_EXPERIMENTAL)

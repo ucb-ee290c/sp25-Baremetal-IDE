@@ -3,6 +3,10 @@
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 
+#ifndef MFCC_VLOG_VEC_APPROX
+#define MFCC_VLOG_VEC_APPROX 0
+#endif
+
 /* Degree of the polynomial approximation */
 #define NB_DEG_LOGF16 3
 
@@ -105,6 +109,45 @@ RISCV_DSP_ATTRIBUTE void riscv_vlog_f16(
         float16_t * pDst,
         uint32_t blockSize)
 {
+#if defined(RISCV_MATH_VECTOR_F16) && (MFCC_VLOG_VEC_APPROX == 1)
+   uint32_t blkCnt = blockSize;
+   size_t l;
+
+   while ((l = __riscv_vsetvl_e16m8(blkCnt)) > 0)
+   {
+      vfloat16m8_t vx = __riscv_vle16_v_f16m8(pSrc, l);
+      vfloat16m8_t vone = __riscv_vfmv_v_f_f16m8(1.0f16, l);
+
+      /* Bring values closer to 1.0 to stabilize a short odd-power series. */
+      vx = __riscv_vfsqrt_v_f16m8(vx, l);
+      vx = __riscv_vfsqrt_v_f16m8(vx, l);
+      vx = __riscv_vfsqrt_v_f16m8(vx, l);
+
+      vfloat16m8_t vzNum = __riscv_vfsub_vv_f16m8(vx, vone, l);
+      vfloat16m8_t vzDen = __riscv_vfadd_vv_f16m8(vx, vone, l);
+      vfloat16m8_t vz = __riscv_vfdiv_vv_f16m8(vzNum, vzDen, l);
+
+      {
+         vfloat16m8_t vz2 = __riscv_vfmul_vv_f16m8(vz, vz, l);
+         vfloat16m8_t vpoly = __riscv_vfmv_v_f_f16m8(0.1111f16, l); /* 1/9 */
+
+         /* Horner form for: z + z^3/3 + z^5/5 + z^7/7 + z^9/9 */
+         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 0.1428f16, l); /* +1/7 */
+         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 0.2f16, l);    /* +1/5 */
+         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 0.3333f16, l); /* +1/3 */
+         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 1.0f16, l);
+         vpoly = __riscv_vfmul_vv_f16m8(vpoly, vz, l);
+
+         /* ln(x) = 2^3 * 2 * ln(x^(1/8)) = 16 * series */
+         vfloat16m8_t vln = __riscv_vfmul_vf_f16m8(vpoly, 16.0f16, l);
+         __riscv_vse16_v_f16m8(pDst, vln, l);
+      }
+
+      pSrc += l;
+      pDst += l;
+      blkCnt -= (uint32_t)l;
+   }
+#else
    uint32_t blkCnt;
 
    blkCnt = blockSize;
@@ -119,6 +162,7 @@ RISCV_DSP_ATTRIBUTE void riscv_vlog_f16(
       /* Decrement loop counter */
       blkCnt--;
    }
+#endif
 }
 
 

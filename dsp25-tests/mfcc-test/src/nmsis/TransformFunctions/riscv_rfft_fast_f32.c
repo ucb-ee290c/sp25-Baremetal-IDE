@@ -43,6 +43,58 @@ static void stage_rfft_f32(
    pB  = p + 2*k;
    pA += 2;
 
+#if defined(RISCV_MATH_VECTOR)
+   {
+      uint32_t blkCnt = (uint32_t)k;
+      size_t vl;
+      ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float32_t));
+      ptrdiff_t revStride = -cplxStride;
+      const float32_t *pAcur = pA;
+      const float32_t *pBcur = pB;
+      const float32_t *pTwR = pCoeff;
+      const float32_t *pTwI = pCoeff + 1;
+      ptrdiff_t twStride = cplxStride;
+      const float32_t half = 0.5f;
+
+      while ((vl = __riscv_vsetvl_e32m8(blkCnt)) > 0)
+      {
+         vfloat32m8_t vAR = __riscv_vlse32_v_f32m8(pAcur, cplxStride, vl);
+         vfloat32m8_t vAI = __riscv_vlse32_v_f32m8(pAcur + 1, cplxStride, vl);
+         vfloat32m8_t vBR = __riscv_vlse32_v_f32m8(pBcur, revStride, vl);
+         vfloat32m8_t vBI = __riscv_vlse32_v_f32m8(pBcur + 1, revStride, vl);
+         vfloat32m8_t vTwR = __riscv_vlse32_v_f32m8(pTwR, twStride, vl);
+         vfloat32m8_t vTwI = __riscv_vlse32_v_f32m8(pTwI, twStride, vl);
+
+         vfloat32m8_t vT1a = __riscv_vfsub_vv_f32m8(vBR, vAR, vl);
+         vfloat32m8_t vT1b = __riscv_vfadd_vv_f32m8(vBI, vAI, vl);
+
+         vfloat32m8_t vP0 = __riscv_vfmul_vv_f32m8(vTwR, vT1a, vl);
+         vfloat32m8_t vP1 = __riscv_vfmul_vv_f32m8(vTwI, vT1a, vl);
+         vfloat32m8_t vP2 = __riscv_vfmul_vv_f32m8(vTwR, vT1b, vl);
+         vfloat32m8_t vP3 = __riscv_vfmul_vv_f32m8(vTwI, vT1b, vl);
+
+         vfloat32m8_t vOutR = __riscv_vfadd_vv_f32m8(vAR, vBR, vl);
+         vOutR = __riscv_vfadd_vv_f32m8(vOutR, vP0, vl);
+         vOutR = __riscv_vfadd_vv_f32m8(vOutR, vP3, vl);
+         vOutR = __riscv_vfmul_vf_f32m8(vOutR, half, vl);
+
+         vfloat32m8_t vOutI = __riscv_vfsub_vv_f32m8(vAI, vBI, vl);
+         vOutI = __riscv_vfadd_vv_f32m8(vOutI, vP1, vl);
+         vOutI = __riscv_vfsub_vv_f32m8(vOutI, vP2, vl);
+         vOutI = __riscv_vfmul_vf_f32m8(vOutI, half, vl);
+
+         __riscv_vsse32_v_f32m8(pOut, cplxStride, vOutR, vl);
+         __riscv_vsse32_v_f32m8(pOut + 1, cplxStride, vOutI, vl);
+
+         pOut += (uint32_t)(2U * vl);
+         pAcur += (uint32_t)(2U * vl);
+         pBcur -= (uint32_t)(2U * vl);
+         pTwR += (uint32_t)(2U * vl);
+         pTwI += (uint32_t)(2U * vl);
+         blkCnt -= (uint32_t)vl;
+      }
+   }
+#else
    do
    {
       /*
@@ -86,6 +138,7 @@ static void stage_rfft_f32(
       pB -= 2;
       k--;
    } while (k > 0);
+#endif
 }
 
 /* Prepares data for inverse cfft */
@@ -115,6 +168,58 @@ static void merge_rfft_f32(
    pB  =  p + 2*k ;
    pA +=  2	   ;
 
+#if defined(RISCV_MATH_VECTOR)
+   {
+      uint32_t blkCnt = (uint32_t)k;
+      size_t vl;
+      ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float32_t));
+      ptrdiff_t revStride = -cplxStride;
+      const float32_t *pAcur = pA;
+      const float32_t *pBcur = pB;
+      const float32_t *pTwR = pCoeff;
+      const float32_t *pTwI = pCoeff + 1;
+      ptrdiff_t twStride = cplxStride;
+      const float32_t half = 0.5f;
+
+      while ((vl = __riscv_vsetvl_e32m8(blkCnt)) > 0)
+      {
+         vfloat32m8_t vAR = __riscv_vlse32_v_f32m8(pAcur, cplxStride, vl);
+         vfloat32m8_t vAI = __riscv_vlse32_v_f32m8(pAcur + 1, cplxStride, vl);
+         vfloat32m8_t vBR = __riscv_vlse32_v_f32m8(pBcur, revStride, vl);
+         vfloat32m8_t vBI = __riscv_vlse32_v_f32m8(pBcur + 1, revStride, vl);
+         vfloat32m8_t vTwR = __riscv_vlse32_v_f32m8(pTwR, twStride, vl);
+         vfloat32m8_t vTwI = __riscv_vlse32_v_f32m8(pTwI, twStride, vl);
+
+         vfloat32m8_t vT1a = __riscv_vfsub_vv_f32m8(vAR, vBR, vl);
+         vfloat32m8_t vT1b = __riscv_vfadd_vv_f32m8(vAI, vBI, vl);
+
+         vfloat32m8_t vR = __riscv_vfmul_vv_f32m8(vTwR, vT1a, vl);
+         vfloat32m8_t vS = __riscv_vfmul_vv_f32m8(vTwI, vT1b, vl);
+         vfloat32m8_t vT = __riscv_vfmul_vv_f32m8(vTwI, vT1a, vl);
+         vfloat32m8_t vU = __riscv_vfmul_vv_f32m8(vTwR, vT1b, vl);
+
+         vfloat32m8_t vOutR = __riscv_vfadd_vv_f32m8(vAR, vBR, vl);
+         vOutR = __riscv_vfsub_vv_f32m8(vOutR, vR, vl);
+         vOutR = __riscv_vfsub_vv_f32m8(vOutR, vS, vl);
+         vOutR = __riscv_vfmul_vf_f32m8(vOutR, half, vl);
+
+         vfloat32m8_t vOutI = __riscv_vfsub_vv_f32m8(vAI, vBI, vl);
+         vOutI = __riscv_vfadd_vv_f32m8(vOutI, vT, vl);
+         vOutI = __riscv_vfsub_vv_f32m8(vOutI, vU, vl);
+         vOutI = __riscv_vfmul_vf_f32m8(vOutI, half, vl);
+
+         __riscv_vsse32_v_f32m8(pOut, cplxStride, vOutR, vl);
+         __riscv_vsse32_v_f32m8(pOut + 1, cplxStride, vOutI, vl);
+
+         pOut += (uint32_t)(2U * vl);
+         pAcur += (uint32_t)(2U * vl);
+         pBcur -= (uint32_t)(2U * vl);
+         pTwR += (uint32_t)(2U * vl);
+         pTwI += (uint32_t)(2U * vl);
+         blkCnt -= (uint32_t)vl;
+      }
+   }
+#else
    while (k > 0)
    {
       /* G is half of the frequency complex spectrum */
@@ -145,6 +250,7 @@ static void merge_rfft_f32(
       pB -= 2;
       k--;
    }
+#endif
 
 }
 

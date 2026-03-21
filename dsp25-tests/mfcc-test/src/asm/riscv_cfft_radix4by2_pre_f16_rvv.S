@@ -9,32 +9,32 @@ riscv_cfft_radix4by2_pre_f16_rvv_asm:
     li t3, 4
 
 .Lrad_loop:
-    vsetvli t0, a6, e16, m8, ta, ma
+    vsetvli t0, a6, e16, m2, ta, ma
 
     vlse16.v v0, (a0), t3
-    vlse16.v v1, (a1), t3
-    vlse16.v v2, (a2), t3
-    vlse16.v v3, (a3), t3
-    vlse16.v v4, (a4), t3
-    vlse16.v v5, (a5), t3
+    vlse16.v v2, (a1), t3
+    vlse16.v v4, (a2), t3
+    vlse16.v v6, (a3), t3
+    vlse16.v v8, (a4), t3
+    vlse16.v v10, (a5), t3
 
-    vfadd.vv v6, v0, v2
-    vfsub.vv v7, v0, v2
-    vfsub.vv v8, v1, v3
-    vfadd.vv v9, v3, v1
+    vfadd.vv v12, v0, v4
+    vfsub.vv v14, v0, v4
+    vfsub.vv v16, v2, v6
+    vfadd.vv v18, v6, v2
 
-    vfmul.vv v10, v7, v4
-    vfmul.vv v11, v8, v5
-    vfmul.vv v12, v8, v4
-    vfmul.vv v13, v7, v5
+    vfmul.vv v20, v14, v8
+    vfmul.vv v22, v16, v10
+    vfmul.vv v24, v16, v8
+    vfmul.vv v26, v14, v10
 
-    vfadd.vv v14, v10, v11
-    vfsub.vv v15, v12, v13
+    vfadd.vv v28, v20, v22
+    vfsub.vv v30, v24, v26
 
-    vsse16.v v6, (a0), t3
-    vsse16.v v9, (a1), t3
-    vsse16.v v14, (a2), t3
-    vsse16.v v15, (a3), t3
+    vsse16.v v12, (a0), t3
+    vsse16.v v18, (a1), t3
+    vsse16.v v28, (a2), t3
+    vsse16.v v30, (a3), t3
 
     slli t2, t0, 2
     add a0, a0, t2

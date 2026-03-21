@@ -12,40 +12,40 @@ riscv_rfft_stage_f16_rvv_asm:
     flh ft0, 0(t5)
 
 .Lrfft_loop:
-    vsetvli t0, a5, e16, m8, ta, ma
+    vsetvli t0, a5, e16, m2, ta, ma
 
     vlse16.v v0, (a0), t3
     addi t1, a0, 2
-    vlse16.v v1, (t1), t3
+    vlse16.v v2, (t1), t3
 
-    vlse16.v v2, (a1), t4
+    vlse16.v v4, (a1), t4
     addi t1, a1, 2
-    vlse16.v v3, (t1), t4
+    vlse16.v v6, (t1), t4
 
-    vlse16.v v4, (a2), t3
-    vlse16.v v5, (a3), t3
+    vlse16.v v8, (a2), t3
+    vlse16.v v10, (a3), t3
 
-    vfsub.vv v6, v2, v0
-    vfadd.vv v7, v3, v1
+    vfsub.vv v12, v4, v0
+    vfadd.vv v14, v6, v2
 
-    vfmul.vv v8, v4, v6
-    vfmul.vv v9, v5, v6
-    vfmul.vv v10, v4, v7
-    vfmul.vv v11, v5, v7
+    vfmul.vv v16, v8, v12
+    vfmul.vv v18, v10, v12
+    vfmul.vv v20, v8, v14
+    vfmul.vv v22, v10, v14
 
-    vfadd.vv v12, v0, v2
-    vfadd.vv v12, v12, v8
-    vfadd.vv v12, v12, v11
-    vfmul.vf v12, v12, ft0
+    vfadd.vv v24, v0, v4
+    vfadd.vv v24, v24, v16
+    vfadd.vv v24, v24, v22
+    vfmul.vf v24, v24, ft0
 
-    vfsub.vv v13, v1, v3
-    vfadd.vv v13, v13, v9
-    vfsub.vv v13, v13, v10
-    vfmul.vf v13, v13, ft0
+    vfsub.vv v26, v2, v6
+    vfadd.vv v26, v26, v18
+    vfsub.vv v26, v26, v20
+    vfmul.vf v26, v26, ft0
 
-    vsse16.v v12, (a4), t3
+    vsse16.v v24, (a4), t3
     addi t1, a4, 2
-    vsse16.v v13, (t1), t3
+    vsse16.v v26, (t1), t3
 
     slli t2, t0, 2
     add a0, a0, t2

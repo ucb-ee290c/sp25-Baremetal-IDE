@@ -7,17 +7,19 @@
 #define MFCC_VLOG_VEC_APPROX 0
 #endif
 
-/* Degree of the polynomial approximation */
-#define NB_DEG_LOGF16 3
+#if (MFCC_VLOG_VEC_APPROX == 0)
+  /* Degree of the polynomial approximation */
+  #define NB_DEG_LOGF16 3
 
-/*
-Related to the Log2 of the number of approximations.
-For instance, with 3 there are 1 + 2^3 polynomials
-*/
-#define NB_DIV_LOGF16 3
+  /*
+  Related to the Log2 of the number of approximations.
+  For instance, with 3 there are 1 + 2^3 polynomials
+  */
+  #define NB_DIV_LOGF16 3
 
-/* Length of the LUT table */
-#define NB_LUT_LOGF16 (NB_DEG_LOGF16+1)*(1 + (1<<NB_DIV_LOGF16))
+  /* Length of the LUT table */
+  #define NB_LUT_LOGF16 (NB_DEG_LOGF16+1)*(1 + (1<<NB_DIV_LOGF16))
+#endif
 
 
 /*
@@ -36,6 +38,7 @@ lut = Table[
 coefs = Chop@Flatten[CoefficientList[lut, x]];
 
 */
+#if (MFCC_VLOG_VEC_APPROX == 0)
 static float16_t lut_logf16[NB_LUT_LOGF16]={
    0,0.125,-0.00781197,0.00063974,0.117783,
    0.111111,-0.00617212,0.000447935,0.223144,
@@ -85,6 +88,57 @@ static float16_t logf16_scalar(float16_t x)
 
     return(res);
 }
+#endif
+
+static __STATIC_FORCEINLINE float16_t mfcc_log_approx_f16_scalar(float16_t x)
+{
+    uint16_t bits = (uint16_t)riscv_typecast_s16_f16(x);
+    uint16_t expRaw = (bits >> 10) & 0x1FU;
+    int32_t e;
+    uint16_t mBits;
+    float32_t m;
+    float32_t y;
+    float32_t y2;
+    float32_t poly;
+    float32_t ln;
+
+    if ((_Float16)x <= 0.0f16)
+    {
+      return -F16_MAX;
+    }
+
+    if (expRaw == 0x1FU)
+    {
+      return x;
+    }
+
+    if (expRaw == 0U)
+    {
+      return (float16_t)logf((float32_t)x);
+    }
+
+    e = (int32_t)expRaw - 14;
+    mBits = (bits & 0x03FFU) | (14U << 10);
+    m = (float32_t)riscv_typecast_f16_s16((int16_t)mBits);
+
+    if (m < 0.7071067811865476f)
+    {
+      m *= 2.0f;
+      e -= 1;
+    }
+
+    y = (m - 1.0f) / (m + 1.0f);
+    y2 = y * y;
+
+    poly = 0.1111111111111111f;
+    poly = (poly * y2) + 0.1428571428571429f;
+    poly = (poly * y2) + 0.2f;
+    poly = (poly * y2) + 0.3333333333333333f;
+    poly = (poly * y2) + 1.0f;
+
+    ln = (2.0f * y * poly) + ((float32_t)e * 0.6931471805599453f);
+    return (float16_t)ln;
+}
 
 
 /**
@@ -109,43 +163,13 @@ RISCV_DSP_ATTRIBUTE void riscv_vlog_f16(
         float16_t * pDst,
         uint32_t blockSize)
 {
-#if defined(RISCV_MATH_VECTOR_F16) && (MFCC_VLOG_VEC_APPROX == 1)
+#if (MFCC_VLOG_VEC_APPROX == 1)
    uint32_t blkCnt = blockSize;
-   size_t l;
 
-   while ((l = __riscv_vsetvl_e16m8(blkCnt)) > 0)
+   while (blkCnt > 0U)
    {
-      vfloat16m8_t vx = __riscv_vle16_v_f16m8(pSrc, l);
-      vfloat16m8_t vone = __riscv_vfmv_v_f_f16m8(1.0f16, l);
-
-      /* Bring values closer to 1.0 to stabilize a short odd-power series. */
-      vx = __riscv_vfsqrt_v_f16m8(vx, l);
-      vx = __riscv_vfsqrt_v_f16m8(vx, l);
-      vx = __riscv_vfsqrt_v_f16m8(vx, l);
-
-      vfloat16m8_t vzNum = __riscv_vfsub_vv_f16m8(vx, vone, l);
-      vfloat16m8_t vzDen = __riscv_vfadd_vv_f16m8(vx, vone, l);
-      vfloat16m8_t vz = __riscv_vfdiv_vv_f16m8(vzNum, vzDen, l);
-
-      {
-         vfloat16m8_t vz2 = __riscv_vfmul_vv_f16m8(vz, vz, l);
-         vfloat16m8_t vpoly = __riscv_vfmv_v_f_f16m8(0.1111f16, l); /* 1/9 */
-
-         /* Horner form for: z + z^3/3 + z^5/5 + z^7/7 + z^9/9 */
-         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 0.1428f16, l); /* +1/7 */
-         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 0.2f16, l);    /* +1/5 */
-         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 0.3333f16, l); /* +1/3 */
-         vpoly = __riscv_vfadd_vf_f16m8(__riscv_vfmul_vv_f16m8(vpoly, vz2, l), 1.0f16, l);
-         vpoly = __riscv_vfmul_vv_f16m8(vpoly, vz, l);
-
-         /* ln(x) = 2^3 * 2 * ln(x^(1/8)) = 16 * series */
-         vfloat16m8_t vln = __riscv_vfmul_vf_f16m8(vpoly, 16.0f16, l);
-         __riscv_vse16_v_f16m8(pDst, vln, l);
-      }
-
-      pSrc += l;
-      pDst += l;
-      blkCnt -= (uint32_t)l;
+      *pDst++ = mfcc_log_approx_f16_scalar(*pSrc++);
+      blkCnt--;
    }
 #else
    uint32_t blkCnt;

@@ -5,6 +5,63 @@
 #define MFCC_VLOG_VEC_APPROX 0
 #endif
 
+static __STATIC_FORCEINLINE float32_t mfcc_log_approx_f32_scalar(float32_t x)
+{
+   union
+   {
+      float32_t f;
+      uint32_t u;
+   } cvt;
+
+   if (x <= 0.0f)
+   {
+      return -FLT_MAX;
+   }
+
+   cvt.f = x;
+   {
+      uint32_t expRaw = (cvt.u >> 23) & 0xFFU;
+
+      if (expRaw == 0xFFU)
+      {
+         return x;
+      }
+
+      if (expRaw == 0U)
+      {
+         return logf(x);
+      }
+
+      {
+         int32_t e = (int32_t)expRaw - 126;
+         float32_t m;
+         float32_t y;
+         float32_t y2;
+         float32_t poly;
+
+         cvt.u = (cvt.u & 0x007FFFFFU) | 0x3F000000U;
+         m = cvt.f;
+
+         if (m < 0.7071067811865476f)
+         {
+            m *= 2.0f;
+            e -= 1;
+         }
+
+         y = (m - 1.0f) / (m + 1.0f);
+         y2 = y * y;
+
+         poly = 0.1111111111111111f;
+         poly = (poly * y2) + 0.1428571428571429f;
+         poly = (poly * y2) + 0.2f;
+         poly = (poly * y2) + 0.3333333333333333f;
+         poly = (poly * y2) + 1.0f;
+
+         return (2.0f * y * poly) + ((float32_t)e * 0.6931471805599453f);
+      }
+   }
+}
+
 
 /**
   @ingroup groupFastMath
@@ -29,43 +86,13 @@ RISCV_DSP_ATTRIBUTE void riscv_vlog_f32(
         float32_t * pDst,
         uint32_t blockSize)
 {
-#if defined(RISCV_MATH_VECTOR) && (MFCC_VLOG_VEC_APPROX == 1)
+#if (MFCC_VLOG_VEC_APPROX == 1)
    uint32_t blkCnt = blockSize;
-   size_t l;
 
-   while ((l = __riscv_vsetvl_e32m8(blkCnt)) > 0)
+   while (blkCnt > 0U)
    {
-      vfloat32m8_t vx = __riscv_vle32_v_f32m8(pSrc, l);
-      vfloat32m8_t vone = __riscv_vfmv_v_f_f32m8(1.0f, l);
-
-      /* Bring values closer to 1.0 to stabilize a short odd-power series. */
-      vx = __riscv_vfsqrt_v_f32m8(vx, l);
-      vx = __riscv_vfsqrt_v_f32m8(vx, l);
-      vx = __riscv_vfsqrt_v_f32m8(vx, l);
-
-      vfloat32m8_t vzNum = __riscv_vfsub_vv_f32m8(vx, vone, l);
-      vfloat32m8_t vzDen = __riscv_vfadd_vv_f32m8(vx, vone, l);
-      vfloat32m8_t vz = __riscv_vfdiv_vv_f32m8(vzNum, vzDen, l);
-
-      {
-         vfloat32m8_t vz2 = __riscv_vfmul_vv_f32m8(vz, vz, l);
-         vfloat32m8_t vpoly = __riscv_vfmv_v_f_f32m8(0.1111111111f, l); /* 1/9 */
-
-         /* Horner form for: z + z^3/3 + z^5/5 + z^7/7 + z^9/9 */
-         vpoly = __riscv_vfadd_vf_f32m8(__riscv_vfmul_vv_f32m8(vpoly, vz2, l), 0.1428571429f, l); /* +1/7 */
-         vpoly = __riscv_vfadd_vf_f32m8(__riscv_vfmul_vv_f32m8(vpoly, vz2, l), 0.2f, l);          /* +1/5 */
-         vpoly = __riscv_vfadd_vf_f32m8(__riscv_vfmul_vv_f32m8(vpoly, vz2, l), 0.3333333333f, l); /* +1/3 */
-         vpoly = __riscv_vfadd_vf_f32m8(__riscv_vfmul_vv_f32m8(vpoly, vz2, l), 1.0f, l);
-         vpoly = __riscv_vfmul_vv_f32m8(vpoly, vz, l);
-
-         /* ln(x) = 2^3 * 2 * ln(x^(1/8)) = 16 * series */
-         vfloat32m8_t vln = __riscv_vfmul_vf_f32m8(vpoly, 16.0f, l);
-         __riscv_vse32_v_f32m8(pDst, vln, l);
-      }
-
-      pSrc += l;
-      pDst += l;
-      blkCnt -= (uint32_t)l;
+      *pDst++ = mfcc_log_approx_f32_scalar(*pSrc++);
+      blkCnt--;
    }
 #else
    uint32_t blkCnt; 

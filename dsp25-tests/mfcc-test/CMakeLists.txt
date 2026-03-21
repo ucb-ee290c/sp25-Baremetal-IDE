@@ -113,20 +113,15 @@ add_executable(mfcc-test
   ${MFCC_NMSIS_COMMON_TABLES_SOURCES}
 )
 
-option(MFCC_F16_ASM_MULT "Enable hand-written RVV fp16 multiply microkernel" ON)
-if(MFCC_F16_ASM_MULT)
+set(MFCC_F16_ASM_MODE 0)
+# 0 = disable all hand-written f16 asm kernels
+# 1 = enable all hand-written f16 asm kernels
+
+if(MFCC_F16_ASM_MODE EQUAL 1)
   target_sources(mfcc-test PRIVATE src/asm/riscv_mult_f16_rvv.S)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_MULT=1)
-endif()
-
-option(MFCC_F16_ASM_RFFT_STAGE "Enable hand-written RVV fp16 RFFT stage microkernel" ON)
-if(MFCC_F16_ASM_RFFT_STAGE)
   target_sources(mfcc-test PRIVATE src/asm/riscv_rfft_stage_f16_rvv.S)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_RFFT_STAGE=1)
-endif()
-
-option(MFCC_F16_ASM_RADIX4BY2 "Enable hand-written RVV fp16 radix4by2 pre-butterfly microkernel" ON)
-if(MFCC_F16_ASM_RADIX4BY2)
   target_sources(mfcc-test PRIVATE src/asm/riscv_cfft_radix4by2_pre_f16_rvv.S)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_RADIX4BY2=1)
 endif()

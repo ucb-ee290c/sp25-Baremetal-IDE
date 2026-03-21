@@ -1,6 +1,7 @@
 #include "main.h"
 #include "mfcc_reference_data.h"
 #include "mfcc_specialized.h"
+#include "simple_setup.h"
 
 #define MFCC_TEST_SAMPLE_RATE_HZ 16000.0f
 #define MFCC_TEST_FFT_LEN 256
@@ -726,6 +727,7 @@ static int init_mfcc_instances(void) {
 
 void app_init(void) {
   printf("MFCC test init\n");
+  // init_test(500000000ULL);
 }
 
 void app_main(void) {

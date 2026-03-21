@@ -74,6 +74,27 @@ static void mfcc_tinyspeech_apply_dct_f16(const riscv_mfcc_instance_f16 *S,
                                           const float16_t *mel,
                                           float16_t *out)
 {
+#if defined(RISCV_MATH_VECTOR_F16)
+  uint32_t rows_remaining = MFCC_TINYSPEECH_NUM_DCT;
+  const float16_t *dct_base = S->dctCoefs;
+  float16_t *dst = out;
+  const ptrdiff_t stride = (ptrdiff_t)(MFCC_TINYSPEECH_NUM_MEL * sizeof(float16_t));
+
+  while (rows_remaining > 0U) {
+    size_t l = __riscv_vsetvl_e16m8(rows_remaining);
+    vfloat16m8_t acc = __riscv_vfmv_v_f_f16m8(0.0f, l);
+
+    for (uint32_t c = 0; c < MFCC_TINYSPEECH_NUM_MEL; c++) {
+      vfloat16m8_t vc = __riscv_vlse16_v_f16m8(dct_base + c, stride, l);
+      acc = __riscv_vfmacc_vf_f16m8(acc, mel[c], vc, l);
+    }
+
+    __riscv_vse16_v_f16m8(dst, acc, l);
+    dst += l;
+    dct_base += l * MFCC_TINYSPEECH_NUM_MEL;
+    rows_remaining -= (uint32_t)l;
+  }
+#else
   const float16_t *dct = S->dctCoefs;
 
   for (uint32_t row = 0; row < MFCC_TINYSPEECH_NUM_DCT; row++) {
@@ -123,6 +144,7 @@ static void mfcc_tinyspeech_apply_dct_f16(const riscv_mfcc_instance_f16 *S,
     }
 #endif
   }
+#endif
 }
 
 void mfcc_tinyspeech_256_23_12_f16(const riscv_mfcc_instance_f16 *S,

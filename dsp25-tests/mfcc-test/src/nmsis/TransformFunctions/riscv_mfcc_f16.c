@@ -7,6 +7,10 @@
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 
+#ifndef MFCC_F16_ACCUM_MODE
+#define MFCC_F16_ACCUM_MODE 0
+#endif
+
 /**
   @ingroup groupTransforms
  */
@@ -58,7 +62,9 @@ RISCV_DSP_ATTRIBUTE void riscv_mfcc_f16(
   uint32_t i;
   float16_t result;
   const float16_t *coefs=S->filterCoefs;
+#if (MFCC_F16_ACCUM_MODE == 0)
   riscv_matrix_instance_f16 pDctMat;
+#endif
 
   /* Normalize */
   riscv_absmax_f16(pSrc,S->fftLen,&maxValue,&index);
@@ -108,8 +114,16 @@ RISCV_DSP_ATTRIBUTE void riscv_mfcc_f16(
       const float16_t *pMel = pSrc + S->filterPos[i];
       const float16_t *pCoef = coefs;
       uint32_t melLen = S->filterLengths[i];
-
-#if defined(RISCV_MATH_VECTOR_F16)
+#if (MFCC_F16_ACCUM_MODE == 1)
+      float32_t acc32 = 0.0f;
+      uint32_t n;
+      for (n = 0; n < melLen; n++)
+      {
+        acc32 += (float32_t)pMel[n] * (float32_t)pCoef[n];
+      }
+      result = (float16_t)acc32;
+#else
+  #if defined(RISCV_MATH_VECTOR_F16)
       if (melLen <= 16U)
       {
         uint32_t n = melLen;
@@ -121,10 +135,11 @@ RISCV_DSP_ATTRIBUTE void riscv_mfcc_f16(
         }
       }
       else
-#endif
+  #endif
       {
         riscv_dot_prod_f16(pMel, pCoef, melLen, &result);
       }
+#endif
       coefs += melLen;
 
       pTmp[i] = result;
@@ -136,13 +151,25 @@ RISCV_DSP_ATTRIBUTE void riscv_mfcc_f16(
   riscv_vlog_f16(pTmp,pTmp,S->nbMelFilters);
 
   /* Multiply with the DCT matrix */
-
+#if (MFCC_F16_ACCUM_MODE == 1)
+  for (i = 0; i < S->nbDctOutputs; i++)
+  {
+    const float16_t *pDct = S->dctCoefs + (i * S->nbMelFilters);
+    float32_t acc32 = 0.0f;
+    uint32_t j;
+    for (j = 0; j < S->nbMelFilters; j++)
+    {
+      acc32 += (float32_t)pDct[j] * (float32_t)pTmp[j];
+    }
+    pDst[i] = (float16_t)acc32;
+  }
+#else
   pDctMat.numRows=S->nbDctOutputs;
   pDctMat.numCols=S->nbMelFilters;
   pDctMat.pData=(float16_t*)S->dctCoefs;
 
   riscv_mat_vec_mult_f16(&pDctMat, pTmp, pDst);
-
+#endif
 
 }
 

@@ -126,6 +126,11 @@ if(MFCC_F16_ASM_MODE EQUAL 1)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_RADIX4BY2=1)
 endif()
 
+set(MFCC_F16_ACCUM_MODE 1)
+# 0 = legacy native f16 accumulation
+# 1 = mixed f32 accumulation in mel and DCT stages for improved precision
+target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ACCUM_MODE=${MFCC_F16_ACCUM_MODE})
+
 set(MFCC_F16_RADIX4_EXPERIMENTAL OFF CACHE BOOL
   "Enable experimental RVV radix4 f16 butterfly path")
 if(MFCC_F16_RADIX4_EXPERIMENTAL)

@@ -127,6 +127,11 @@ static void print_kernel_mode_summary(void) {
 #else
   printf("    f16 rfft stage: C/RVV kernel\n");
 #endif
+#if defined(MFCC_F16_ACCUM_MODE) && (MFCC_F16_ACCUM_MODE == 1)
+  printf("    f16 accum : mixed f32 accumulation\n");
+#else
+  printf("    f16 accum : native f16 accumulation\n");
+#endif
 #if defined(MFCC_F16_ULTRA_OPT_ENABLED)
   printf("    f16 build : ULTRA_OPT enabled\n");
 #else

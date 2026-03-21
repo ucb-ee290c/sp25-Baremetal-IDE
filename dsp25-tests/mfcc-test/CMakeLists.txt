@@ -113,7 +113,11 @@ add_executable(mfcc-test
   ${MFCC_NMSIS_COMMON_TABLES_SOURCES}
 )
 
-target_compile_definitions(mfcc-test PRIVATE RISCV_MFCC_F16_RADIX4_VEC_EXPERIMENTAL=1)
+set(MFCC_F16_RADIX4_EXPERIMENTAL OFF CACHE BOOL
+  "Enable experimental RVV radix4 f16 butterfly path")
+if(MFCC_F16_RADIX4_EXPERIMENTAL)
+  target_compile_definitions(mfcc-test PRIVATE RISCV_MFCC_F16_RADIX4_VEC_EXPERIMENTAL=1)
+endif()
 
 set(MFCC_HOTSPOT_SOURCES
   src/nmsis/FastMathFunctions/riscv_vlog_q31.c

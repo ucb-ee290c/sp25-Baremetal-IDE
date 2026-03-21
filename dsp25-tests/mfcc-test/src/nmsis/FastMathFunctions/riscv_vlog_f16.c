@@ -90,7 +90,7 @@ static float16_t logf16_scalar(float16_t x)
 }
 #endif
 
-static __STATIC_FORCEINLINE float16_t mfcc_log_approx_f16_scalar(float16_t x)
+__STATIC_FORCEINLINE float16_t mfcc_log_approx_f16_scalar(float16_t x)
 {
     uint16_t bits = (uint16_t)riscv_typecast_s16_f16(x);
     uint16_t expRaw = (bits >> 10) & 0x1FU;

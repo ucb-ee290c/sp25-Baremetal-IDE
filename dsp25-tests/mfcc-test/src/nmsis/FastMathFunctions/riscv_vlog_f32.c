@@ -5,7 +5,7 @@
 #define MFCC_VLOG_VEC_APPROX 0
 #endif
 
-static __STATIC_FORCEINLINE float32_t mfcc_log_approx_f32_scalar(float32_t x)
+__STATIC_FORCEINLINE float32_t mfcc_log_approx_f32_scalar(float32_t x)
 {
    union
    {

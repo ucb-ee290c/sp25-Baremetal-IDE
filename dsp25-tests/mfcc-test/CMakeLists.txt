@@ -8,6 +8,7 @@ set(MFCC_APP_SOURCES
   src/main.c
   src/mfcc_specialized_f32.c
   src/mfcc_specialized_f16.c
+  ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 
 set(MFCC_NMSIS_BASIC_SOURCES
@@ -195,6 +196,7 @@ endif()
 
 target_include_directories(mfcc-test PUBLIC include)
 target_include_directories(mfcc-test PUBLIC ${CMAKE_SOURCE_DIR}/platform/dsp25/include)
+target_include_directories(mfcc-test PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 target_link_libraries(mfcc-test PRIVATE
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive

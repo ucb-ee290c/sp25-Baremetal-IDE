@@ -173,13 +173,7 @@ static int run_f32_mode(const float32_t *input,
     }
     stats_update(&local, cycles);
     stats_update(total_stats, cycles);
-    if (mfcc_bench_is_print_hart()) {
-      printf("      cycles[f32][%s][iter %lu]=%llu\n",
-             cache_name,
-             (unsigned long)iter,
-             (unsigned long long)cycles);
-      print_vec_f32("f32_mfcc", output);
-    }
+    (void)iter;
   }
 
   if (mfcc_bench_is_print_hart()) {
@@ -189,6 +183,7 @@ static int run_f32_mode(const float32_t *input,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
+    print_vec_f32("f32_mfcc", output);
   }
   return 0;
 }
@@ -216,13 +211,7 @@ static int run_q31_mode(const float32_t *input,
     }
     stats_update(&local, cycles);
     stats_update(total_stats, cycles);
-    if (mfcc_bench_is_print_hart()) {
-      printf("      cycles[q31][%s][iter %lu]=%llu\n",
-             cache_name,
-             (unsigned long)iter,
-             (unsigned long long)cycles);
-      print_vec_q31("q31_mfcc", output);
-    }
+    (void)iter;
   }
 
   if (mfcc_bench_is_print_hart()) {
@@ -232,6 +221,7 @@ static int run_q31_mode(const float32_t *input,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
+    print_vec_q31("q31_mfcc", output);
   }
   return 0;
 }
@@ -259,13 +249,7 @@ static int run_q15_mode(const float32_t *input,
     }
     stats_update(&local, cycles);
     stats_update(total_stats, cycles);
-    if (mfcc_bench_is_print_hart()) {
-      printf("      cycles[q15][%s][iter %lu]=%llu\n",
-             cache_name,
-             (unsigned long)iter,
-             (unsigned long long)cycles);
-      print_vec_q15("q15_mfcc", output);
-    }
+    (void)iter;
   }
 
   if (mfcc_bench_is_print_hart()) {
@@ -275,6 +259,7 @@ static int run_q15_mode(const float32_t *input,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
+    print_vec_q15("q15_mfcc", output);
   }
   return 0;
 }
@@ -303,13 +288,7 @@ static int run_f16_mode(const float32_t *input,
     }
     stats_update(&local, cycles);
     stats_update(total_stats, cycles);
-    if (mfcc_bench_is_print_hart()) {
-      printf("      cycles[f16][%s][iter %lu]=%llu\n",
-             cache_name,
-             (unsigned long)iter,
-             (unsigned long long)cycles);
-      print_vec_f16("f16_mfcc", output);
-    }
+    (void)iter;
   }
 
   if (mfcc_bench_is_print_hart()) {
@@ -319,6 +298,7 @@ static int run_f16_mode(const float32_t *input,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
+    print_vec_f16("f16_mfcc", output);
   }
   return 0;
 }
@@ -347,13 +327,7 @@ static int run_sp_f32_mode(const float32_t *input,
     }
     stats_update(&local, cycles);
     stats_update(total_stats, cycles);
-    if (mfcc_bench_is_print_hart()) {
-      printf("      cycles[sp256x23x12_f32][%s][iter %lu]=%llu\n",
-             cache_name,
-             (unsigned long)iter,
-             (unsigned long long)cycles);
-      print_vec_f32("sp256x23x12_f32_mfcc", output);
-    }
+    (void)iter;
   }
 
   if (mfcc_bench_is_print_hart()) {
@@ -363,6 +337,7 @@ static int run_sp_f32_mode(const float32_t *input,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
+    print_vec_f32("sp256x23x12_f32_mfcc", output);
   }
   return 0;
 }
@@ -391,13 +366,7 @@ static int run_sp_f16_mode(const float32_t *input,
     }
     stats_update(&local, cycles);
     stats_update(total_stats, cycles);
-    if (mfcc_bench_is_print_hart()) {
-      printf("      cycles[sp256x23x12_f16][%s][iter %lu]=%llu\n",
-             cache_name,
-             (unsigned long)iter,
-             (unsigned long long)cycles);
-      print_vec_f16("sp256x23x12_f16_mfcc", output);
-    }
+    (void)iter;
   }
 
   if (mfcc_bench_is_print_hart()) {
@@ -407,6 +376,7 @@ static int run_sp_f16_mode(const float32_t *input,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
+    print_vec_f16("sp256x23x12_f16_mfcc", output);
   }
   return 0;
 }

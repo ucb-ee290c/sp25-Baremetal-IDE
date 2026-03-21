@@ -180,6 +180,7 @@ option(MFCC_F16_ULTRA_OPT "Enable aggressive f16 hotspot optimization" OFF)
 if(MFCC_F16_ULTRA_OPT)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ULTRA_OPT_ENABLED=1)
   set(MFCC_F16_ULTRA_SOURCES
+    src/mfcc_specialized_f16.c
     src/nmsis/TransformFunctions/riscv_mfcc_f16.c
     src/nmsis/TransformFunctions/riscv_cfft_f16.c
     src/nmsis/TransformFunctions/riscv_cfft_radix4_f16.c

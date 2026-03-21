@@ -6,6 +6,8 @@
 
 set(MFCC_APP_SOURCES
   src/main.c
+  src/mfcc_specialized_f32.c
+  src/mfcc_specialized_f16.c
 )
 
 set(MFCC_NMSIS_BASIC_SOURCES
@@ -143,6 +145,7 @@ if(MFCC_F16_RADIX4_EXPERIMENTAL)
 endif()
 
 set(MFCC_HOTSPOT_SOURCES
+  src/mfcc_specialized_f32.c
   src/nmsis/TransformFunctions/riscv_bitreversal2.c
   src/nmsis/FastMathFunctions/riscv_vlog_q31.c
   src/nmsis/MatrixFunctions/riscv_mat_vec_mult_q31.c
@@ -157,6 +160,7 @@ set(MFCC_HOTSPOT_SOURCES
 set_source_files_properties(${MFCC_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O3")
 
 set(MFCC_F16_HOTSPOT_SOURCES
+  src/mfcc_specialized_f16.c
   src/nmsis/StatisticsFunctions/riscv_absmax_f16.c
   src/nmsis/BasicMathFunctions/riscv_mult_f16.c
   src/nmsis/BasicMathFunctions/riscv_offset_f16.c

@@ -1,5 +1,31 @@
 # CMakeLists definitions for target `mfcclib`.
 
+set(MFCC_LIB_DIR ${CMAKE_CURRENT_LIST_DIR})
+
+function(mfcc_lib_resolve_sources out_var)
+  set(_resolved "")
+  set(_missing "")
+  foreach(_src IN LISTS ARGN)
+    if(IS_ABSOLUTE "${_src}")
+      set(_full "${_src}")
+    else()
+      set(_full "${MFCC_LIB_DIR}/${_src}")
+    endif()
+
+    if(EXISTS "${_full}")
+      list(APPEND _resolved "${_full}")
+    else()
+      list(APPEND _missing "${_full}")
+    endif()
+  endforeach()
+
+  if(_missing)
+    message(FATAL_ERROR "mfcclib missing source files:\n  ${_missing}")
+  endif()
+
+  set(${out_var} "${_resolved}" PARENT_SCOPE)
+endfunction()
+
 set(MFCC_LIB_DRIVER_SOURCES
   src/mfcc_driver.c
   src/mfcc_specialized_f32.c
@@ -100,7 +126,9 @@ set(MFCC_LIB_NMSIS_COMMON_TABLES_SOURCES
   src/nmsis/CommonTables/riscv_const_structs_f16.c
 )
 
-add_library(mfcclib STATIC
+add_library(mfcclib STATIC)
+
+mfcc_lib_resolve_sources(MFCC_LIB_ALL_SOURCES
   ${MFCC_LIB_DRIVER_SOURCES}
   ${MFCC_LIB_NMSIS_BASIC_SOURCES}
   ${MFCC_LIB_NMSIS_STATISTICS_SOURCES}
@@ -110,6 +138,7 @@ add_library(mfcclib STATIC
   ${MFCC_LIB_NMSIS_TRANSFORM_SOURCES}
   ${MFCC_LIB_NMSIS_COMMON_TABLES_SOURCES}
 )
+target_sources(mfcclib PRIVATE ${MFCC_LIB_ALL_SOURCES})
 
 set(MFCC_LIB_F16_ASM_MODE 0 CACHE STRING
   "0=disable all f16 asm kernels, 1=enable all f16 asm kernels")

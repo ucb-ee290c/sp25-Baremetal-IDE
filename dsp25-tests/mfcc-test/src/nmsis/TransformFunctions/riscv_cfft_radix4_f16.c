@@ -589,7 +589,7 @@ uint16_t twidCoefModifier)
          ia1 = ia1 + twidCoefModifier;
 
          i0 = j;
-#if defined(RISCV_MATH_VECTOR_F16) && defined(RISCV_MFCC_F16_RADIX4_VEC_EXPERIMENTAL)
+#if 0 /* Disabled: experimental RVV path showed MFCC correctness regressions. */
          {
             uint32_t blkCnt = fftLen / n1;
             size_t vl;

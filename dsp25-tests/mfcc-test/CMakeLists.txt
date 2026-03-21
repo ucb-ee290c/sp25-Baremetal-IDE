@@ -119,6 +119,18 @@ if(MFCC_F16_ASM_MULT)
   target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_MULT=1)
 endif()
 
+option(MFCC_F16_ASM_RFFT_STAGE "Enable hand-written RVV fp16 RFFT stage microkernel" ON)
+if(MFCC_F16_ASM_RFFT_STAGE)
+  target_sources(mfcc-test PRIVATE src/asm/riscv_rfft_stage_f16_rvv.S)
+  target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_RFFT_STAGE=1)
+endif()
+
+option(MFCC_F16_ASM_RADIX4BY2 "Enable hand-written RVV fp16 radix4by2 pre-butterfly microkernel" ON)
+if(MFCC_F16_ASM_RADIX4BY2)
+  target_sources(mfcc-test PRIVATE src/asm/riscv_cfft_radix4by2_pre_f16_rvv.S)
+  target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ASM_RADIX4BY2=1)
+endif()
+
 set(MFCC_F16_RADIX4_EXPERIMENTAL OFF CACHE BOOL
   "Enable experimental RVV radix4 f16 butterfly path")
 if(MFCC_F16_RADIX4_EXPERIMENTAL)
@@ -157,6 +169,7 @@ set_source_files_properties(${MFCC_F16_HOTSPOT_SOURCES} PROPERTIES COMPILE_OPTIO
 
 option(MFCC_F16_ULTRA_OPT "Enable aggressive f16 hotspot optimization" OFF)
 if(MFCC_F16_ULTRA_OPT)
+  target_compile_definitions(mfcc-test PRIVATE MFCC_F16_ULTRA_OPT_ENABLED=1)
   set(MFCC_F16_ULTRA_SOURCES
     src/nmsis/TransformFunctions/riscv_mfcc_f16.c
     src/nmsis/TransformFunctions/riscv_cfft_f16.c

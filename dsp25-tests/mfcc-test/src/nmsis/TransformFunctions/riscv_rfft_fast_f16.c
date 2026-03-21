@@ -3,6 +3,16 @@
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 
+#if defined(RISCV_MATH_VECTOR_F16) && defined(MFCC_F16_ASM_RFFT_STAGE)
+extern void riscv_rfft_stage_f16_rvv_asm(
+  const float16_t *pA,
+  const float16_t *pB,
+  const float16_t *pTwR,
+  const float16_t *pTwI,
+  float16_t *pOut,
+  uint32_t blkCnt);
+#endif
+
 
 static void stage_rfft_f16(
   const riscv_rfft_fast_instance_f16 * S,
@@ -50,6 +60,9 @@ static void stage_rfft_f16(
 #if defined(RISCV_MATH_VECTOR_F16)
    {
       uint32_t blkCnt = (uint32_t)k;
+#if defined(MFCC_F16_ASM_RFFT_STAGE)
+      riscv_rfft_stage_f16_rvv_asm(pA, pB, pCoeff, pCoeff + 1, pOut, blkCnt);
+#else
       size_t vl;
       ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float16_t));
       ptrdiff_t revStride = -cplxStride;
@@ -97,6 +110,7 @@ static void stage_rfft_f16(
          pTwI += (uint32_t)(2U * vl);
          blkCnt -= (uint32_t)vl;
       }
+#endif
    }
 #else
    do

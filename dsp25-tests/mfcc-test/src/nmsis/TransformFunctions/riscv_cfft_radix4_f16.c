@@ -2,6 +2,17 @@
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 
+#if defined(RISCV_MATH_VECTOR_F16) && defined(MFCC_F16_ASM_RADIX4BY2)
+extern void riscv_cfft_radix4by2_pre_f16_rvv_asm(
+    float16_t *pLoR,
+    float16_t *pLoI,
+    float16_t *pHiR,
+    float16_t *pHiI,
+    const float16_t *pTwR,
+    const float16_t *pTwI,
+    uint32_t blkCnt);
+#endif
+
 extern void riscv_bitreversal_f16(
         float16_t * pSrc,
         uint16_t fftSize,
@@ -48,25 +59,34 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_radix4by2_f16(
 {
     uint32_t n2 = fftLen >> 1;
 #if defined(RISCV_MATH_VECTOR_F16)
+    float16_t *pLoR = pSrc;
+    float16_t *pLoI = pSrc + 1;
+    float16_t *pHiR = pSrc + (2U * n2);
+    float16_t *pHiI = pHiR + 1;
+    const float16_t *pTwR = pCoef;
+    const float16_t *pTwI = pCoef + 1;
     {
         uint32_t blkCnt = n2;
+#if defined(MFCC_F16_ASM_RADIX4BY2)
+        riscv_cfft_radix4by2_pre_f16_rvv_asm(pLoR, pLoI, pHiR, pHiI, pTwR, pTwI, blkCnt);
+#else
         size_t vl;
         ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float16_t));
-        float16_t *pLoR = pSrc;
-        float16_t *pLoI = pSrc + 1;
-        float16_t *pHiR = pSrc + (2U * n2);
-        float16_t *pHiI = pHiR + 1;
-        const float16_t *pTwR = pCoef;
-        const float16_t *pTwI = pCoef + 1;
+        float16_t *pLoRVec = pLoR;
+        float16_t *pLoIVec = pLoI;
+        float16_t *pHiRVec = pHiR;
+        float16_t *pHiIVec = pHiI;
+        const float16_t *pTwRVec = pTwR;
+        const float16_t *pTwIVec = pTwI;
 
         while ((vl = __riscv_vsetvl_e16m8(blkCnt)) > 0)
         {
-            vfloat16m8_t vAR = __riscv_vlse16_v_f16m8(pLoR, cplxStride, vl);
-            vfloat16m8_t vAI = __riscv_vlse16_v_f16m8(pLoI, cplxStride, vl);
-            vfloat16m8_t vBR = __riscv_vlse16_v_f16m8(pHiR, cplxStride, vl);
-            vfloat16m8_t vBI = __riscv_vlse16_v_f16m8(pHiI, cplxStride, vl);
-            vfloat16m8_t vCos = __riscv_vlse16_v_f16m8(pTwR, cplxStride, vl);
-            vfloat16m8_t vSin = __riscv_vlse16_v_f16m8(pTwI, cplxStride, vl);
+            vfloat16m8_t vAR = __riscv_vlse16_v_f16m8(pLoRVec, cplxStride, vl);
+            vfloat16m8_t vAI = __riscv_vlse16_v_f16m8(pLoIVec, cplxStride, vl);
+            vfloat16m8_t vBR = __riscv_vlse16_v_f16m8(pHiRVec, cplxStride, vl);
+            vfloat16m8_t vBI = __riscv_vlse16_v_f16m8(pHiIVec, cplxStride, vl);
+            vfloat16m8_t vCos = __riscv_vlse16_v_f16m8(pTwRVec, cplxStride, vl);
+            vfloat16m8_t vSin = __riscv_vlse16_v_f16m8(pTwIVec, cplxStride, vl);
 
             vfloat16m8_t vA0 = __riscv_vfadd_vv_f16m8(vAR, vBR, vl);
             vfloat16m8_t vXT = __riscv_vfsub_vv_f16m8(vAR, vBR, vl);
@@ -78,19 +98,20 @@ RISCV_DSP_ATTRIBUTE void riscv_cfft_radix4by2_f16(
             vfloat16m8_t vP2 = __riscv_vfmul_vv_f16m8(vYT, vCos, vl);
             vfloat16m8_t vP3 = __riscv_vfmul_vv_f16m8(vXT, vSin, vl);
 
-            __riscv_vsse16_v_f16m8(pLoR, cplxStride, vA0, vl);
-            __riscv_vsse16_v_f16m8(pLoI, cplxStride, vA1, vl);
-            __riscv_vsse16_v_f16m8(pHiR, cplxStride, __riscv_vfadd_vv_f16m8(vP0, vP1, vl), vl);
-            __riscv_vsse16_v_f16m8(pHiI, cplxStride, __riscv_vfsub_vv_f16m8(vP2, vP3, vl), vl);
+            __riscv_vsse16_v_f16m8(pLoRVec, cplxStride, vA0, vl);
+            __riscv_vsse16_v_f16m8(pLoIVec, cplxStride, vA1, vl);
+            __riscv_vsse16_v_f16m8(pHiRVec, cplxStride, __riscv_vfadd_vv_f16m8(vP0, vP1, vl), vl);
+            __riscv_vsse16_v_f16m8(pHiIVec, cplxStride, __riscv_vfsub_vv_f16m8(vP2, vP3, vl), vl);
 
-            pLoR += (uint32_t)(2U * vl);
-            pLoI += (uint32_t)(2U * vl);
-            pHiR += (uint32_t)(2U * vl);
-            pHiI += (uint32_t)(2U * vl);
-            pTwR += (uint32_t)(2U * vl);
-            pTwI += (uint32_t)(2U * vl);
+            pLoRVec += (uint32_t)(2U * vl);
+            pLoIVec += (uint32_t)(2U * vl);
+            pHiRVec += (uint32_t)(2U * vl);
+            pHiIVec += (uint32_t)(2U * vl);
+            pTwRVec += (uint32_t)(2U * vl);
+            pTwIVec += (uint32_t)(2U * vl);
             blkCnt -= (uint32_t)vl;
         }
+#endif
     }
 #else
     uint32_t i, l, ia;

@@ -41,6 +41,7 @@ option(ENABLE_RVV                   "Build for RVV targets"                   ON
 set(RVV_TYPE                        "" CACHE STRING "RVV mode: 0=No RVV, 1=RVV (rv64gcv_zfh), 2=RVV+Zvfh (rv64gcv_zfh_zvfh)")
 set_property(CACHE RVV_TYPE PROPERTY STRINGS 0 1 2)
 option(BUILD_VECNN                  "Build vec-nn library"                    OFF)
+option(BUILD_MFCC_LIB               "Build mfcc-lib library"                  ON)
 option(THREAD_LIB                   "Build thread-lib library"                OFF)
 option(BMARK_LIB                    "Build bmark-lib library"                 OFF)
 
@@ -169,6 +170,10 @@ add_subdirectory(lib)
 add_subdirectory(examples)
 add_subdirectory(bmark-lib)
 
+if(BUILD_MFCC_LIB)
+  add_subdirectory(mfcc-lib)
+endif()
+
 if(BUILD_VECNN)
   add_subdirectory(vec-nn)
 endif()
@@ -192,6 +197,7 @@ add_subdirectory(bearly25-bmarks)
 add_subdirectory(bearly25-demos)
 add_subdirectory(dsp25-tests)
 add_subdirectory(c2c25-tests)
+add_subdirectory(dsp25-bmarks)
 
 
 #################################

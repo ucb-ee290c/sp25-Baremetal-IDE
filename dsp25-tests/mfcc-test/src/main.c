@@ -94,7 +94,7 @@ static void print_kernel_mode_summary(void) {
 #endif
 
 #if defined(MFCC_VLOG_VEC_APPROX) && (MFCC_VLOG_VEC_APPROX == 1)
-  printf("    vlog mode: mantissa/exponent approximation\n");
+  printf("    vlog mode: RVV polynomial approximation\n");
 #else
   printf("    vlog mode: scalar reference implementation\n");
 #endif

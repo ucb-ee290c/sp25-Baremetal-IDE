@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
-"""Generate TinySpeech test inputs from synthesized keyword waveforms.
+"""Generate TinySpeech test inputs using TinySpeech-aligned preprocessing.
 
-This script synthesizes 1-second speech-like waveforms for keyword classes,
-computes MFCC(12 x 94) features (n_fft=1024, win=480, hop=160, n_mels=23),
-then quantizes to int8 and emits a C header consumed by tinyspeech-test.
+The preprocessing basis is aligned with:
+- tinyspeech_content/Methods.tex:
+  1s audio, band-pass 20Hz..4kHz, MFCC stack with 30ms window and 10ms hop.
+- tinyspeech/training/data.py:
+  n_fft=1024, win_length=480, hop_length=160, n_mels=23, n_mfcc=12,
+  center=False.
+
+For better parity with torchaudio MFCC defaults, this script computes:
+1) power mel spectrogram
+2) dB conversion with top_db clipping
+3) DCT-II (ortho) to MFCC
+
+Finally, the MFCC matrix is quantized to int8 in the expected model input layout
+[1, 1, 12, 94].
 """
 
 from __future__ import annotations
 
 import argparse
-import re
-import struct
+import math
 from pathlib import Path
 
 import numpy as np
@@ -20,10 +30,14 @@ DURATION_S = 1.0
 N_SAMPLES = int(SR * DURATION_S)
 
 N_FFT = 1024
-WIN_LEN = 480
-HOP_LEN = 160
+WIN_LEN = 480  # 30 ms @ 16 kHz
+HOP_LEN = 160  # 10 ms @ 16 kHz
 N_MELS = 23
 N_MFCC = 12
+
+BANDPASS_LOW_HZ = 20.0
+BANDPASS_HIGH_HZ = 4000.0
+TOP_DB = 80.0
 
 INPUT_H = N_MFCC
 INPUT_W = 94
@@ -34,6 +48,7 @@ KEYWORD_TO_LABEL = {k: i for i, k in enumerate(KEYWORDS)}
 
 
 def _hz_to_mel(f_hz: np.ndarray | float) -> np.ndarray | float:
+    # HTK mel mapping (matches common KWS pipelines).
     return 2595.0 * np.log10(1.0 + (np.asarray(f_hz) / 700.0))
 
 
@@ -41,9 +56,7 @@ def _mel_to_hz(mel: np.ndarray | float) -> np.ndarray | float:
     return 700.0 * (10 ** (np.asarray(mel) / 2595.0) - 1.0)
 
 
-def _build_mel_filterbank(sr: int, n_fft: int, n_mels: int) -> np.ndarray:
-    f_min = 0.0
-    f_max = sr / 2.0
+def _build_mel_filterbank(sr: int, n_fft: int, n_mels: int, f_min: float, f_max: float) -> np.ndarray:
     mel_points = np.linspace(_hz_to_mel(f_min), _hz_to_mel(f_max), n_mels + 2)
     hz_points = _mel_to_hz(mel_points)
     bins = np.floor((n_fft + 1) * hz_points / sr).astype(np.int32)
@@ -68,48 +81,95 @@ def _build_mel_filterbank(sr: int, n_fft: int, n_mels: int) -> np.ndarray:
     return fb
 
 
-def _build_dct_matrix(n_mfcc: int, n_mels: int) -> np.ndarray:
+def _build_dct_matrix_ortho(n_mfcc: int, n_mels: int) -> np.ndarray:
+    # DCT-II orthonormal basis (torchaudio/librosa style for MFCC).
     n = np.arange(n_mels, dtype=np.float64)
     k = np.arange(n_mfcc, dtype=np.float64)[:, None]
     dct = np.sqrt(2.0 / n_mels) * np.cos((np.pi / n_mels) * (n + 0.5) * k)
-    dct[0, :] = np.sqrt(1.0 / n_mels)
+    dct[0, :] *= 1.0 / np.sqrt(2.0)
     return dct
 
 
-MEL_FB = _build_mel_filterbank(SR, N_FFT, N_MELS)
-DCT_MAT = _build_dct_matrix(N_MFCC, N_MELS)
+def _periodic_hann(n: int) -> np.ndarray:
+    i = np.arange(n, dtype=np.float64)
+    return 0.5 - 0.5 * np.cos((2.0 * np.pi * i) / n)
+
+
+def _bandpass_fft(wave: np.ndarray, sr: int, f_low: float, f_high: float) -> np.ndarray:
+    # Lightweight zero-phase spectral mask band-pass (20Hz..4kHz).
+    spec = np.fft.rfft(wave)
+    freqs = np.fft.rfftfreq(wave.size, d=1.0 / sr)
+    mask = (freqs >= f_low) & (freqs <= f_high)
+    filt = np.fft.irfft(spec * mask, n=wave.size)
+    return filt.astype(np.float64)
+
+
+MEL_FB = _build_mel_filterbank(
+    sr=SR,
+    n_fft=N_FFT,
+    n_mels=N_MELS,
+    f_min=BANDPASS_LOW_HZ,
+    f_max=BANDPASS_HIGH_HZ,
+)
+DCT_MAT = _build_dct_matrix_ortho(N_MFCC, N_MELS)
 
 
 def _compute_mfcc(wave: np.ndarray) -> np.ndarray:
     if wave.shape[0] != N_SAMPLES:
         raise ValueError(f"Expected waveform length {N_SAMPLES}, got {wave.shape[0]}")
 
+    wave = _bandpass_fft(wave.astype(np.float64), SR, BANDPASS_LOW_HZ, BANDPASS_HIGH_HZ)
+
     n_frames = 1 + (N_SAMPLES - N_FFT) // HOP_LEN
     if n_frames != INPUT_W:
         raise ValueError(f"Expected {INPUT_W} frames, got {n_frames}")
 
-    win = np.hamming(WIN_LEN)
-    win_pad = np.zeros(N_FFT, dtype=np.float64)
-    w0 = (N_FFT - WIN_LEN) // 2
-    win_pad[w0 : w0 + WIN_LEN] = win
-
+    # center=False framing
     frames = np.zeros((n_frames, N_FFT), dtype=np.float64)
     for i in range(n_frames):
         s = i * HOP_LEN
         frames[i, :] = wave[s : s + N_FFT]
 
+    # win_length < n_fft uses centered zero-padding.
+    win = _periodic_hann(WIN_LEN)
+    win_pad = np.zeros(N_FFT, dtype=np.float64)
+    start = (N_FFT - WIN_LEN) // 2
+    win_pad[start : start + WIN_LEN] = win
     frames *= win_pad[None, :]
 
     spec = np.fft.rfft(frames, axis=1)
-    power = (spec.real**2 + spec.imag**2)
+    power = np.real(spec * np.conj(spec))
 
     mel = power @ MEL_FB.T
     mel = np.maximum(mel, 1e-10)
-    log_mel = np.log(mel)
 
-    mfcc_t = log_mel @ DCT_MAT.T
-    mfcc = mfcc_t.T
-    return mfcc
+    # torchaudio-like power->dB with top_db clipping.
+    mel_db = 10.0 * np.log10(mel)
+    mel_db -= np.max(mel_db)
+    mel_db = np.maximum(mel_db, -TOP_DB)
+
+    # [frames, mels] x [mels, mfcc]^T -> [frames, mfcc], then transpose.
+    mfcc_t = mel_db @ DCT_MAT.T
+    return mfcc_t.T
+
+
+def _quantize_like_tinyspeech_input(mfcc: np.ndarray) -> np.ndarray:
+    """Quantize MFCC to int8 in a way consistent with TinySpeech QAT input style.
+
+    BitConv2d in training normalizes input by RMS over (H, W), then applies
+    int8 activation quantization with per-row absmax over the time axis.
+    """
+    rms = math.sqrt(float(np.mean(mfcc * mfcc)))
+    if rms < 1e-12:
+        return np.zeros_like(mfcc, dtype=np.int8)
+
+    x_norm = mfcc / rms
+    row_absmax = np.max(np.abs(x_norm), axis=1, keepdims=True)
+    row_absmax = np.maximum(row_absmax, 1e-8)
+
+    q = np.round((127.0 / row_absmax) * x_norm)
+    q = np.clip(q, -127.0, 127.0)
+    return q.astype(np.int8)
 
 
 def _envelope(n: int, attack: float, release: float) -> np.ndarray:
@@ -139,7 +199,7 @@ def _voiced_segment(
     phase = 2.0 * np.pi * np.cumsum(f0) / SR
     y = np.zeros_like(t)
     for h in range(1, h_count + 1):
-        y += (1.0 / h) * np.sin(h * phase + (0.07 * h))
+        y += (1.0 / h) * np.sin((h * phase) + (0.07 * h))
 
     env = _envelope(t.size, attack=0.08, release=0.18)
     return amp * env * y
@@ -209,75 +269,32 @@ def _synth_keyword_wave(keyword: str, variant: int, rng: np.random.Generator) ->
         y[s0] += _voiced_segment(t[s0], 185, 170, amp=0.38 * jitter, h_count=8, vibrato_hz=4.2, vibrato_depth=0.016)
         y[s1] += _voiced_segment(t[s1], 170, 120, amp=0.48 * jitter, h_count=10, vibrato_hz=5.1, vibrato_depth=0.022)
 
-    # low background + slight DC offset variation by variant
     y += rng.normal(0.0, 0.004 + 0.0015 * variant, size=y.size)
     y += (variant - 1) * 0.002
 
-    # normalize to avoid clipping while keeping class differences
     peak = max(1e-8, np.max(np.abs(y)))
     y = 0.92 * y / peak
     return y.astype(np.float64)
 
 
-def _parse_conv1_activation_scale(weights_path: Path) -> float:
-    txt = weights_path.read_text(encoding="utf-8")
-    m = re.search(
-        r"CONV1_ACTIVATION_SCALE\s*=\s*\{[^\}]*?f_data\s*=\s*data_(\d+)\s*\}\s*;",
-        txt,
-        flags=re.DOTALL,
-    )
-    if not m:
-        return 1.0
-
-    did = m.group(1)
-    m2 = re.search(rf"data_{did}\[\]\s*=\s*\{{\s*(0x[0-9a-fA-F]+)\s*\}}\s*;", txt)
-    if not m2:
-        return 1.0
-
-    bits = int(m2.group(1), 16)
-    return struct.unpack(">f", bits.to_bytes(4, byteorder="big", signed=False))[0]
-
-
-def _mfcc_to_int8(mfcc: np.ndarray, q_scale: float) -> np.ndarray:
-    if q_scale <= 1e-9:
-        q_scale = 1.0
-    q = np.round(mfcc / q_scale)
-    return np.clip(q, -127, 127).astype(np.int8)
-
-
-def build_cases(weights_path: Path) -> list[tuple[str, int, np.ndarray]]:
+def build_cases() -> list[tuple[str, int, np.ndarray]]:
     rng = np.random.default_rng(20260322)
-    _ = _parse_conv1_activation_scale(weights_path)  # kept for reference/debug only
+    cases: list[tuple[str, int, np.ndarray]] = []
 
-    raw_cases: list[tuple[str, int, np.ndarray]] = []
-
-    # Silence + noise baseline
     silence = np.zeros(N_SAMPLES, dtype=np.float64)
     silence_mfcc = _compute_mfcc(silence)
-    silence_mfcc = silence_mfcc - np.mean(silence_mfcc, axis=1, keepdims=True)
-    raw_cases.append(("silence", -1, silence_mfcc))
+    cases.append(("silence", -1, _quantize_like_tinyspeech_input(silence_mfcc)))
 
     noise = rng.normal(0.0, 0.02, size=N_SAMPLES)
     noise_mfcc = _compute_mfcc(noise)
-    noise_mfcc = noise_mfcc - np.mean(noise_mfcc, axis=1, keepdims=True)
-    raw_cases.append(("noise", -1, noise_mfcc))
+    cases.append(("noise", -1, _quantize_like_tinyspeech_input(noise_mfcc)))
 
-    # Keyword-specific synthetic speech-like waveforms
     for kw in KEYWORDS:
         label = KEYWORD_TO_LABEL[kw]
         for var in range(3):
             wav = _synth_keyword_wave(kw, variant=var, rng=rng)
             mfcc = _compute_mfcc(wav)
-            mfcc = mfcc - np.mean(mfcc, axis=1, keepdims=True)
-            raw_cases.append((f"{kw}_v{var}", label, mfcc))
-
-    abs_vals = np.concatenate([np.abs(mfcc).reshape(-1) for _, _, mfcc in raw_cases])
-    # Map the 98th percentile near +-64 to keep dynamic range without heavy saturation.
-    q_scale = max(np.percentile(abs_vals, 98.0) / 64.0, 1e-4)
-
-    cases: list[tuple[str, int, np.ndarray]] = []
-    for name, label, mfcc in raw_cases:
-        cases.append((name, label, _mfcc_to_int8(mfcc, q_scale)))
+            cases.append((f"{kw}_v{var}", label, _quantize_like_tinyspeech_input(mfcc)))
 
     return cases
 
@@ -293,6 +310,10 @@ def emit_header(cases: list[tuple[str, int, np.ndarray]], out_path: Path) -> Non
     lines.append(f"#define TINYSPEECH_TEST_INPUT_W {INPUT_W}")
     lines.append(f"#define TINYSPEECH_TEST_INPUT_SIZE {INPUT_SIZE}")
     lines.append(f"#define TINYSPEECH_TEST_NUM_CASES {len(cases)}")
+    lines.append(f"#define TINYSPEECH_TEST_BANDPASS_LOW_HZ {int(BANDPASS_LOW_HZ)}")
+    lines.append(f"#define TINYSPEECH_TEST_BANDPASS_HIGH_HZ {int(BANDPASS_HIGH_HZ)}")
+    lines.append(f"#define TINYSPEECH_TEST_WINDOW_MS {int((WIN_LEN * 1000) / SR)}")
+    lines.append(f"#define TINYSPEECH_TEST_HOP_MS {int((HOP_LEN * 1000) / SR)}")
     lines.append("")
     lines.append("typedef struct {")
     lines.append("  const char *name;")
@@ -324,12 +345,6 @@ def emit_header(cases: list[tuple[str, int, np.ndarray]], out_path: Path) -> Non
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--weights",
-        type=Path,
-        default=Path("dsp25-tests/tinyspeech-test/include/weights.h"),
-        help="Path to TinySpeech model weights header",
-    )
-    parser.add_argument(
         "--out",
         type=Path,
         default=Path("dsp25-tests/tinyspeech-test/include/tinyspeech_test_inputs.h"),
@@ -337,10 +352,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cases = build_cases(args.weights)
+    cases = build_cases()
     args.out.parent.mkdir(parents=True, exist_ok=True)
     emit_header(cases, args.out)
-    print(f"Wrote {len(cases)} waveform-derived MFCC cases to {args.out}")
+    print(f"Wrote {len(cases)} TinySpeech-format MFCC cases to {args.out}")
 
 
 if __name__ == "__main__":

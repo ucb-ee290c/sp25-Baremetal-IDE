@@ -81,6 +81,7 @@ void app_main(void) {
     printf("  input shape: [1,1,%d,%d]\n", TINYSPEECH_TEST_INPUT_H, TINYSPEECH_TEST_INPUT_W);
     printf("  classes: %d (yes/no/on/off/stop/go)\n", TINYSPEECH_NUM_CLASSES);
     printf("  cases: %d\n", TINYSPEECH_TEST_NUM_CASES);
+    printf("  bn scale offset: 2 (fixed to activation_scale)\n");
 
     uint32_t pass = 0;
     uint32_t fail = 0;

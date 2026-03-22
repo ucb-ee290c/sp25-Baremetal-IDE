@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -94,10 +95,17 @@ def emit_header(cases, out: Path, fft_len: int):
     lines.append("};")
     lines.append("")
 
+    def fmt_c_float(v: float) -> str:
+        if math.isnan(v):
+            return "NAN"
+        if math.isinf(v):
+            return "INFINITY" if v > 0 else "(-INFINITY)"
+        return f"{v:.9f}f"
+
     def emit_arr(name: str, key: str):
         lines.append(f"static const float g_mfcc_ref_{name}[MFCC_REF_NUM_CASES][MFCC_REF_NUM_DCT] = {{")
         for c in cases:
-            row = ", ".join(f"{v:.9f}f" for v in c[key])
+            row = ", ".join(fmt_c_float(v) for v in c[key])
             lines.append(f'  /* {c["name"]} */')
             lines.append(f"  {{ {row} }},")
         lines.append("};")

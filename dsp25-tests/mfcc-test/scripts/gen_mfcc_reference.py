@@ -195,10 +195,17 @@ def emit_header(out_path: Path, outputs: np.ndarray) -> None:
         lines.append(f'  "{name}",')
     lines.append("};")
     lines.append("")
+    def fmt_c_float(v: float) -> str:
+        if math.isnan(v):
+            return "NAN"
+        if math.isinf(v):
+            return "INFINITY" if v > 0 else "(-INFINITY)"
+        return f"{v:.9f}f"
+
     lines.append("static const float g_mfcc_ref_f32[MFCC_REF_NUM_CASES][MFCC_REF_NUM_DCT] = {")
     for ci, row in enumerate(outputs):
         lines.append(f"  /* {CASE_NAMES[ci]} */")
-        row_values = ", ".join(f"{float(v):.9f}f" for v in row)
+        row_values = ", ".join(fmt_c_float(float(v)) for v in row)
         lines.append(f"  {{ {row_values} }},")
     lines.append("};")
     lines.append("")

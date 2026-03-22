@@ -6,6 +6,28 @@
 
 #include <riscv_vector.h> 
 
+void xnn_f32_gemm_ukernel_7x4v__rvv(
+    size_t mr,
+    size_t nc,
+    size_t kc,
+    const float* a,
+    size_t a_stride,
+    const float* w,
+    float* c,
+    size_t cm_stride,
+    size_t cn_stride);
+
+void xnn_f32_gemm_ukernel_1x4v__rvv(
+    size_t mr,
+    size_t nc,
+    size_t kc,
+    const float* a,
+    size_t a_stride,
+    const float* w,
+    float* c,
+    size_t cm_stride,
+    size_t cn_stride);
+
 void f32_gemm(
   size_t M, size_t N, size_t K,
   const float* A, size_t a_row_stride,

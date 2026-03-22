@@ -16,6 +16,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "chip_config.h"
+#include "simple_setup.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */

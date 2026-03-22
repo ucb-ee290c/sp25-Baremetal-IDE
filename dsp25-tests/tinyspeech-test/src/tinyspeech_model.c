@@ -86,11 +86,11 @@ static Tensor attention_condenser(Tensor *input, u_int8_t *layer_id, int32_t blo
     snprintf(label, sizeof(label), "b%ld.s%ld.pool", (long)block_idx, (long)sub_idx);
     trace_add(label, &q);
 
-    Tensor k = conv2d(&q, W(base + 1), W(base + 2), W(base + 3), 1, 1);
+    Tensor k = conv2d(&q, W(base + 1), W(base + 2), W(base + 3), 1, 0);
     snprintf(label, sizeof(label), "b%ld.s%ld.gconv", (long)block_idx, (long)sub_idx);
     trace_add(label, &k);
 
-    k = conv2d(&k, W(base + 5), W(base + 6), W(base + 7), 1, 1);
+    k = conv2d(&k, W(base + 5), W(base + 6), W(base + 7), 1, 0);
     snprintf(label, sizeof(label), "b%ld.s%ld.pwconv", (long)block_idx, (long)sub_idx);
     trace_add(label, &k);
 
@@ -98,7 +98,7 @@ static Tensor attention_condenser(Tensor *input, u_int8_t *layer_id, int32_t blo
     snprintf(label, sizeof(label), "b%ld.s%ld.upsample", (long)block_idx, (long)sub_idx);
     trace_add(label, &k);
 
-    k = conv2d(&k, W(base + 9), W(base + 10), W(base + 11), 1, 1);
+    k = conv2d(&k, W(base + 9), W(base + 10), W(base + 11), 1, 0);
     snprintf(label, sizeof(label), "b%ld.s%ld.expand", (long)block_idx, (long)sub_idx);
     trace_add(label, &k);
 

@@ -24,15 +24,35 @@ static inline float decode_packed_float(float raw) {
 
     /* weights.h stores float constants as hex integers (e.g. 0x426c0000). */
     if ((raw > 1000000.0f) && (raw < 4294967295.0f)) {
-        uint32_t bits = (uint32_t)(raw + 0.5f);
-        union {
-            uint32_t u;
-            float f;
-        } cvt;
-        cvt.u = bits;
-        if (isfinite(cvt.f) && (fabsf(cvt.f) > 1e-12f)) {
-            return cvt.f;
+        uint32_t bits = (uint32_t)raw;
+        uint32_t candidates[2] = {bits, bits};
+        int32_t n = 1;
+
+        /*
+         * 0x7fffffff cannot be represented exactly as float and often becomes
+         * 0x80000000 after conversion to float. Try both candidates.
+         */
+        if (bits == 0x80000000u) {
+            candidates[1] = 0x7fffffffu;
+            n = 2;
         }
+
+        for (int32_t i = 0; i < n; i++) {
+            union {
+                uint32_t u;
+                float f;
+            } cvt;
+            cvt.u = candidates[i];
+            if (isfinite(cvt.f) && (fabsf(cvt.f) > 1e-12f)) {
+                return cvt.f;
+            }
+        }
+
+        /*
+         * Sentinel/invalid packed values (NaN payloads, overflows) should not
+         * crush activations via massive division. Use neutral scale.
+         */
+        return 1.0f;
     }
 
     return raw;

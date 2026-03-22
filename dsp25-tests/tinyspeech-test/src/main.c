@@ -48,6 +48,31 @@ static int output_is_valid(const Tensor *probs, float *sum_out) {
     return fabsf(sum - 1.0f) < 0.02f;
 }
 
+#if TINYSPEECH_DEBUG_TRACE
+static void print_debug_trace(void) {
+    const tinyspeech_debug_trace_t *trace = tinyspeech_debug_last_trace();
+
+    printf("    logits(pre-softmax) =");
+    for (int32_t i = 0; i < trace->logits_len; i++) {
+        printf(" %.6f", trace->logits[i]);
+    }
+    printf("\n");
+
+    printf("    layer-trace (%ld stages)\n", (long)trace->num_stages);
+    for (int32_t i = 0; i < trace->num_stages; i++) {
+        const tinyspeech_stage_checksum_t *s = &trace->stages[i];
+        printf("      [%02ld] %-18s size=%ld sum=%.6f abs=%.6f min=%.6f max=%.6f\n",
+               (long)i,
+               s->name,
+               (long)s->size,
+               s->sum,
+               s->abs_sum,
+               s->min,
+               s->max);
+    }
+}
+#endif
+
 void app_init(void) {
 }
 
@@ -95,6 +120,10 @@ void app_main(void) {
         }
         printf("    prob_sum  = %.6f\n", sum);
         printf("    cycles    = %lu\n", (unsigned long)(c1 - c0));
+
+#if TINYSPEECH_DEBUG_TRACE
+        print_debug_trace();
+#endif
 
         if ((c->expected_label >= 0) && (c->expected_label < TINYSPEECH_NUM_CLASSES)) {
             labeled_total++;

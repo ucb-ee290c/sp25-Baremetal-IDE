@@ -10,6 +10,10 @@ extern "C" {
 #include <stdio.h>
 #include <string.h>
 
+#ifndef TINYSPEECH_DEBUG_TRACE
+#define TINYSPEECH_DEBUG_TRACE 1
+#endif
+
 void app_init(void);
 void app_main(void);
 

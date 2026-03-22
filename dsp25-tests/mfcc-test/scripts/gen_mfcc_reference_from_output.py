@@ -123,12 +123,16 @@ def emit_header(cases, out: Path, fft_len: int):
 
 
 def main():
+    default_in = Path("mfcc-test.output")
+    if not default_in.exists():
+        default_in = Path(__file__).resolve().parents[1] / "output.txt"
+
     ap = argparse.ArgumentParser(description="Generate mfcc per-type golden header from output.txt")
     ap.add_argument(
         "--in",
         dest="inp",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "output.txt",
+        default=default_in,
         help="Path to mfcc-test output log",
     )
     ap.add_argument(

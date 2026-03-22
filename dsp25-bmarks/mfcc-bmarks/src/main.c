@@ -890,6 +890,8 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 
   if (mfcc_bench_is_print_hart()) {
     printf("\n=== MFCC Driver Benchmark @ %llu Hz ===\n", (unsigned long long)frequency_hz);
+    printf("  reference header: FFT_LEN=%d CASES=%d DCT=%d\n",
+           MFCC_REF_FFT_LEN, MFCC_REF_NUM_CASES, MFCC_REF_NUM_DCT);
     printf("  iterations=%d cold=%d warm=%d\n",
            MFCC_BENCH_NUM_ITERATIONS,
            MFCC_BENCH_RUN_COLD,

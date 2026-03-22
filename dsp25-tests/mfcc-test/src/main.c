@@ -744,6 +744,8 @@ void app_main(void) {
   printf("=== DSP25 MFCC Kernel Bring-up ===\n");
   printf("  FFT_LEN=%d MEL=%d DCT=%d\n",
          MFCC_TEST_FFT_LEN, MFCC_TEST_NUM_MEL, MFCC_TEST_NUM_DCT);
+  printf("  reference header: FFT_LEN=%d CASES=%d DCT=%d\n",
+         MFCC_REF_FFT_LEN, MFCC_REF_NUM_CASES, MFCC_REF_NUM_DCT);
 #if MFCC_TEST_ENABLE_F16
   printf("  f16 path enabled (RISCV_FLOAT16_SUPPORTED)\n");
 #else

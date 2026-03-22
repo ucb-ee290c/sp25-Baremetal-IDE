@@ -37,7 +37,7 @@ __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_dct_f32(const riscv_mfcc_instanc
   riscv_mat_vec_mult_f32(&pDctMat, mel, out);
 }
 
-void mfcc_tinyspeech_256_23_12_f32(const riscv_mfcc_instance_f32 *S,
+void mfcc_tinyspeech_1024_23_12_f32(const riscv_mfcc_instance_f32 *S,
                                    float32_t *pSrc,
                                    float32_t *pDst,
                                    float32_t *pTmp)

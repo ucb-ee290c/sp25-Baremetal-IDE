@@ -94,12 +94,12 @@ mfcc_driver_status_t mfcc_driver_run_f16(mfcc_driver_t *ctx,
                                          float16_t *output,
                                          uint64_t *cycles);
 #endif
-mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f32(mfcc_driver_t *ctx,
+mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f32(mfcc_driver_t *ctx,
                                                       const float32_t *input,
                                                       float32_t *output,
                                                       uint64_t *cycles);
 #if defined(RISCV_FLOAT16_SUPPORTED)
-mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f16(mfcc_driver_t *ctx,
+mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16(mfcc_driver_t *ctx,
                                                       const float32_t *input,
                                                       float16_t *output,
                                                       uint64_t *cycles);

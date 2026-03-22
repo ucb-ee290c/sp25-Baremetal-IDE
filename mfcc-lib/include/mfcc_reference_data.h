@@ -6,6 +6,7 @@
 
 #define MFCC_REF_NUM_CASES 8
 #define MFCC_REF_NUM_DCT 12
+#define MFCC_REF_FFT_LEN 256
 #define MFCC_REF_HAS_F32 1
 #define MFCC_REF_HAS_Q31 1
 #define MFCC_REF_HAS_Q15 1

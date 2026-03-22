@@ -336,7 +336,7 @@ mfcc_driver_status_t mfcc_driver_run_f16(mfcc_driver_t *ctx,
 }
 #endif
 
-mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f32(mfcc_driver_t *ctx,
+mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f32(mfcc_driver_t *ctx,
                                                       const float32_t *input,
                                                       float32_t *output,
                                                       uint64_t *cycles) {
@@ -349,7 +349,7 @@ mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f32(mfcc_driver_t *ctx,
 
   memcpy(ctx->input_f32, input, sizeof(ctx->input_f32));
   t0 = mfcc_rdcycle64();
-  mfcc_tinyspeech_256_23_12_f32(&ctx->mfcc_f32, ctx->input_f32, output, ctx->tmp_f32);
+  mfcc_tinyspeech_1024_23_12_f32(&ctx->mfcc_f32, ctx->input_f32, output, ctx->tmp_f32);
   t1 = mfcc_rdcycle64();
 
   if (cycles != NULL) {
@@ -359,7 +359,7 @@ mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f32(mfcc_driver_t *ctx,
 }
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
-mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f16(mfcc_driver_t *ctx,
+mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16(mfcc_driver_t *ctx,
                                                       const float32_t *input,
                                                       float16_t *output,
                                                       uint64_t *cycles) {
@@ -375,7 +375,7 @@ mfcc_driver_status_t mfcc_driver_run_sp256x23x12_f16(mfcc_driver_t *ctx,
   }
 
   t0 = mfcc_rdcycle64();
-  mfcc_tinyspeech_256_23_12_f16(&ctx->mfcc_f16, ctx->input_f16, output, ctx->tmp_f16);
+  mfcc_tinyspeech_1024_23_12_f16(&ctx->mfcc_f16, ctx->input_f16, output, ctx->tmp_f16);
   t1 = mfcc_rdcycle64();
 
   if (cycles != NULL) {

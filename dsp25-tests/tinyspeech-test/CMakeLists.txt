@@ -9,7 +9,6 @@ add_executable(tinyspeech-test
 )
 
 target_include_directories(tinyspeech-test PUBLIC include)
-target_include_directories(tinyspeech-test PRIVATE ${CMAKE_SOURCE_DIR}/tinyspeech/inference/include)
 target_include_directories(tinyspeech-test PUBLIC ${CMAKE_SOURCE_DIR}/platform/dsp25/include)
 
 target_link_libraries(tinyspeech-test PRIVATE

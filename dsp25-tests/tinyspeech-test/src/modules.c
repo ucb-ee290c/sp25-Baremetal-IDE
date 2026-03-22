@@ -17,13 +17,34 @@ static inline float tensor_get_channel_value(const Tensor *t, int32_t ch) {
     return tensor_get_value(t, ch);
 }
 
+static inline float decode_packed_float(float raw) {
+    if (!isfinite(raw)) {
+        return 1.0f;
+    }
+
+    /* weights.h stores float constants as hex integers (e.g. 0x426c0000). */
+    if ((raw > 1000000.0f) && (raw < 4294967295.0f)) {
+        uint32_t bits = (uint32_t)(raw + 0.5f);
+        union {
+            uint32_t u;
+            float f;
+        } cvt;
+        cvt.u = bits;
+        if (isfinite(cvt.f) && (fabsf(cvt.f) > 1e-12f)) {
+            return cvt.f;
+        }
+    }
+
+    return raw;
+}
+
 Tensor batchnorm2d(Tensor *input, Tensor *gamma, Tensor *beta, Tensor *scale, Tensor *mean, Tensor *variance) {
     int32_t C = input->shape[1];
     int32_t H = input->shape[2];
     int32_t W = input->shape[3];
 
     Tensor output = create_tensor(input->shape, 4);
-    float out_scale = tensor_get_value(scale, 0);
+    float out_scale = decode_packed_float(tensor_get_value(scale, 0));
     if (fabsf(out_scale) < 1e-12f) {
         out_scale = 1.0f;
     }
@@ -103,7 +124,7 @@ Tensor conv2d(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale, u_int
         (u_int8_t)out_width,
     };
     Tensor output = create_tensor(output_shape, 4);
-    float out_scale = tensor_get_value(scale, 0);
+    float out_scale = decode_packed_float(tensor_get_value(scale, 0));
     if (fabsf(out_scale) < 1e-12f) {
         out_scale = 1.0f;
     }

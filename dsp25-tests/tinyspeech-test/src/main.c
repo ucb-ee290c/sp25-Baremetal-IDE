@@ -59,6 +59,8 @@ void app_main(void) {
 
     uint32_t pass = 0;
     uint32_t fail = 0;
+    uint32_t labeled_total = 0;
+    uint32_t labeled_match = 0;
 
     for (uint32_t tc = 0; tc < TINYSPEECH_TEST_NUM_CASES; tc++) {
         const tinyspeech_test_input_case_t *c = &g_tinyspeech_test_inputs[tc];
@@ -76,6 +78,11 @@ void app_main(void) {
         int ok = output_is_valid(&probs, &sum);
 
         printf("[CASE %lu] %s\n", (unsigned long)tc, c->name);
+        if ((c->expected_label >= 0) && (c->expected_label < TINYSPEECH_NUM_CLASSES)) {
+            printf("    expected  = %s (%ld)\n", k_labels[c->expected_label], (long)c->expected_label);
+        } else {
+            printf("    expected  = <background/unknown>\n");
+        }
         printf("    probs     =");
         for (int32_t i = 0; i < probs.size; i++) {
             printf(" %.6f", probs.f_data[i]);
@@ -88,6 +95,13 @@ void app_main(void) {
         }
         printf("    prob_sum  = %.6f\n", sum);
         printf("    cycles    = %lu\n", (unsigned long)(c1 - c0));
+
+        if ((c->expected_label >= 0) && (c->expected_label < TINYSPEECH_NUM_CLASSES)) {
+            labeled_total++;
+            if (pred == c->expected_label) {
+                labeled_match++;
+            }
+        }
 
         if (ok) {
             pass++;
@@ -103,6 +117,9 @@ void app_main(void) {
     printf("TinySpeech summary: pass=%lu fail=%lu\n",
            (unsigned long)pass,
            (unsigned long)fail);
+    printf("Label-match summary: %lu/%lu labeled cases\n",
+           (unsigned long)labeled_match,
+           (unsigned long)labeled_total);
 }
 
 int main(void) {

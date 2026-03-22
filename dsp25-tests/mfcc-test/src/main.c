@@ -4,9 +4,13 @@
 #include "simple_setup.h"
 
 #define MFCC_TEST_SAMPLE_RATE_HZ 16000.0f
-#define MFCC_TEST_FFT_LEN 256
+#define MFCC_TEST_FFT_LEN MFCC_TINYSPEECH_FFT_LEN
 #define MFCC_TEST_NUM_MEL 23
 #define MFCC_TEST_NUM_DCT 12
+
+#ifndef MFCC_REF_FFT_LEN
+#define MFCC_REF_FFT_LEN MFCC_TEST_FFT_LEN
+#endif
 
 #define MFCC_TEST_NUM_CASES 8
 #define MFCC_TEST_PRINT_INPUT_N 16
@@ -98,7 +102,7 @@ static void print_kernel_mode_summary(void) {
   printf("    note     : RVV present but disabled (missing __RISCV_VXRM_RNU API)\n");
 #endif
 #endif
-  printf("    sp256x23x12_f32 path: enabled (fixed-shape TinySpeech helper)\n");
+  printf("    sp1024x23x12_f32 path: enabled (fixed-shape TinySpeech helper)\n");
 
 #if defined(MFCC_VLOG_VEC_APPROX) && (MFCC_VLOG_VEC_APPROX == 1)
   printf("    vlog mode: RVV polynomial approximation\n");
@@ -125,7 +129,7 @@ static void print_kernel_mode_summary(void) {
 #else
   printf("    f16 path : scalar (no Zvfh RVV support)\n");
 #endif
-  printf("    sp256x23x12_f16 path: enabled (fixed-shape TinySpeech helper)\n");
+  printf("    sp1024x23x12_f16 path: enabled (fixed-shape TinySpeech helper)\n");
 #if defined(MFCC_F16_ASM_MULT)
   printf("    f16 mult  : asm microkernel enabled\n");
 #else
@@ -385,7 +389,7 @@ static void print_output_f32(const float32_t *x) {
 }
 
 static void print_output_f32_specialized(const float32_t *x) {
-  printf("    sp256x23x12_f32_mfcc=");
+  printf("    sp1024x23x12_f32_mfcc=");
   for (uint32_t i = 0; i < MFCC_TEST_NUM_DCT; i++) {
     printf(" %0.5f", x[i]);
   }
@@ -418,7 +422,7 @@ static void print_output_f16(const float16_t *x) {
 }
 
 static void print_output_f16_specialized(const float16_t *x) {
-  printf("    sp256x23x12_f16_mfcc=");
+  printf("    sp1024x23x12_f16_mfcc=");
   for (uint32_t i = 0; i < MFCC_TEST_NUM_DCT; i++) {
     printf(" %0.5f", f16_to_float(x[i]));
   }
@@ -434,8 +438,9 @@ static int compare_output_f32_to_reference(uint32_t case_idx, const float32_t *x
   return -1;
 #else
   if ((MFCC_REF_NUM_CASES != MFCC_TEST_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT)) {
-    printf("    ref[f32]    = SKIP (shape mismatch)\n");
+      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_TEST_FFT_LEN)) {
+    printf("    ref[f32]    = SKIP (shape/fft mismatch)\n");
     return -1;
   }
 
@@ -470,17 +475,18 @@ static int compare_output_f32_specialized_to_reference(uint32_t case_idx,
 #if !MFCC_REF_HAS_F32
   (void)case_idx;
   (void)x;
-  printf("    ref[sp256x23x12_f32] = SKIP (f32 golden disabled)\n");
+  printf("    ref[sp1024x23x12_f32] = SKIP (f32 golden disabled)\n");
   return -1;
 #else
   if ((MFCC_REF_NUM_CASES != MFCC_TEST_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT)) {
-    printf("    ref[sp256x23x12_f32] = SKIP (shape mismatch)\n");
+      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_TEST_FFT_LEN)) {
+    printf("    ref[sp1024x23x12_f32] = SKIP (shape/fft mismatch)\n");
     return -1;
   }
 
   if (strcmp(g_cases[case_idx].name, g_mfcc_ref_case_names[case_idx]) != 0) {
-    printf("    ref[sp256x23x12_f32] = SKIP (case-name mismatch: test=%s ref=%s)\n",
+    printf("    ref[sp1024x23x12_f32] = SKIP (case-name mismatch: test=%s ref=%s)\n",
            g_cases[case_idx].name,
            g_mfcc_ref_case_names[case_idx]);
     return -1;
@@ -497,7 +503,7 @@ static int compare_output_f32_specialized_to_reference(uint32_t case_idx,
   }
 
   int pass = (max_abs_err <= MFCC_REF_F32_TOL);
-  printf("    ref[sp256x23x12_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+  printf("    ref[sp1024x23x12_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
          pass ? "PASS" : "FAIL",
          max_abs_err,
          (unsigned long)max_abs_idx,
@@ -514,8 +520,9 @@ static int compare_output_q31_to_reference(uint32_t case_idx, const q31_t *x_q31
   return -1;
 #else
   if ((MFCC_REF_NUM_CASES != MFCC_TEST_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT)) {
-    printf("    ref[q31]    = SKIP (shape mismatch)\n");
+      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_TEST_FFT_LEN)) {
+    printf("    ref[q31]    = SKIP (shape/fft mismatch)\n");
     return -1;
   }
   if (strcmp(g_cases[case_idx].name, g_mfcc_ref_case_names[case_idx]) != 0) {
@@ -552,8 +559,9 @@ static int compare_output_q15_to_reference(uint32_t case_idx, const q15_t *x_q15
   return -1;
 #else
   if ((MFCC_REF_NUM_CASES != MFCC_TEST_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT)) {
-    printf("    ref[q15]    = SKIP (shape mismatch)\n");
+      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_TEST_FFT_LEN)) {
+    printf("    ref[q15]    = SKIP (shape/fft mismatch)\n");
     return -1;
   }
   if (strcmp(g_cases[case_idx].name, g_mfcc_ref_case_names[case_idx]) != 0) {
@@ -591,8 +599,9 @@ static int compare_output_f16_to_reference(uint32_t case_idx, const float16_t *x
   return -1;
 #else
   if ((MFCC_REF_NUM_CASES != MFCC_TEST_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT)) {
-    printf("    ref[f16]    = SKIP (shape mismatch)\n");
+      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_TEST_FFT_LEN)) {
+    printf("    ref[f16]    = SKIP (shape/fft mismatch)\n");
     return -1;
   }
   if (strcmp(g_cases[case_idx].name, g_mfcc_ref_case_names[case_idx]) != 0) {
@@ -626,16 +635,17 @@ static int compare_output_f16_specialized_to_reference(uint32_t case_idx,
 #if !MFCC_REF_HAS_F16
   (void)case_idx;
   (void)x_f16;
-  printf("    ref[sp256x23x12_f16] = SKIP (f16 golden disabled)\n");
+  printf("    ref[sp1024x23x12_f16] = SKIP (f16 golden disabled)\n");
   return -1;
 #else
   if ((MFCC_REF_NUM_CASES != MFCC_TEST_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT)) {
-    printf("    ref[sp256x23x12_f16] = SKIP (shape mismatch)\n");
+      (MFCC_REF_NUM_DCT != MFCC_TEST_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_TEST_FFT_LEN)) {
+    printf("    ref[sp1024x23x12_f16] = SKIP (shape/fft mismatch)\n");
     return -1;
   }
   if (strcmp(g_cases[case_idx].name, g_mfcc_ref_case_names[case_idx]) != 0) {
-    printf("    ref[sp256x23x12_f16] = SKIP (case-name mismatch: test=%s ref=%s)\n",
+    printf("    ref[sp1024x23x12_f16] = SKIP (case-name mismatch: test=%s ref=%s)\n",
            g_cases[case_idx].name,
            g_mfcc_ref_case_names[case_idx]);
     return -1;
@@ -651,7 +661,7 @@ static int compare_output_f16_specialized_to_reference(uint32_t case_idx,
     }
   }
   int pass = (max_abs_err <= MFCC_REF_F16_TOL);
-  printf("    ref[sp256x23x12_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+  printf("    ref[sp1024x23x12_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
          pass ? "PASS" : "FAIL",
          max_abs_err,
          (unsigned long)max_abs_idx,
@@ -795,7 +805,7 @@ void app_main(void) {
     riscv_mfcc_f32(&g_mfcc_f32, g_input_f32, g_out_f32, g_tmp_f32);
     uint64_t f1 = rdcycle64();
     uint64_t sf0 = rdcycle64();
-    mfcc_tinyspeech_256_23_12_f32(&g_mfcc_f32,
+    mfcc_tinyspeech_1024_23_12_f32(&g_mfcc_f32,
                                   g_input_f32_specialized,
                                   g_out_f32_specialized,
                                   g_tmp_f32);
@@ -820,7 +830,7 @@ void app_main(void) {
     riscv_mfcc_f16(&g_mfcc_f16, g_input_f16, g_out_f16, g_tmp_f16);
     uint64_t e1 = rdcycle64();
     uint64_t se0 = rdcycle64();
-    mfcc_tinyspeech_256_23_12_f16(&g_mfcc_f16,
+    mfcc_tinyspeech_1024_23_12_f16(&g_mfcc_f16,
                                   g_input_f16_specialized,
                                   g_out_f16_specialized,
                                   g_tmp_f16);
@@ -837,12 +847,12 @@ void app_main(void) {
 #endif
 
     printf("    cycles[f32]=%lu\n", (unsigned long)(f1 - f0));
-    printf("    cycles[sp256x23x12_f32]=%lu\n", (unsigned long)(sf1 - sf0));
+    printf("    cycles[sp1024x23x12_f32]=%lu\n", (unsigned long)(sf1 - sf0));
     printf("    cycles[q31]=%lu status=%d\n", (unsigned long)(q1 - q0), (int)st_q31);
     printf("    cycles[q15]=%lu status=%d\n", (unsigned long)(h1 - h0), (int)st_q15);
 #if MFCC_TEST_ENABLE_F16
     printf("    cycles[f16]=%lu\n", (unsigned long)(e1 - e0));
-    printf("    cycles[sp256x23x12_f16]=%lu\n", (unsigned long)(se1 - se0));
+    printf("    cycles[sp1024x23x12_f16]=%lu\n", (unsigned long)(se1 - se0));
 #endif
 
     int ref_status = compare_output_f32_to_reference(tc, g_out_f32);
@@ -903,7 +913,8 @@ void app_main(void) {
   }
 
   if ((MFCC_REF_NUM_CASES == MFCC_TEST_NUM_CASES) &&
-      (MFCC_REF_NUM_DCT == MFCC_TEST_NUM_DCT)) {
+      (MFCC_REF_NUM_DCT == MFCC_TEST_NUM_DCT) &&
+      (MFCC_REF_FFT_LEN == MFCC_TEST_FFT_LEN)) {
     printf("\nReference summary: pass=%lu fail=%lu skip=%lu tol=%0.6f\n",
            (unsigned long)ref_pass,
            (unsigned long)ref_fail,
@@ -921,7 +932,7 @@ void app_main(void) {
          (unsigned long)ref_q15_fail,
          (unsigned long)ref_q15_skip,
          MFCC_REF_Q15_TOL);
-  printf("Reference summary[sp256x23x12_f32]: pass=%lu fail=%lu skip=%lu tol=%0.6f\n",
+  printf("Reference summary[sp1024x23x12_f32]: pass=%lu fail=%lu skip=%lu tol=%0.6f\n",
          (unsigned long)ref_sp_f32_pass,
          (unsigned long)ref_sp_f32_fail,
          (unsigned long)ref_sp_f32_skip,
@@ -932,7 +943,7 @@ void app_main(void) {
          (unsigned long)ref_f16_fail,
          (unsigned long)ref_f16_skip,
          MFCC_REF_F16_TOL);
-  printf("Reference summary[sp256x23x12_f16]: pass=%lu fail=%lu skip=%lu tol=%0.6f\n",
+  printf("Reference summary[sp1024x23x12_f16]: pass=%lu fail=%lu skip=%lu tol=%0.6f\n",
          (unsigned long)ref_sp_f16_pass,
          (unsigned long)ref_sp_f16_fail,
          (unsigned long)ref_sp_f16_skip,

@@ -15,7 +15,7 @@ import numpy as np
 
 
 SAMPLE_RATE_HZ = 16000.0
-FFT_LEN = 256
+FFT_LEN = 1024
 NUM_MEL = 23
 NUM_DCT = 12
 NUM_CASES = 8
@@ -187,6 +187,7 @@ def emit_header(out_path: Path, outputs: np.ndarray) -> None:
     lines.append("")
     lines.append(f"#define MFCC_REF_NUM_CASES {NUM_CASES}")
     lines.append(f"#define MFCC_REF_NUM_DCT {NUM_DCT}")
+    lines.append(f"#define MFCC_REF_FFT_LEN {FFT_LEN}")
     lines.append(f"#define MFCC_REF_F32_TOL {REF_TOL_F32:.6f}f")
     lines.append("")
     lines.append("static const char *const g_mfcc_ref_case_names[MFCC_REF_NUM_CASES] = {")

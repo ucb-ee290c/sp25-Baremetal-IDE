@@ -9,6 +9,10 @@
 #include "mfcc_reference_data.h"
 #include "simple_setup.h"
 
+#ifndef MFCC_REF_FFT_LEN
+#define MFCC_REF_FFT_LEN MFCC_DRIVER_FFT_LEN
+#endif
+
 typedef enum {
   MFCC_VAR_F32 = 0,
   MFCC_VAR_Q31,
@@ -65,8 +69,8 @@ static const char *k_var_names[MFCC_VAR_COUNT] = {
     "q31",
     "q15",
     "f16",
-    "sp256x23x12_f32",
-    "sp256x23x12_f16",
+    "sp1024x23x12_f32",
+    "sp1024x23x12_f16",
 };
 
 static void stats_init(cycle_stats_t *s) {
@@ -319,7 +323,7 @@ static int run_sp_f32_mode(const float32_t *input,
     if (is_cold) {
       bench_cache_flush();
     }
-    st = mfcc_driver_run_sp256x23x12_f32(&g_driver, input, output, &cycles);
+    st = mfcc_driver_run_sp1024x23x12_f32(&g_driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f32 run failed: %s\n", mfcc_driver_status_str(st));
@@ -332,13 +336,13 @@ static int run_sp_f32_mode(const float32_t *input,
   }
 
   if (mfcc_bench_is_print_hart()) {
-    printf("      summary[sp256x23x12_f32][%s]: runs=%lu best=%llu avg=%llu worst=%llu\n",
+    printf("      summary[sp1024x23x12_f32][%s]: runs=%lu best=%llu avg=%llu worst=%llu\n",
            cache_name,
            (unsigned long)local.runs,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
-    print_vec_f32("sp256x23x12_f32_mfcc", output);
+    print_vec_f32("sp1024x23x12_f32_mfcc", output);
   }
   return 0;
 }
@@ -358,7 +362,7 @@ static int run_sp_f16_mode(const float32_t *input,
     if (is_cold) {
       bench_cache_flush();
     }
-    st = mfcc_driver_run_sp256x23x12_f16(&g_driver, input, output, &cycles);
+    st = mfcc_driver_run_sp1024x23x12_f16(&g_driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f16 run failed: %s\n", mfcc_driver_status_str(st));
@@ -371,13 +375,13 @@ static int run_sp_f16_mode(const float32_t *input,
   }
 
   if (mfcc_bench_is_print_hart()) {
-    printf("      summary[sp256x23x12_f16][%s]: runs=%lu best=%llu avg=%llu worst=%llu\n",
+    printf("      summary[sp1024x23x12_f16][%s]: runs=%lu best=%llu avg=%llu worst=%llu\n",
            cache_name,
            (unsigned long)local.runs,
            (unsigned long long)local.best,
            (unsigned long long)stats_avg(&local),
            (unsigned long long)local.worst);
-    print_vec_f16("sp256x23x12_f16_mfcc", output);
+    print_vec_f16("sp1024x23x12_f16_mfcc", output);
   }
   return 0;
 }
@@ -489,9 +493,10 @@ static int compare_f16_to_f32(const float16_t *a,
 
 static int ref_case_is_usable(uint32_t case_idx, const char *label) {
   if ((MFCC_REF_NUM_CASES != MFCC_BENCH_NUM_CASES) ||
-      (MFCC_REF_NUM_DCT != MFCC_DRIVER_NUM_DCT)) {
+      (MFCC_REF_NUM_DCT != MFCC_DRIVER_NUM_DCT) ||
+      (MFCC_REF_FFT_LEN != MFCC_DRIVER_FFT_LEN)) {
     if (mfcc_bench_is_print_hart()) {
-      printf("    check[%s] = SKIP (reference shape mismatch)\n", label);
+      printf("    check[%s] = SKIP (reference shape/fft mismatch)\n", label);
     }
     return 0;
   }
@@ -633,15 +638,15 @@ static void run_correctness_checks(uint32_t case_idx, const case_outputs_t *out)
 #endif
 #endif
 
-#if MFCC_BENCH_ENABLE_SP256X23X12_F32
+#if MFCC_BENCH_ENABLE_SP1024X23X12_F32
   if (out->has_sp_f32) {
 #if MFCC_REF_HAS_F32
-    if (ref_case_is_usable(case_idx, "sp256x23x12_f32")) {
+    if (ref_case_is_usable(case_idx, "sp1024x23x12_f32")) {
       int pass = compare_f32_arrays(
           out->out_sp_f32, g_mfcc_ref_f32[case_idx], MFCC_REF_F32_TOL, &max_err, &max_idx);
       update_check_stats(MFCC_VAR_SP_F32, pass);
       if (mfcc_bench_is_print_hart()) {
-        printf("    check[sp256x23x12_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+        printf("    check[sp1024x23x12_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
                pass ? "PASS" : "FAIL",
                max_err,
                (unsigned long)max_idx,
@@ -653,7 +658,7 @@ static void run_correctness_checks(uint32_t case_idx, const case_outputs_t *out)
 #else
     update_check_stats(MFCC_VAR_SP_F32, -1);
     if (mfcc_bench_is_print_hart()) {
-      printf("    check[sp256x23x12_f32] = SKIP (f32 golden disabled)\n");
+      printf("    check[sp1024x23x12_f32] = SKIP (f32 golden disabled)\n");
     }
 #endif
   } else {
@@ -661,16 +666,16 @@ static void run_correctness_checks(uint32_t case_idx, const case_outputs_t *out)
   }
 #endif
 
-#if MFCC_BENCH_ENABLE_SP256X23X12_F16
+#if MFCC_BENCH_ENABLE_SP1024X23X12_F16
 #if defined(RISCV_FLOAT16_SUPPORTED)
   if (out->has_sp_f16) {
 #if MFCC_REF_HAS_F16
-    if (ref_case_is_usable(case_idx, "sp256x23x12_f16")) {
+    if (ref_case_is_usable(case_idx, "sp1024x23x12_f16")) {
       int pass = compare_f16_to_f32(
           out->out_sp_f16, g_mfcc_ref_f16[case_idx], MFCC_REF_F16_TOL, &max_err, &max_idx);
       update_check_stats(MFCC_VAR_SP_F16, pass);
       if (mfcc_bench_is_print_hart()) {
-        printf("    check[sp256x23x12_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+        printf("    check[sp1024x23x12_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
                pass ? "PASS" : "FAIL",
                max_err,
                (unsigned long)max_idx,
@@ -682,7 +687,7 @@ static void run_correctness_checks(uint32_t case_idx, const case_outputs_t *out)
 #else
     update_check_stats(MFCC_VAR_SP_F16, -1);
     if (mfcc_bench_is_print_hart()) {
-      printf("    check[sp256x23x12_f16] = SKIP (f16 golden disabled)\n");
+      printf("    check[sp1024x23x12_f16] = SKIP (f16 golden disabled)\n");
     }
 #endif
   } else {
@@ -761,7 +766,7 @@ static void run_case(const mfcc_bench_case_t *cs, uint32_t case_idx) {
 #endif
 #endif
 
-#if MFCC_BENCH_ENABLE_SP256X23X12_F32
+#if MFCC_BENCH_ENABLE_SP1024X23X12_F32
 #if MFCC_BENCH_RUN_COLD
   if (run_sp_f32_mode(cs->samples,
                       out.out_sp_f32,
@@ -782,7 +787,7 @@ static void run_case(const mfcc_bench_case_t *cs, uint32_t case_idx) {
 #endif
 #endif
 
-#if MFCC_BENCH_ENABLE_SP256X23X12_F16
+#if MFCC_BENCH_ENABLE_SP1024X23X12_F16
 #if defined(RISCV_FLOAT16_SUPPORTED)
 #if MFCC_BENCH_RUN_COLD
   if (run_sp_f16_mode(cs->samples,
@@ -804,7 +809,7 @@ static void run_case(const mfcc_bench_case_t *cs, uint32_t case_idx) {
 #endif
 #else
   if (mfcc_bench_is_print_hart()) {
-    printf("      sp256x23x12_f16 disabled at compile time (RISCV_FLOAT16_SUPPORTED not set)\n");
+    printf("      sp1024x23x12_f16 disabled at compile time (RISCV_FLOAT16_SUPPORTED not set)\n");
   }
 #endif
 #endif
@@ -894,8 +899,8 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            MFCC_BENCH_ENABLE_Q31,
            MFCC_BENCH_ENABLE_Q15,
            MFCC_BENCH_ENABLE_F16,
-           MFCC_BENCH_ENABLE_SP256X23X12_F32,
-           MFCC_BENCH_ENABLE_SP256X23X12_F16);
+           MFCC_BENCH_ENABLE_SP1024X23X12_F32,
+           MFCC_BENCH_ENABLE_SP1024X23X12_F16);
   }
 
   for (uint32_t tc = 0; tc < MFCC_BENCH_NUM_CASES; tc++) {

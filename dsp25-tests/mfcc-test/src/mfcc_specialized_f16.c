@@ -77,7 +77,7 @@ __STATIC_FORCEINLINE void mfcc_tinyspeech_apply_dct_f16(const riscv_mfcc_instanc
 #endif
 }
 
-void mfcc_tinyspeech_256_23_12_f16(const riscv_mfcc_instance_f16 *S,
+void mfcc_tinyspeech_1024_23_12_f16(const riscv_mfcc_instance_f16 *S,
                                    float16_t *pSrc,
                                    float16_t *pDst,
                                    float16_t *pTmp)

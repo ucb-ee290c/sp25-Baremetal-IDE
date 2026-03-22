@@ -22,7 +22,11 @@ Tensor batchnorm2d(Tensor *input, Tensor *gamma, Tensor *beta, Tensor *scale, Te
     int32_t H = input->shape[2];
     int32_t W = input->shape[3];
 
-    Tensor output = f_create_tensor(input->shape, 4);
+    Tensor output = create_tensor(input->shape, 4);
+    float out_scale = tensor_get_value(scale, 0);
+    if (fabsf(out_scale) < 1e-12f) {
+        out_scale = 1.0f;
+    }
 
     for (int32_t n = 0; n < input->shape[0]; n++) {
         for (int32_t c = 0; c < C; c++) {
@@ -39,17 +43,15 @@ Tensor batchnorm2d(Tensor *input, Tensor *gamma, Tensor *beta, Tensor *scale, Te
                 for (int32_t w = 0; w < W; w++) {
                     int32_t idx = n * (C * H * W) + c * (H * W) + h * W + w;
                     float x = tensor_get_value(input, idx);
-                    output.f_data[idx] = g * (x - m) / var_sqrt + b;
+                    float y = g * (x - m) / var_sqrt + b;
+                    float q = roundf(y / out_scale);
+                    if (q < -127.0f) q = -127.0f;
+                    if (q > 127.0f) q = 127.0f;
+                    output.data[idx] = (int8_t)q;
                 }
             }
         }
     }
-
-    Tensor quant_output = create_tensor(output.shape, 4);
-    float out_scale = tensor_get_value(scale, 0);
-    quantize_weights(&output, &quant_output, &out_scale, CONVERT_INT8);
-    free_tensor(&output);
-    output = quant_output;
 
     free_tensor(input);
     return output;
@@ -100,7 +102,11 @@ Tensor conv2d(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale, u_int
         (u_int8_t)out_height,
         (u_int8_t)out_width,
     };
-    Tensor float_intermediate = f_create_tensor(output_shape, 4);
+    Tensor output = create_tensor(output_shape, 4);
+    float out_scale = tensor_get_value(scale, 0);
+    if (fabsf(out_scale) < 1e-12f) {
+        out_scale = 1.0f;
+    }
 
     for (int32_t n = 0; n < batch_size; n++) {
         for (int32_t oc = 0; oc < out_channels; oc++) {
@@ -124,19 +130,17 @@ Tensor conv2d(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale, u_int
                     }
 
                     int32_t out_index = n * (out_channels * out_height * out_width) + oc * (out_height * out_width) + h * out_width + w;
-                    float_intermediate.f_data[out_index] = sum;
+                    float q = roundf(sum / out_scale);
+                    if (q < -127.0f) q = -127.0f;
+                    if (q > 127.0f) q = 127.0f;
+                    output.data[out_index] = (int8_t)q;
                 }
             }
         }
     }
 
     free_tensor(input);
-
-    Tensor int_intermediate = create_tensor(output_shape, 4);
-    float out_scale = tensor_get_value(scale, 0);
-    quantize_weights(&float_intermediate, &int_intermediate, &out_scale, CONVERT_INT8);
-    free_tensor(&float_intermediate);
-    return int_intermediate;
+    return output;
 }
 
 Tensor fc_layer(Tensor *input, Tensor *weights) {

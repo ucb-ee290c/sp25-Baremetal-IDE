@@ -17,6 +17,23 @@ static inline float tensor_get_channel_value(const Tensor *t, int32_t ch) {
     return tensor_get_value(t, ch);
 }
 
+static inline float decode_packed_float(float raw);
+
+static inline float bn_param_value(const Tensor *t, int32_t ch) {
+    if (t->f_data != NULL) {
+        float v = tensor_get_channel_value(t, ch);
+        return decode_packed_float(v);
+    }
+    if (t->size <= 0) {
+        return 0.0f;
+    }
+    int32_t id = (t->size <= 1) ? 0 : ch;
+    if (id >= t->size) {
+        id = t->size - 1;
+    }
+    return (float)t->data[id] / 127.0f;
+}
+
 static inline float decode_packed_float(float raw) {
     if (!isfinite(raw)) {
         return 1.0f;
@@ -71,12 +88,15 @@ Tensor batchnorm2d(Tensor *input, Tensor *gamma, Tensor *beta, Tensor *scale, Te
 
     for (int32_t n = 0; n < input->shape[0]; n++) {
         for (int32_t c = 0; c < C; c++) {
-            float g = tensor_get_channel_value(gamma, c);
-            float b = tensor_get_channel_value(beta, c);
-            float m = tensor_get_channel_value(mean, c);
-            float v = tensor_get_channel_value(variance, c);
+            float g = bn_param_value(gamma, c);
+            float b = bn_param_value(beta, c);
+            float m = bn_param_value(mean, c);
+            float v = bn_param_value(variance, c);
             if (v < 0.0f) {
                 v = -v;
+            }
+            if (v < 1e-6f) {
+                v = 1.0f;
             }
 
             float var_sqrt = sqrtf(v + 0.0001f);

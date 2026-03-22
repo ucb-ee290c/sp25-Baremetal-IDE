@@ -120,7 +120,7 @@ static Tensor attn_bn_block(Tensor *input, u_int8_t *layer_id, int32_t block_idx
     Tensor x = attention_condenser(input, layer_id, block_idx, 1);
     free_tensor(input);
 
-    x = batchnorm2d(&x, W(*layer_id), W(*layer_id + 1), W(*layer_id + 2), W(*layer_id + 4), W(*layer_id + 5));
+    x = batchnorm2d(&x, W(*layer_id), W(*layer_id + 1), W(*layer_id + 3), W(*layer_id + 4), W(*layer_id + 5));
     snprintf(label, sizeof(label), "b%ld.s1.bn", (long)block_idx);
     trace_add(label, &x);
 
@@ -129,7 +129,7 @@ static Tensor attn_bn_block(Tensor *input, u_int8_t *layer_id, int32_t block_idx
     Tensor y = attention_condenser(&x, layer_id, block_idx, 2);
     free_tensor(&x);
 
-    y = batchnorm2d(&y, W(*layer_id), W(*layer_id + 1), W(*layer_id + 2), W(*layer_id + 4), W(*layer_id + 5));
+    y = batchnorm2d(&y, W(*layer_id), W(*layer_id + 1), W(*layer_id + 3), W(*layer_id + 4), W(*layer_id + 5));
     snprintf(label, sizeof(label), "b%ld.s2.bn", (long)block_idx);
     trace_add(label, &y);
 

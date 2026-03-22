@@ -14,6 +14,20 @@ static inline float tensor_get_broadcast(const Tensor *t, int32_t idx) {
     return tensor_get_value(t, idx);
 }
 
+static inline float tensor_get_scale_like(const Tensor *t, int32_t idx) {
+    if (t->f_data != NULL) {
+        return tensor_get_broadcast(t, idx);
+    }
+    if (t->size <= 0) {
+        return 0.0f;
+    }
+    int32_t id = (t->size <= 1) ? 0 : idx;
+    if (id >= t->size) {
+        id = t->size - 1;
+    }
+    return (float)t->data[id] / 127.0f;
+}
+
 float compute_mean_abs(int32_t *w, int32_t len) {
     float sum = 0.0f;
     for (int32_t i = 0; i < len; i++) {
@@ -69,7 +83,7 @@ Tensor sigmoid(Tensor *tensor) {
 void attention(Tensor *residual, Tensor *S, Tensor *scale) {
     for (int32_t i = 0; i < S->size; i++) {
         float r = tensor_get_value(residual, i);
-        float g = tensor_get_broadcast(scale, i);
+        float g = tensor_get_scale_like(scale, i);
         S->f_data[i] = r + (r * g * S->f_data[i]);
     }
 }

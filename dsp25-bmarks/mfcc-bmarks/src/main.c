@@ -6,6 +6,7 @@
 #include "bench_cases.h"
 #include "bench_config.h"
 #include "mfcc_driver.h"
+#include "mfcc_reference_data.h"
 #include "simple_setup.h"
 
 typedef enum {
@@ -486,71 +487,115 @@ static int compare_f16_to_f32(const float16_t *a,
 }
 #endif
 
-static void run_correctness_checks(const case_outputs_t *out) {
-  const float32_t *ref = 0;
-  const char *ref_name = 0;
+static int ref_case_is_usable(uint32_t case_idx, const char *label) {
+  if ((MFCC_REF_NUM_CASES != MFCC_BENCH_NUM_CASES) ||
+      (MFCC_REF_NUM_DCT != MFCC_DRIVER_NUM_DCT)) {
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[%s] = SKIP (reference shape mismatch)\n", label);
+    }
+    return 0;
+  }
+
+  if (strcmp(g_cases[case_idx].name, g_mfcc_ref_case_names[case_idx]) != 0) {
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[%s] = SKIP (case-name mismatch: test=%s ref=%s)\n",
+             label,
+             g_cases[case_idx].name,
+             g_mfcc_ref_case_names[case_idx]);
+    }
+    return 0;
+  }
+
+  return 1;
+}
+
+static void run_correctness_checks(uint32_t case_idx, const case_outputs_t *out) {
   float32_t max_err = 0.0f;
   uint32_t max_idx = 0U;
 
-  if (out->has_f32) {
-    ref = out->out_f32;
-    ref_name = "f32";
-  } else if (out->has_sp_f32) {
-    ref = out->out_sp_f32;
-    ref_name = "sp256x23x12_f32";
-  }
-
   if (mfcc_bench_is_print_hart()) {
-    if (ref != 0) {
-      printf("    correctness reference = %s\n", ref_name);
-    } else {
-      printf("    correctness reference = none (all checks skipped)\n");
-    }
+    printf("    correctness reference = per-type goldens\n");
   }
 
 #if MFCC_BENCH_ENABLE_F32
-  if (out->has_f32 && ref != 0) {
-    int pass = compare_f32_arrays(out->out_f32, ref, MFCC_BENCH_TOL_F32, &max_err, &max_idx);
-    update_check_stats(MFCC_VAR_F32, pass);
-    if (mfcc_bench_is_print_hart()) {
-      printf("    check[f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
-             pass ? "PASS" : "FAIL",
-             max_err,
-             (unsigned long)max_idx,
-             MFCC_BENCH_TOL_F32);
+  if (out->has_f32) {
+#if MFCC_REF_HAS_F32
+    if (ref_case_is_usable(case_idx, "f32")) {
+      int pass = compare_f32_arrays(
+          out->out_f32, g_mfcc_ref_f32[case_idx], MFCC_REF_F32_TOL, &max_err, &max_idx);
+      update_check_stats(MFCC_VAR_F32, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_F32_TOL);
+      }
+    } else {
+      update_check_stats(MFCC_VAR_F32, -1);
     }
+#else
+    update_check_stats(MFCC_VAR_F32, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[f32] = SKIP (f32 golden disabled)\n");
+    }
+#endif
   } else {
     update_check_stats(MFCC_VAR_F32, -1);
   }
 #endif
 
 #if MFCC_BENCH_ENABLE_Q31
-  if (out->has_q31 && ref != 0) {
-    int pass = compare_q31_to_f32(out->out_q31, ref, MFCC_BENCH_TOL_Q31, &max_err, &max_idx);
-    update_check_stats(MFCC_VAR_Q31, pass);
-    if (mfcc_bench_is_print_hart()) {
-      printf("    check[q31] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
-             pass ? "PASS" : "FAIL",
-             max_err,
-             (unsigned long)max_idx,
-             MFCC_BENCH_TOL_Q31);
+  if (out->has_q31) {
+#if MFCC_REF_HAS_Q31
+    if (ref_case_is_usable(case_idx, "q31")) {
+      int pass = compare_q31_to_f32(
+          out->out_q31, g_mfcc_ref_q31[case_idx], MFCC_REF_Q31_TOL, &max_err, &max_idx);
+      update_check_stats(MFCC_VAR_Q31, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[q31] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_Q31_TOL);
+      }
+    } else {
+      update_check_stats(MFCC_VAR_Q31, -1);
     }
+#else
+    update_check_stats(MFCC_VAR_Q31, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[q31] = SKIP (q31 golden disabled)\n");
+    }
+#endif
   } else {
     update_check_stats(MFCC_VAR_Q31, -1);
   }
 #endif
 
 #if MFCC_BENCH_ENABLE_Q15
-  if (out->has_q15 && ref != 0) {
-    int pass = compare_q15_to_f32(out->out_q15, ref, MFCC_BENCH_TOL_Q15, &max_err, &max_idx);
-    update_check_stats(MFCC_VAR_Q15, pass);
-    if (mfcc_bench_is_print_hart()) {
-      printf("    check[q15] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
-             pass ? "PASS" : "FAIL",
-             max_err,
-             (unsigned long)max_idx,
-             MFCC_BENCH_TOL_Q15);
+  if (out->has_q15) {
+#if MFCC_REF_HAS_Q15
+    if (ref_case_is_usable(case_idx, "q15")) {
+      int pass = compare_q15_to_f32(
+          out->out_q15, g_mfcc_ref_q15[case_idx], MFCC_REF_Q15_TOL, &max_err, &max_idx);
+      update_check_stats(MFCC_VAR_Q15, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[q15] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_Q15_TOL);
+      }
+    } else {
+      update_check_stats(MFCC_VAR_Q15, -1);
     }
+#else
+    update_check_stats(MFCC_VAR_Q15, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[q15] = SKIP (q15 golden disabled)\n");
+    }
+#endif
   } else {
     update_check_stats(MFCC_VAR_Q15, -1);
   }
@@ -558,16 +603,28 @@ static void run_correctness_checks(const case_outputs_t *out) {
 
 #if MFCC_BENCH_ENABLE_F16
 #if defined(RISCV_FLOAT16_SUPPORTED)
-  if (out->has_f16 && ref != 0) {
-    int pass = compare_f16_to_f32(out->out_f16, ref, MFCC_BENCH_TOL_F16, &max_err, &max_idx);
-    update_check_stats(MFCC_VAR_F16, pass);
-    if (mfcc_bench_is_print_hart()) {
-      printf("    check[f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
-             pass ? "PASS" : "FAIL",
-             max_err,
-             (unsigned long)max_idx,
-             MFCC_BENCH_TOL_F16);
+  if (out->has_f16) {
+#if MFCC_REF_HAS_F16
+    if (ref_case_is_usable(case_idx, "f16")) {
+      int pass = compare_f16_to_f32(
+          out->out_f16, g_mfcc_ref_f16[case_idx], MFCC_REF_F16_TOL, &max_err, &max_idx);
+      update_check_stats(MFCC_VAR_F16, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_F16_TOL);
+      }
+    } else {
+      update_check_stats(MFCC_VAR_F16, -1);
     }
+#else
+    update_check_stats(MFCC_VAR_F16, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[f16] = SKIP (f16 golden disabled)\n");
+    }
+#endif
   } else {
     update_check_stats(MFCC_VAR_F16, -1);
   }
@@ -577,16 +634,28 @@ static void run_correctness_checks(const case_outputs_t *out) {
 #endif
 
 #if MFCC_BENCH_ENABLE_SP256X23X12_F32
-  if (out->has_sp_f32 && ref != 0) {
-    int pass = compare_f32_arrays(out->out_sp_f32, ref, MFCC_BENCH_TOL_F32, &max_err, &max_idx);
-    update_check_stats(MFCC_VAR_SP_F32, pass);
-    if (mfcc_bench_is_print_hart()) {
-      printf("    check[sp256x23x12_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
-             pass ? "PASS" : "FAIL",
-             max_err,
-             (unsigned long)max_idx,
-             MFCC_BENCH_TOL_F32);
+  if (out->has_sp_f32) {
+#if MFCC_REF_HAS_F32
+    if (ref_case_is_usable(case_idx, "sp256x23x12_f32")) {
+      int pass = compare_f32_arrays(
+          out->out_sp_f32, g_mfcc_ref_f32[case_idx], MFCC_REF_F32_TOL, &max_err, &max_idx);
+      update_check_stats(MFCC_VAR_SP_F32, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[sp256x23x12_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_F32_TOL);
+      }
+    } else {
+      update_check_stats(MFCC_VAR_SP_F32, -1);
     }
+#else
+    update_check_stats(MFCC_VAR_SP_F32, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[sp256x23x12_f32] = SKIP (f32 golden disabled)\n");
+    }
+#endif
   } else {
     update_check_stats(MFCC_VAR_SP_F32, -1);
   }
@@ -594,16 +663,28 @@ static void run_correctness_checks(const case_outputs_t *out) {
 
 #if MFCC_BENCH_ENABLE_SP256X23X12_F16
 #if defined(RISCV_FLOAT16_SUPPORTED)
-  if (out->has_sp_f16 && ref != 0) {
-    int pass = compare_f16_to_f32(out->out_sp_f16, ref, MFCC_BENCH_TOL_F16, &max_err, &max_idx);
-    update_check_stats(MFCC_VAR_SP_F16, pass);
-    if (mfcc_bench_is_print_hart()) {
-      printf("    check[sp256x23x12_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
-             pass ? "PASS" : "FAIL",
-             max_err,
-             (unsigned long)max_idx,
-             MFCC_BENCH_TOL_F16);
+  if (out->has_sp_f16) {
+#if MFCC_REF_HAS_F16
+    if (ref_case_is_usable(case_idx, "sp256x23x12_f16")) {
+      int pass = compare_f16_to_f32(
+          out->out_sp_f16, g_mfcc_ref_f16[case_idx], MFCC_REF_F16_TOL, &max_err, &max_idx);
+      update_check_stats(MFCC_VAR_SP_F16, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[sp256x23x12_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_F16_TOL);
+      }
+    } else {
+      update_check_stats(MFCC_VAR_SP_F16, -1);
     }
+#else
+    update_check_stats(MFCC_VAR_SP_F16, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[sp256x23x12_f16] = SKIP (f16 golden disabled)\n");
+    }
+#endif
   } else {
     update_check_stats(MFCC_VAR_SP_F16, -1);
   }
@@ -728,7 +809,7 @@ static void run_case(const mfcc_bench_case_t *cs, uint32_t case_idx) {
 #endif
 #endif
 
-  run_correctness_checks(&out);
+  run_correctness_checks(case_idx, &out);
 }
 
 static void print_global_cycle_summary(void) {

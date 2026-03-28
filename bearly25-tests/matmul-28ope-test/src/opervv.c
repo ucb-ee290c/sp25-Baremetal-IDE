@@ -17,6 +17,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include "riscv_vector.h"
 #include "rocc.h"
 
@@ -172,7 +173,12 @@ void gemm_i8_i32_28ope(
         const int8_t *w_nc   = ww;       /* bias-row pointer for this chunk */
         size_t n_ope_tiles = vl / 8;     /* 1 or 2 (VLMAX=16 → usually 2) */
 
+        printf("[kern] nc_rem=%lu vl=%lu ope_col=%lu tiles=%lu\n",
+               (unsigned long)nc_rem, (unsigned long)vl,
+               (unsigned long)ope_col, (unsigned long)n_ope_tiles);
+
         /* ════════════ OPE tile 0: fire (hides behind RVV groups 0-1) ════════════ */
+        printf("[kern] OPE ZERO + fire tile %lu\n", (unsigned long)ope_col);
         OP_ZERO();
         ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
 
@@ -333,12 +339,15 @@ void gemm_i8_i32_28ope(
         cbase1 += vl;
 
         /* ════════════ OPE tile 0: extract result ════════════ */
+        printf("[kern] RVV g0-g1 done, extracting OPE tile %lu...\n", (unsigned long)ope_col);
         OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
+        printf("[kern] OPE tile %lu extracted OK\n", (unsigned long)ope_col);
         c_ope_ptr += 8;
         ope_col++;
 
         /* ════════════ OPE tile 1: fire (hides behind RVV groups 2-3) ════════════ */
         if (n_ope_tiles >= 2) {
+            printf("[kern] OPE ZERO + fire tile %lu\n", (unsigned long)ope_col);
             OP_ZERO();
             ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
         }
@@ -501,11 +510,15 @@ void gemm_i8_i32_28ope(
 
         /* ════════════ OPE tile 1: extract result ════════════ */
         if (n_ope_tiles >= 2) {
+            printf("[kern] RVV g2-g3 done, extracting OPE tile %lu...\n", (unsigned long)ope_col);
             OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
+            printf("[kern] OPE tile %lu extracted OK\n", (unsigned long)ope_col);
             c_ope_ptr += 8;
             ope_col++;
         }
 
+        printf("[kern] iteration done, nc_rem=%lu\n", (unsigned long)nc_rem);
         ww = w_next;
     } while (nc_rem != 0);
+    printf("[kern] kernel complete, processed %lu OPE tiles\n", (unsigned long)ope_col);
 }

@@ -103,6 +103,7 @@ void app_main(void) {
     static int8_t  B_ope  [N_OPE_TILES * K * 8] __attribute__((aligned(8)));
     static int32_t C_out  [ROWS * N];
 
+    printf("[dbg] filling inputs...\n");
     /* Deterministic fill */
     for (int k = 0; k < K; k++) {
         for (int i = 0; i < M; i++)
@@ -113,7 +114,9 @@ void app_main(void) {
 
     memset(B_pack, 0, N);
     memcpy(B_pack + N, B, K * N);
+    printf("[dbg] packing OPE A...\n");
     pack_ope_A(A_T, A_ope);
+    printf("[dbg] packing OPE B (%d tiles)...\n", N_OPE_TILES);
     pack_ope_B(B, B_ope);
 
 #define RUN_KERNEL() \
@@ -123,14 +126,18 @@ void app_main(void) {
         A_ope, B_ope)
 
     /* Warm-up run (fills caches) */
+    printf("[dbg] warm-up run...\n");
     memset(C_out, 0, sizeof(C_out));
     RUN_KERNEL();
+    printf("[dbg] warm-up done\n");
 
     /* Timed run */
+    printf("[dbg] timed run...\n");
     memset(C_out, 0, sizeof(C_out));
     uint64_t t0 = rdcycle64();
     RUN_KERNEL();
     uint64_t t1 = rdcycle64();
+    printf("[dbg] timed run done\n");
 
     printf("  Cycles (hot): %lu\n", (unsigned long)(t1 - t0));
 

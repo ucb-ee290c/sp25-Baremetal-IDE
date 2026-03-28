@@ -6,12 +6,10 @@
  *   Rows 28–35: OPE (pre-packed inputs, 8×8 tile accumulation)
  *
  * OPE inputs are packed *before* calling this kernel so the OPE gets
- * large OP_ACC_L calls (L up to 32) for full throughput.  OPE fire-and-
- * forget RoCC instructions are interleaved between RVV groups so both
- * hardware units stay busy in parallel.
+ * large OP_ACC_L calls (L up to 32) for full throughput.  The first OPE
+ * tile is fired before RVV work begins; remaining tiles run after.
  *
- * VLEN=128 / LMUL=4 / SEW=32 → VLMAX = 16 columns per RVV iteration.
- * Each 16-column chunk contains exactly 2 OPE 8-column tiles.
+ * Works for any VLMAX (tested with VLEN=256 / LMUL=4 / SEW=32 → VLMAX=32).
  */
 
 #include <stdbool.h>
@@ -126,18 +124,12 @@ static inline void ope_fire_tile(const int8_t *a_ope, const int8_t *b_tile, size
 /*
  * gemm_i8_i32_28ope — fused 28-RVV + 8-OPE matmul kernel
  *
- * Parameters
- * ----------
- *   nc           : number of output columns (N; must be multiple of 8)
- *   kc           : inner dimension (K)
- *   a            : A^T [K × M] row-major, base for RVV rows 0..27
- *   a_stride     : leading dim of A^T (= M)
- *   w            : B_pack [(K+1) × N] with zero-bias row 0 (for RVV)
- *   b_row_stride : row stride of B_pack in int8 elements (= N)
- *   c            : output C [36 × N] int32, row-major
- *   cm_stride    : byte stride between C rows (= N * sizeof(int32_t))
- *   a_ope        : pre-packed OPE A  [K × 8]  (column-major within 8-groups)
- *   b_ope        : pre-packed OPE B  [(N/8) × K × 8]  (tile-packed)
+ * Scheduling:
+ *   For each nc-chunk (vl columns, up to VLMAX=32):
+ *     1. Fire OPE tile 0 (fire-and-forget via RoCC)
+ *     2. RVV groups 0–3 (28 rows) — hides OPE tile 0 latency
+ *     3. Extract OPE tile 0
+ *     4. Process remaining OPE tiles (1..n-1) sequentially
  */
 void gemm_i8_i32_28ope(
     size_t nc,
@@ -171,20 +163,21 @@ void gemm_i8_i32_28ope(
         nc_rem -= vl;
         const int8_t *w_next = ww + vl;  /* bias-row pointer for next chunk */
         const int8_t *w_nc   = ww;       /* bias-row pointer for this chunk */
-        size_t n_ope_tiles = vl / 8;     /* 1 or 2 (VLMAX=16 → usually 2) */
+        size_t n_ope_tiles = vl / 8;
 
         printf("[kern] nc_rem=%lu vl=%lu ope_col=%lu tiles=%lu\n",
                (unsigned long)nc_rem, (unsigned long)vl,
                (unsigned long)ope_col, (unsigned long)n_ope_tiles);
 
-        /* ════════════ OPE tile 0: fire (hides behind RVV groups 0-1) ════════════ */
-        printf("[kern] OPE ZERO + fire tile %lu\n", (unsigned long)ope_col);
+        /* ═══ OPE tile 0: fire (hides behind all 4 RVV groups) ═══ */
+        printf("[kern] fire OPE tile %lu\n", (unsigned long)ope_col);
         OP_ZERO();
         ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
+        printf("[kern] fire done\n");
 
-        /* ════════════ RVV group 0: rows 0–6 ════════════ */
+        /* ═══ RVV group 0: rows 0–6 ═══ */
         {
-            const int8_t *ak = a;          /* A^T[k][0..6] */
+            const int8_t *ak = a;
 
             ww = w_nc;
             register vint32m4_t vacc0 asm("v0")  = __riscv_vwcvt_x_x_v_i32m4(
@@ -206,11 +199,9 @@ void gemm_i8_i32_28ope(
             while (k >= 2) {
                 vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                 ww += nr;
-
                 const int8_t va0 = ak[0], va1 = ak[1], va2 = ak[2], va3 = ak[3];
                 const int8_t va4 = ak[4], va5 = ak[5], va6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
@@ -218,16 +209,13 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb_e, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
-
                 if (k >= 3) {
                     vb_e = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                     ww += nr;
                 }
-
                 const int8_t wb0 = ak[0], wb1 = ak[1], wb2 = ak[2], wb3 = ak[3];
                 const int8_t wb4 = ak[4], wb5 = ak[5], wb6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_o, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, wb1, vb_o, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, wb2, vb_o, vl);
@@ -235,7 +223,6 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, wb4, vb_o, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, wb5, vb_o, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, wb6, vb_o, vl);
-
                 k -= 2;
             }
             if (k == 1) {
@@ -249,7 +236,6 @@ void gemm_i8_i32_28ope(
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
             }
-
             __riscv_vse32_v_i32m4(cbase0,                                       vacc0, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase0 +   cm_stride), vacc1, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase0 + 2*cm_stride), vacc2, vl);
@@ -259,11 +245,11 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase0 + 6*cm_stride), vacc6, vl);
         }
         cbase0 += vl;
+        printf("[kern] g0 done\n");
 
-        /* ════════════ RVV group 1: rows 7–13 ════════════ */
+        /* ═══ RVV group 1: rows 7–13 ═══ */
         {
             const int8_t *ak = a + 7;
-
             ww = w_nc;
             register vint32m4_t vacc0 asm("v0")  = __riscv_vwcvt_x_x_v_i32m4(
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl), vl);
@@ -274,21 +260,17 @@ void gemm_i8_i32_28ope(
             register vint32m4_t vacc4 asm("v16") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
-
             register vint16m2_t vb_e asm("v28") =
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
             ww += nr;
             register vint16m2_t vb_o asm("v30");
-
             size_t k = kc;
             while (k >= 2) {
                 vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                 ww += nr;
-
                 const int8_t va0 = ak[0], va1 = ak[1], va2 = ak[2], va3 = ak[3];
                 const int8_t va4 = ak[4], va5 = ak[5], va6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
@@ -296,16 +278,13 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb_e, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
-
                 if (k >= 3) {
                     vb_e = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                     ww += nr;
                 }
-
                 const int8_t wb0 = ak[0], wb1 = ak[1], wb2 = ak[2], wb3 = ak[3];
                 const int8_t wb4 = ak[4], wb5 = ak[5], wb6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_o, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, wb1, vb_o, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, wb2, vb_o, vl);
@@ -313,7 +292,6 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, wb4, vb_o, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, wb5, vb_o, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, wb6, vb_o, vl);
-
                 k -= 2;
             }
             if (k == 1) {
@@ -327,7 +305,6 @@ void gemm_i8_i32_28ope(
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
             }
-
             __riscv_vse32_v_i32m4(cbase1,                                       vacc0, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase1 +   cm_stride), vacc1, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase1 + 2*cm_stride), vacc2, vl);
@@ -337,25 +314,11 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase1 + 6*cm_stride), vacc6, vl);
         }
         cbase1 += vl;
+        printf("[kern] g1 done\n");
 
-        /* ════════════ OPE tile 0: extract result ════════════ */
-        printf("[kern] RVV g0-g1 done, extracting OPE tile %lu...\n", (unsigned long)ope_col);
-        OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
-        printf("[kern] OPE tile %lu extracted OK\n", (unsigned long)ope_col);
-        c_ope_ptr += 8;
-        ope_col++;
-
-        /* ════════════ OPE tile 1: fire (hides behind RVV groups 2-3) ════════════ */
-        if (n_ope_tiles >= 2) {
-            printf("[kern] OPE ZERO + fire tile %lu\n", (unsigned long)ope_col);
-            OP_ZERO();
-            ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
-        }
-
-        /* ════════════ RVV group 2: rows 14–20 ════════════ */
+        /* ═══ RVV group 2: rows 14–20 ═══ */
         {
             const int8_t *ak = a + 14;
-
             ww = w_nc;
             register vint32m4_t vacc0 asm("v0")  = __riscv_vwcvt_x_x_v_i32m4(
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl), vl);
@@ -366,21 +329,17 @@ void gemm_i8_i32_28ope(
             register vint32m4_t vacc4 asm("v16") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
-
             register vint16m2_t vb_e asm("v28") =
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
             ww += nr;
             register vint16m2_t vb_o asm("v30");
-
             size_t k = kc;
             while (k >= 2) {
                 vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                 ww += nr;
-
                 const int8_t va0 = ak[0], va1 = ak[1], va2 = ak[2], va3 = ak[3];
                 const int8_t va4 = ak[4], va5 = ak[5], va6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
@@ -388,16 +347,13 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb_e, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
-
                 if (k >= 3) {
                     vb_e = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                     ww += nr;
                 }
-
                 const int8_t wb0 = ak[0], wb1 = ak[1], wb2 = ak[2], wb3 = ak[3];
                 const int8_t wb4 = ak[4], wb5 = ak[5], wb6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_o, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, wb1, vb_o, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, wb2, vb_o, vl);
@@ -405,7 +361,6 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, wb4, vb_o, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, wb5, vb_o, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, wb6, vb_o, vl);
-
                 k -= 2;
             }
             if (k == 1) {
@@ -419,7 +374,6 @@ void gemm_i8_i32_28ope(
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
             }
-
             __riscv_vse32_v_i32m4(cbase2,                                       vacc0, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase2 +   cm_stride), vacc1, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase2 + 2*cm_stride), vacc2, vl);
@@ -429,11 +383,11 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase2 + 6*cm_stride), vacc6, vl);
         }
         cbase2 += vl;
+        printf("[kern] g2 done\n");
 
-        /* ════════════ RVV group 3: rows 21–27 ════════════ */
+        /* ═══ RVV group 3: rows 21–27 ═══ */
         {
             const int8_t *ak = a + 21;
-
             ww = w_nc;
             register vint32m4_t vacc0 asm("v0")  = __riscv_vwcvt_x_x_v_i32m4(
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl), vl);
@@ -444,21 +398,17 @@ void gemm_i8_i32_28ope(
             register vint32m4_t vacc4 asm("v16") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
-
             register vint16m2_t vb_e asm("v28") =
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
             ww += nr;
             register vint16m2_t vb_o asm("v30");
-
             size_t k = kc;
             while (k >= 2) {
                 vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                 ww += nr;
-
                 const int8_t va0 = ak[0], va1 = ak[1], va2 = ak[2], va3 = ak[3];
                 const int8_t va4 = ak[4], va5 = ak[5], va6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb_e, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, va1, vb_e, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, va2, vb_e, vl);
@@ -466,16 +416,13 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, va4, vb_e, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
-
                 if (k >= 3) {
                     vb_e = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
                     ww += nr;
                 }
-
                 const int8_t wb0 = ak[0], wb1 = ak[1], wb2 = ak[2], wb3 = ak[3];
                 const int8_t wb4 = ak[4], wb5 = ak[5], wb6 = ak[6];
                 ak += a_stride;
-
                 vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, wb0, vb_o, vl);
                 vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, wb1, vb_o, vl);
                 vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, wb2, vb_o, vl);
@@ -483,7 +430,6 @@ void gemm_i8_i32_28ope(
                 vacc4 = __riscv_vwmacc_vx_i32m4(vacc4, wb4, vb_o, vl);
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, wb5, vb_o, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, wb6, vb_o, vl);
-
                 k -= 2;
             }
             if (k == 1) {
@@ -497,7 +443,6 @@ void gemm_i8_i32_28ope(
                 vacc5 = __riscv_vwmacc_vx_i32m4(vacc5, va5, vb_e, vl);
                 vacc6 = __riscv_vwmacc_vx_i32m4(vacc6, va6, vb_e, vl);
             }
-
             __riscv_vse32_v_i32m4(cbase3,                                       vacc0, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase3 +   cm_stride), vacc1, vl);
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase3 + 2*cm_stride), vacc2, vl);
@@ -507,18 +452,28 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase3 + 6*cm_stride), vacc6, vl);
         }
         cbase3 += vl;
+        printf("[kern] g3 done\n");
 
-        /* ════════════ OPE tile 1: extract result ════════════ */
-        if (n_ope_tiles >= 2) {
-            printf("[kern] RVV g2-g3 done, extracting OPE tile %lu...\n", (unsigned long)ope_col);
+        /* ═══ Extract OPE tile 0, then process remaining tiles ═══ */
+        printf("[kern] extracting OPE tile %lu...\n", (unsigned long)ope_col);
+        OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
+        printf("[kern] OPE tile %lu OK\n", (unsigned long)ope_col);
+        c_ope_ptr += 8;
+        ope_col++;
+
+        /* Remaining OPE tiles for this nc-chunk (sequential) */
+        for (size_t t = 1; t < n_ope_tiles; t++) {
+            printf("[kern] OPE seq tile %lu...\n", (unsigned long)ope_col);
+            OP_ZERO();
+            ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
             OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
-            printf("[kern] OPE tile %lu extracted OK\n", (unsigned long)ope_col);
+            printf("[kern] OPE tile %lu OK\n", (unsigned long)ope_col);
             c_ope_ptr += 8;
             ope_col++;
         }
 
-        printf("[kern] iteration done, nc_rem=%lu\n", (unsigned long)nc_rem);
+        printf("[kern] iter done, nc_rem=%lu\n", (unsigned long)nc_rem);
         ww = w_next;
     } while (nc_rem != 0);
-    printf("[kern] kernel complete, processed %lu OPE tiles\n", (unsigned long)ope_col);
+    printf("[kern] complete, %lu OPE tiles\n", (unsigned long)ope_col);
 }

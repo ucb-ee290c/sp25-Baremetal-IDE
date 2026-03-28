@@ -1,15 +1,11 @@
 /*
- * opervv.c — 28 RVV + 8 OPE fused matmul kernel
+ * opervv.c — Separate RVV (28 rows) + OPE (8 rows) matmul kernels
  *
- * Computes C = A^T * B for 36 output rows:
- *   Rows  0–27: Saturn RVV (4 groups of 7, double-buffered k-loop)
- *   Rows 28–35: OPE (pre-packed inputs, 8×8 tile accumulation)
+ * Two completely independent functions:
+ *   gemm_rvv_28rows():  Saturn RVV, 4 groups of 7 rows
+ *   gemm_ope_8rows():   OPE, 8×8 tile accumulation (pre-packed inputs)
  *
- * OPE inputs are packed *before* calling this kernel so the OPE gets
- * large OP_ACC_L calls (L up to 32) for full throughput.  The first OPE
- * tile is fired before RVV work begins; remaining tiles run after.
- *
- * Works for any VLMAX (tested with VLEN=256 / LMUL=4 / SEW=32 → VLMAX=32).
+ * Called separately from main.c to isolate RVV and OPE.
  */
 
 #include <stdbool.h>
@@ -102,36 +98,10 @@ static inline void OP_EXT_STRIDE(int32_t *arr, int stride_elements, int transpos
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #endif
 
-/*
- * Fire all OP_ACC_L calls for one OPE 8×8 tile across kc K-steps.
- * Each call handles up to L=32 steps; for kc>32 multiple calls are
- * issued back-to-back into the RoCC queue.
- */
-static inline void ope_fire_tile(const int8_t *a_ope, const int8_t *b_tile, size_t kc) {
-  int8_t *ap = (int8_t *)a_ope;
-  int8_t *bp = (int8_t *)b_tile;
-  size_t k_rem = kc;
-  while (k_rem > 0) {
-    int L = (int)MIN(32, k_rem);
-    OP_ACC_L(ap, bp, L);
-    ap += L * 8;
-    bp += L * 8;
-    k_rem -= (size_t)L;
-  }
-}
-
-
-/*
- * gemm_i8_i32_28ope — fused 28-RVV + 8-OPE matmul kernel
- *
- * Scheduling:
- *   For each nc-chunk (vl columns, up to VLMAX=32):
- *     1. Fire OPE tile 0 (fire-and-forget via RoCC)
- *     2. RVV groups 0–3 (28 rows) — hides OPE tile 0 latency
- *     3. Extract OPE tile 0
- *     4. Process remaining OPE tiles (1..n-1) sequentially
- */
-void gemm_i8_i32_28ope(
+/* ====================================================================
+ * gemm_rvv_28rows — Pure RVV kernel for 28 output rows (4 groups of 7)
+ * ==================================================================== */
+void gemm_rvv_28rows(
     size_t nc,
     size_t kc,
     const int8_t *a,
@@ -139,46 +109,27 @@ void gemm_i8_i32_28ope(
     const int8_t *w,
     size_t b_row_stride,
     int32_t *c,
-    size_t cm_stride,
-    const int8_t *a_ope,
-    const int8_t *b_ope
+    size_t cm_stride
 )
 {
-    /* C row base pointers for 4 RVV groups */
     int32_t *cbase0 = c;
     int32_t *cbase1 = (int32_t *)((uintptr_t)c +  7 * cm_stride);
     int32_t *cbase2 = (int32_t *)((uintptr_t)c + 14 * cm_stride);
     int32_t *cbase3 = (int32_t *)((uintptr_t)c + 21 * cm_stride);
-    /* OPE output: rows 28-35 */
-    int32_t *c_ope_ptr = (int32_t *)((uintptr_t)c + 28 * cm_stride);
 
-    const size_t nr = b_row_stride;       /* = N, B_pack row stride */
-    const int ope_stride = (int)(cm_stride / sizeof(int32_t));  /* = N */
+    const size_t nr = b_row_stride;
     size_t nc_rem = nc;
     const int8_t *ww = w;
-    size_t ope_col = 0;                   /* current OPE column-tile index */
 
     do {
         size_t vl = __riscv_vsetvl_e32m4(nc_rem);
         nc_rem -= vl;
-        const int8_t *w_next = ww + vl;  /* bias-row pointer for next chunk */
-        const int8_t *w_nc   = ww;       /* bias-row pointer for this chunk */
-        size_t n_ope_tiles = vl / 8;
+        const int8_t *w_next = ww + vl;
+        const int8_t *w_nc   = ww;
 
-        printf("[kern] nc_rem=%lu vl=%lu ope_col=%lu tiles=%lu\n",
-               (unsigned long)nc_rem, (unsigned long)vl,
-               (unsigned long)ope_col, (unsigned long)n_ope_tiles);
-
-        /* ═══ OPE tile 0: fire (hides behind all 4 RVV groups) ═══ */
-        printf("[kern] fire OPE tile %lu\n", (unsigned long)ope_col);
-        OP_ZERO();
-        ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
-        printf("[kern] fire done\n");
-
-        /* ═══ RVV group 0: rows 0–6 ═══ */
+        /* RVV group 0: rows 0–6 */
         {
             const int8_t *ak = a;
-
             ww = w_nc;
             register vint32m4_t vacc0 asm("v0")  = __riscv_vwcvt_x_x_v_i32m4(
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl), vl);
@@ -189,12 +140,10 @@ void gemm_i8_i32_28ope(
             register vint32m4_t vacc4 asm("v16") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc5 asm("v20") = __riscv_vmv_v_v_i32m4(vacc0, vl);
             register vint32m4_t vacc6 asm("v24") = __riscv_vmv_v_v_i32m4(vacc0, vl);
-
             register vint16m2_t vb_e asm("v28") =
                 __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
             ww += nr;
             register vint16m2_t vb_o asm("v30");
-
             size_t k = kc;
             while (k >= 2) {
                 vb_o = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(ww, vl), vl);
@@ -245,9 +194,8 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase0 + 6*cm_stride), vacc6, vl);
         }
         cbase0 += vl;
-        printf("[kern] g0 done\n");
 
-        /* ═══ RVV group 1: rows 7–13 ═══ */
+        /* RVV group 1: rows 7–13 */
         {
             const int8_t *ak = a + 7;
             ww = w_nc;
@@ -314,9 +262,8 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase1 + 6*cm_stride), vacc6, vl);
         }
         cbase1 += vl;
-        printf("[kern] g1 done\n");
 
-        /* ═══ RVV group 2: rows 14–20 ═══ */
+        /* RVV group 2: rows 14–20 */
         {
             const int8_t *ak = a + 14;
             ww = w_nc;
@@ -383,9 +330,8 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase2 + 6*cm_stride), vacc6, vl);
         }
         cbase2 += vl;
-        printf("[kern] g2 done\n");
 
-        /* ═══ RVV group 3: rows 21–27 ═══ */
+        /* RVV group 3: rows 21–27 */
         {
             const int8_t *ak = a + 21;
             ww = w_nc;
@@ -452,28 +398,56 @@ void gemm_i8_i32_28ope(
             __riscv_vse32_v_i32m4((int32_t *)((uintptr_t)cbase3 + 6*cm_stride), vacc6, vl);
         }
         cbase3 += vl;
-        printf("[kern] g3 done\n");
 
-        /* ═══ Extract OPE tile 0, then process remaining tiles ═══ */
-        printf("[kern] extracting OPE tile %lu...\n", (unsigned long)ope_col);
-        OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
-        printf("[kern] OPE tile %lu OK\n", (unsigned long)ope_col);
-        c_ope_ptr += 8;
-        ope_col++;
-
-        /* Remaining OPE tiles for this nc-chunk (sequential) */
-        for (size_t t = 1; t < n_ope_tiles; t++) {
-            printf("[kern] OPE seq tile %lu...\n", (unsigned long)ope_col);
-            OP_ZERO();
-            ope_fire_tile(a_ope, b_ope + ope_col * kc * 8, kc);
-            OP_EXT_STRIDE(c_ope_ptr, ope_stride, OPE_EXT_FLIP);
-            printf("[kern] OPE tile %lu OK\n", (unsigned long)ope_col);
-            c_ope_ptr += 8;
-            ope_col++;
-        }
-
-        printf("[kern] iter done, nc_rem=%lu\n", (unsigned long)nc_rem);
         ww = w_next;
     } while (nc_rem != 0);
-    printf("[kern] complete, %lu OPE tiles\n", (unsigned long)ope_col);
+}
+
+/* ====================================================================
+ * gemm_ope_8rows — Pure OPE kernel for 8 output rows
+ *
+ * Processes N columns in 8-column tiles.
+ * a_ope: pre-packed A (K×8, column-major groups)
+ * b_ope: pre-packed B (N/8 tiles, each K×8)
+ * c:     output pointer to row 28 of C
+ * n:     number of columns
+ * k:     inner dimension
+ * c_stride: bytes between C rows
+ * ==================================================================== */
+void gemm_ope_8rows(
+    const int8_t *a_ope,
+    const int8_t *b_ope,
+    int32_t *c,
+    size_t n,
+    size_t k,
+    size_t c_stride
+)
+{
+    const int ope_stride = (int)(c_stride / sizeof(int32_t));
+    size_t n_tiles = n / 8;
+    int32_t *c_ptr = c;
+
+    printf("[ope] start: %lu tiles, k=%lu, stride=%d\n",
+           (unsigned long)n_tiles, (unsigned long)k, ope_stride);
+
+    for (size_t t = 0; t < n_tiles; t++) {
+        OP_ZERO();
+
+        int8_t *ap = (int8_t *)a_ope;
+        int8_t *bp = (int8_t *)(b_ope + t * k * 8);
+        size_t k_rem = k;
+        while (k_rem > 0) {
+            int L = (int)MIN(32, k_rem);
+            OP_ACC_L(ap, bp, L);
+            ap += L * 8;
+            bp += L * 8;
+            k_rem -= (size_t)L;
+        }
+
+        OP_EXT_STRIDE(c_ptr, ope_stride, OPE_EXT_FLIP);
+        printf("[ope] tile %lu OK\n", (unsigned long)t);
+        c_ptr += 8;
+    }
+    asm volatile("fence w, rw" ::: "memory");
+    printf("[ope] done\n");
 }

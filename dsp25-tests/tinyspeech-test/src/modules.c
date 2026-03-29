@@ -80,7 +80,8 @@ Tensor batchnorm2d(Tensor *input, Tensor *gamma, Tensor *beta, Tensor *scale, Te
     int32_t H = input->shape[2];
     int32_t W = input->shape[3];
 
-    Tensor output = create_tensor(input->shape, 4);
+    int use_float_path = (input->f_data != NULL) || (gamma->f_data != NULL) || (beta->f_data != NULL);
+    Tensor output = use_float_path ? f_create_tensor(input->shape, 4) : create_tensor(input->shape, 4);
     float out_scale = decode_packed_float(tensor_get_value(scale, 0));
     if (fabsf(out_scale) < 1e-12f) {
         out_scale = 1.0f;
@@ -105,10 +106,15 @@ Tensor batchnorm2d(Tensor *input, Tensor *gamma, Tensor *beta, Tensor *scale, Te
                     int32_t idx = n * (C * H * W) + c * (H * W) + h * W + w;
                     float x = tensor_get_value(input, idx);
                     float y = g * (x - m) / var_sqrt + b;
-                    float q = roundf(y / out_scale);
-                    if (q < -127.0f) q = -127.0f;
-                    if (q > 127.0f) q = 127.0f;
-                    output.data[idx] = (int8_t)q;
+                    float vout = y / out_scale;
+                    if (use_float_path) {
+                        output.f_data[idx] = vout;
+                    } else {
+                        float q = roundf(vout);
+                        if (q < -127.0f) q = -127.0f;
+                        if (q > 127.0f) q = 127.0f;
+                        output.data[idx] = (int8_t)q;
+                    }
                 }
             }
         }
@@ -163,7 +169,8 @@ Tensor conv2d(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale, u_int
         (u_int8_t)out_height,
         (u_int8_t)out_width,
     };
-    Tensor output = create_tensor(output_shape, 4);
+    int use_float_path = (input->f_data != NULL) || (weights->f_data != NULL) || (bias->f_data != NULL);
+    Tensor output = use_float_path ? f_create_tensor(output_shape, 4) : create_tensor(output_shape, 4);
     float out_scale = decode_packed_float(tensor_get_value(scale, 0));
     if (fabsf(out_scale) < 1e-12f) {
         out_scale = 1.0f;
@@ -191,10 +198,15 @@ Tensor conv2d(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale, u_int
                     }
 
                     int32_t out_index = n * (out_channels * out_height * out_width) + oc * (out_height * out_width) + h * out_width + w;
-                    float q = roundf(sum / out_scale);
-                    if (q < -127.0f) q = -127.0f;
-                    if (q > 127.0f) q = 127.0f;
-                    output.data[out_index] = (int8_t)q;
+                    float vout = sum / out_scale;
+                    if (use_float_path) {
+                        output.f_data[out_index] = vout;
+                    } else {
+                        float q = roundf(vout);
+                        if (q < -127.0f) q = -127.0f;
+                        if (q > 127.0f) q = 127.0f;
+                        output.data[out_index] = (int8_t)q;
+                    }
                 }
             }
         }

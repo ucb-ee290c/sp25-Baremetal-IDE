@@ -9,13 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/*
- * TinySpeech QAT export maps BatchNorm as:
- *   [gamma, beta, activation_scale, weight_scale, running_mean, running_var]
- * We must use activation_scale (offset 2). Using offset 3 collapses outputs.
- */
-static const int32_t kTinyspeechBnScaleOffset = 2;
-
 static inline Tensor *W(u_int8_t idx) {
     return model_weights[idx].address;
 }
@@ -85,108 +78,41 @@ const tinyspeech_debug_trace_t *tinyspeech_debug_last_trace(void) {
     return &g_last_trace;
 }
 
-static Tensor attention_condenser(Tensor *input, u_int8_t *layer_id, int32_t block_idx, int32_t sub_idx) {
-    u_int8_t base = *layer_id; /* scale tensor index */
-    char label[40];
-
-    Tensor q = maxpool2d(input, 2, 2);
-    snprintf(label, sizeof(label), "b%ld.s%ld.pool", (long)block_idx, (long)sub_idx);
-    trace_add(label, &q);
-
-    Tensor k = conv2d(&q, W(base + 1), W(base + 2), W(base + 3), 1, 0);
-    snprintf(label, sizeof(label), "b%ld.s%ld.gconv", (long)block_idx, (long)sub_idx);
-    trace_add(label, &k);
-
-    k = conv2d(&k, W(base + 5), W(base + 6), W(base + 7), 1, 0);
-    snprintf(label, sizeof(label), "b%ld.s%ld.pwconv", (long)block_idx, (long)sub_idx);
-    trace_add(label, &k);
-
-    k = upsample_nearest(&k, 2);
-    snprintf(label, sizeof(label), "b%ld.s%ld.upsample", (long)block_idx, (long)sub_idx);
-    trace_add(label, &k);
-
-    k = conv2d(&k, W(base + 9), W(base + 10), W(base + 11), 1, 0);
-    snprintf(label, sizeof(label), "b%ld.s%ld.expand", (long)block_idx, (long)sub_idx);
-    trace_add(label, &k);
-
-    k = sigmoid(&k);
-    snprintf(label, sizeof(label), "b%ld.s%ld.sigmoid", (long)block_idx, (long)sub_idx);
-    trace_add(label, &k);
-
-    attention(input, &k, W(base));
-    snprintf(label, sizeof(label), "b%ld.s%ld.attn", (long)block_idx, (long)sub_idx);
-    trace_add(label, &k);
-
-    *layer_id = (u_int8_t)(base + 13); /* BN gamma index */
-    return k;
-}
-
-static Tensor attn_bn_block(Tensor *input, u_int8_t *layer_id, int32_t block_idx) {
-    char label[40];
-
-    Tensor x = attention_condenser(input, layer_id, block_idx, 1);
-    free_tensor(input);
-
-    x = batchnorm2d(&x,
-                    W(*layer_id),
-                    W(*layer_id + 1),
-                    W(*layer_id + kTinyspeechBnScaleOffset),
-                    W(*layer_id + 4),
-                    W(*layer_id + 5));
-    snprintf(label, sizeof(label), "b%ld.s1.bn", (long)block_idx);
-    trace_add(label, &x);
-
-    *layer_id = (u_int8_t)(*layer_id + 6); /* next attention scale index */
-
-    Tensor y = attention_condenser(&x, layer_id, block_idx, 2);
-    free_tensor(&x);
-
-    y = batchnorm2d(&y,
-                    W(*layer_id),
-                    W(*layer_id + 1),
-                    W(*layer_id + kTinyspeechBnScaleOffset),
-                    W(*layer_id + 4),
-                    W(*layer_id + 5));
-    snprintf(label, sizeof(label), "b%ld.s2.bn", (long)block_idx);
-    trace_add(label, &y);
-
-    *layer_id = (u_int8_t)(*layer_id + 6); /* next block scale index */
-
-    return y;
-}
-
 Tensor tinyspeech_run_inference(Tensor *input) {
     trace_reset();
     trace_add("input", input);
 
     Tensor x = conv2d(input, W(0), W(1), W(2), 1, 1);
-    trace_add("stem.conv3x3", &x);
+    trace_add("conv1", &x);
     relu(&x);
-    trace_add("stem.relu", &x);
+    trace_add("relu1", &x);
+    x = maxpool2d(&x, 2, 2);
+    trace_add("pool1", &x);
 
-    u_int8_t layer_id = 4; /* first block scale tensor */
-
-    x = attn_bn_block(&x, &layer_id, 1);
-    x = attn_bn_block(&x, &layer_id, 2);
-    x = attn_bn_block(&x, &layer_id, 3);
-    x = attn_bn_block(&x, &layer_id, 4);
-
-    x = conv2d(&x, W(layer_id), W(layer_id + 1), W(layer_id + 2), 1, 1);
-    trace_add("head.conv3x3", &x);
+    x = conv2d(&x, W(3), W(4), W(5), 1, 1);
+    trace_add("conv2", &x);
     relu(&x);
-    trace_add("head.relu", &x);
+    trace_add("relu2", &x);
+    x = maxpool2d(&x, 2, 2);
+    trace_add("pool2", &x);
+
+    x = conv2d(&x, W(6), W(7), W(8), 1, 1);
+    trace_add("conv3", &x);
+    relu(&x);
+    trace_add("relu3", &x);
 
     Tensor pooled = adaptive_avg_pool2d(&x);
-    trace_add("head.gap", &pooled);
+    trace_add("gap", &pooled);
     free_tensor(&x);
 
-    Tensor probs = fc_layer(&pooled, W(layer_id + 4));
+    Tensor probs = fc_layer(&pooled, W(9));
     trace_store_logits(&probs);
-    trace_add("head.fc_logits", &probs);
+    trace_add("fc_logits", &probs);
     free_tensor(&pooled);
 
     softmax(&probs);
-    trace_add("head.softmax", &probs);
+    trace_add("softmax", &probs);
+
     return probs;
 }
 

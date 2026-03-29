@@ -1,7 +1,20 @@
 #include "main.h"
 
 #include "tinyspeech_model.h"
-#include "tinyspeech_test_inputs.h"
+#include "tinyspeech_inputs.h"
+#include "tinyspeech_reference.h"
+
+#if (TINYSPEECH_TEST_NUM_CASES != 58)
+#error "tinyspeech_inputs.h mismatch: expected 58 cases"
+#endif
+
+#if (TINYSPEECH_TEST_BANDPASS_LOW_HZ != 0) || (TINYSPEECH_TEST_BANDPASS_HIGH_HZ != 8000)
+#error "tinyspeech_inputs.h mismatch: expected bandpass 0..8000 Hz"
+#endif
+
+#if (TINYSPEECH_REF_NUM_CASES != 58) || (TINYSPEECH_REF_NUM_STAGES != 12)
+#error "tinyspeech_reference.h mismatch: expected 58 reference cases and 12 stages"
+#endif
 
 static const char *k_labels[TINYSPEECH_NUM_CLASSES] = {
     "yes", "no", "on", "off", "stop", "go"
@@ -48,6 +61,114 @@ static int output_is_valid(const Tensor *probs, float *sum_out) {
     return fabsf(sum - 1.0f) < 0.02f;
 }
 
+static const tinyspeech_ref_case_t *get_reference_case(uint32_t tc,
+                                                       const tinyspeech_test_input_case_t *c) {
+    if (tc >= TINYSPEECH_REF_NUM_CASES) {
+        return NULL;
+    }
+
+    const tinyspeech_ref_case_t *r = &g_tinyspeech_ref_cases[tc];
+    if (strcmp(r->name, c->name) != 0) {
+        return NULL;
+    }
+
+    return r;
+}
+
+typedef struct {
+    uint32_t compared;
+    uint32_t pred_match;
+    uint32_t prob_fail;
+    uint32_t logit_fail;
+    uint32_t stage_fail;
+    uint32_t missing_ref;
+} ref_cmp_summary_t;
+
+static int compare_with_reference(uint32_t tc,
+                                  const tinyspeech_test_input_case_t *c,
+                                  const Tensor *probs,
+                                  int32_t pred,
+                                  ref_cmp_summary_t *summary) {
+    const tinyspeech_ref_case_t *r = get_reference_case(tc, c);
+    const tinyspeech_debug_trace_t *trace = tinyspeech_debug_last_trace();
+
+    if (r == NULL) {
+        summary->missing_ref++;
+        printf("    ref       = SKIP (missing or name mismatch)\n");
+        return 0;
+    }
+
+    summary->compared++;
+
+    int pred_ok = (pred == r->ref_pred_label);
+    if (pred_ok) {
+        summary->pred_match++;
+    }
+
+    int prob_ok = 1;
+    float max_prob_diff = 0.0f;
+    for (int32_t i = 0; i < TINYSPEECH_REF_NUM_CLASSES; i++) {
+        float d = fabsf(probs->f_data[i] - r->ref_probs[i]);
+        if (d > max_prob_diff) {
+            max_prob_diff = d;
+        }
+        if (d > TINYSPEECH_REF_PROB_TOL) {
+            prob_ok = 0;
+        }
+    }
+    if (!prob_ok) {
+        summary->prob_fail++;
+    }
+
+    int logit_ok = 1;
+    float max_logit_diff = 0.0f;
+    if (trace->logits_len == TINYSPEECH_REF_NUM_CLASSES) {
+        for (int32_t i = 0; i < TINYSPEECH_REF_NUM_CLASSES; i++) {
+            float d = fabsf(trace->logits[i] - r->ref_logits[i]);
+            if (d > max_logit_diff) {
+                max_logit_diff = d;
+            }
+            if (d > TINYSPEECH_REF_LOGIT_TOL) {
+                logit_ok = 0;
+            }
+        }
+    } else {
+        logit_ok = 0;
+    }
+    if (!logit_ok) {
+        summary->logit_fail++;
+    }
+
+    int stage_ok = 1;
+    float max_stage_diff = 0.0f;
+    if (trace->num_stages == TINYSPEECH_REF_NUM_STAGES) {
+        for (int32_t i = 0; i < TINYSPEECH_REF_NUM_STAGES; i++) {
+            float d = fabsf(trace->stages[i].sum - r->ref_stage_sums[i]);
+            if (d > max_stage_diff) {
+                max_stage_diff = d;
+            }
+            if (d > TINYSPEECH_REF_STAGE_SUM_TOL) {
+                stage_ok = 0;
+            }
+        }
+    } else {
+        stage_ok = 0;
+    }
+    if (!stage_ok) {
+        summary->stage_fail++;
+    }
+
+    printf("    ref       = pred:%s probs:%s logits:%s stage-sum:%s\n",
+           pred_ok ? "OK" : "MISMATCH",
+           prob_ok ? "OK" : "MISMATCH",
+           logit_ok ? "OK" : "MISMATCH",
+           stage_ok ? "OK" : "MISMATCH");
+    printf("    ref-diff  = prob_max=%.6f logit_max=%.6f stage_sum_max=%.6f\n",
+           max_prob_diff, max_logit_diff, max_stage_diff);
+
+    return pred_ok && prob_ok && logit_ok && stage_ok;
+}
+
 #if TINYSPEECH_DEBUG_TRACE
 static void print_debug_trace(void) {
     const tinyspeech_debug_trace_t *trace = tinyspeech_debug_last_trace();
@@ -76,7 +197,7 @@ static void print_debug_trace(void) {
 void app_init(void) {
 }
 
-void app_main(void) {
+int app_main(void) {
     printf("=== DSP25 TinySpeech Inference Test ===\n");
     printf("  input shape: [1,1,%d,%d]\n", TINYSPEECH_TEST_INPUT_H, TINYSPEECH_TEST_INPUT_W);
     printf("  classes: %d (yes/no/on/off/stop/go)\n", TINYSPEECH_NUM_CLASSES);
@@ -92,6 +213,7 @@ void app_main(void) {
     uint32_t fail = 0;
     uint32_t labeled_total = 0;
     uint32_t labeled_match = 0;
+    ref_cmp_summary_t ref_summary = {0};
 
     for (uint32_t tc = 0; tc < TINYSPEECH_TEST_NUM_CASES; tc++) {
         const tinyspeech_test_input_case_t *c = &g_tinyspeech_test_inputs[tc];
@@ -126,6 +248,7 @@ void app_main(void) {
         }
         printf("    prob_sum  = %.6f\n", sum);
         printf("    cycles    = %lu\n", (unsigned long)(c1 - c0));
+        int ref_ok = compare_with_reference(tc, c, &probs, pred, &ref_summary);
 
 #if TINYSPEECH_DEBUG_TRACE
         print_debug_trace();
@@ -138,12 +261,16 @@ void app_main(void) {
             }
         }
 
-        if (ok) {
+        if (ok && ref_ok) {
             pass++;
             printf("    status    = PASS\n\n");
         } else {
             fail++;
-            printf("    status    = FAIL (invalid probability vector)\n\n");
+            if (!ok) {
+                printf("    status    = FAIL (invalid probability vector)\n\n");
+            } else {
+                printf("    status    = FAIL (reference mismatch)\n\n");
+            }
         }
 
         free_tensor(&probs);
@@ -155,10 +282,18 @@ void app_main(void) {
     printf("Label-match summary: %lu/%lu labeled cases\n",
            (unsigned long)labeled_match,
            (unsigned long)labeled_total);
+    printf("Reference summary: compared=%lu pred_match=%lu prob_fail=%lu logit_fail=%lu stage_fail=%lu missing_ref=%lu\n",
+           (unsigned long)ref_summary.compared,
+           (unsigned long)ref_summary.pred_match,
+           (unsigned long)ref_summary.prob_fail,
+           (unsigned long)ref_summary.logit_fail,
+           (unsigned long)ref_summary.stage_fail,
+           (unsigned long)ref_summary.missing_ref);
+
+    return (fail == 0) ? 0 : 1;
 }
 
 int main(void) {
     app_init();
-    app_main();
-    return 0;
+    return app_main();
 }

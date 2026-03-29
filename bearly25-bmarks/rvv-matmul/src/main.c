@@ -6,6 +6,15 @@
 #include "bench_sizes.h"
 #include "simple_setup.h"
 
+#if RVV_BENCH_ENABLE_MULTICORE
+#include <hthread.h>
+
+static void *mc_nop_worker(void *arg) {
+  (void)arg;
+  return NULL;
+}
+#endif
+
 uint64_t target_frequency = RVV_BENCH_TARGET_FREQUENCY_HZ;
 
 static void run_suite_for_frequency(uint64_t frequency_hz) {
@@ -43,6 +52,13 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 void app_init(void) {
   init_test(target_frequency);
   bench_cache_init();
+
+#if RVV_BENCH_ENABLE_MULTICORE
+  /* Warm-up: hthread's __main may wake from WFI spuriously on first boot.
+   * Issue a no-op to hart 1 so it enters a clean WFI state. */
+  hthread_issue(1, mc_nop_worker, NULL);
+  hthread_join(1);
+#endif
 }
 
 void app_main(void) {
@@ -81,29 +97,8 @@ int main(void) {
 #endif
 }
 
-int __main(void) {
-#if RVV_BENCH_ENABLE_PLL_SWEEP
-  const size_t num_freqs =
-      sizeof(k_pll_sweep_freqs_hz) / sizeof(k_pll_sweep_freqs_hz[0]);
-  if (num_freqs == 0u) {
-    return 0;
-  }
-
-  target_frequency = k_pll_sweep_freqs_hz[0];
-  init_test(target_frequency);
-  bench_cache_init();
-  run_suite_for_frequency(target_frequency);
-
-  for (size_t i = 1; i < num_freqs; ++i) {
-    target_frequency = k_pll_sweep_freqs_hz[i];
-    reconfigure_pll(target_frequency, RVV_BENCH_PLL_SWEEP_SLEEP_MS);
-    run_suite_for_frequency(target_frequency);
-  }
-  return 0;
-#else
-  app_init();
-  app_main();
-  return 0;
-#endif
-}
+/* __main() for secondary harts is provided by hthread.c (WFI loop).
+ * Do not define __main here so that hthread_issue/join can dispatch
+ * work to the secondary harts for multicore GEMM.
+ */
 

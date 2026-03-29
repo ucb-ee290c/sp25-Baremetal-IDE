@@ -1,0 +1,87 @@
+TinySpeech weights evaluation report
+weights   : /Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/include/weights.h
+inputs    : /Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/include/tinyspeech_inputs.h
+reference : /Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/include/tinyspeech_reference.h
+cases     : 58
+tol(prob/logit/stage): 0.020000 / 2.000000 / 64.000000
+
+[00] yes_real_000: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000001/0.008165
+[01] yes_real_001: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000000/0.009376
+[02] yes_real_002: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000001/0.025422
+[03] yes_real_003: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000001/0.040538
+[04] yes_real_004: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000000/0.020101
+[05] yes_real_005: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000001/0.037915
+[06] yes_real_006: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000000/0.015570
+[07] yes_real_007: PASS pred=0 expected=0 ref_pred=0 err(prob/logit/stage)=0.000000/0.000001/0.024324
+[08] no_real_000: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.016967
+[09] no_real_001: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000000/0.013330
+[10] no_real_002: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.028179
+[11] no_real_003: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.036451
+[12] no_real_004: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.052307
+[13] no_real_005: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.044026
+[14] no_real_006: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.018307
+[15] no_real_007: PASS pred=1 expected=1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.014462
+[16] on_real_000: PASS pred=2 expected=2 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.042626
+[17] on_real_001: PASS pred=2 expected=2 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.031854
+[18] on_real_002: PASS pred=3 expected=2 ref_pred=3 err(prob/logit/stage)=0.000000/0.000000/0.015002
+[19] on_real_003: PASS pred=3 expected=2 ref_pred=3 err(prob/logit/stage)=0.000000/0.000001/0.025529
+[20] on_real_004: PASS pred=2 expected=2 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.039930
+[21] on_real_005: PASS pred=2 expected=2 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.011434
+[22] on_real_006: PASS pred=2 expected=2 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.021920
+[23] on_real_007: PASS pred=2 expected=2 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.034881
+[24] off_real_000: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000000/0.036147
+[25] off_real_001: PASS pred=5 expected=3 ref_pred=5 err(prob/logit/stage)=0.000000/0.000000/0.019982
+[26] off_real_002: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000000/0.008025
+[27] off_real_003: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000001/0.028399
+[28] off_real_004: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000001/0.022527
+[29] off_real_005: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000000/0.023727
+[30] off_real_006: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000001/0.037726
+[31] off_real_007: PASS pred=3 expected=3 ref_pred=3 err(prob/logit/stage)=0.000000/0.000001/0.042003
+[32] stop_real_000: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000000/0.025863
+[33] stop_real_001: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000001/0.032577
+[34] stop_real_002: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000000/0.032951
+[35] stop_real_003: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000001/0.023261
+[36] stop_real_004: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000001/0.011078
+[37] stop_real_005: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000000/0.017133
+[38] stop_real_006: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000001/0.033521
+[39] stop_real_007: PASS pred=4 expected=4 ref_pred=4 err(prob/logit/stage)=0.000000/0.000000/0.020600
+[40] go_real_000: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000001/0.030610
+[41] go_real_001: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000001/0.026926
+[42] go_real_002: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000000/0.018269
+[43] go_real_003: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000000/0.011139
+[44] go_real_004: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000001/0.030207
+[45] go_real_005: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000001/0.015558
+[46] go_real_006: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000000/0.016876
+[47] go_real_007: PASS pred=5 expected=5 ref_pred=5 err(prob/logit/stage)=0.000000/0.000001/0.015833
+[48] unknown_real_000: PASS pred=2 expected=-1 ref_pred=2 err(prob/logit/stage)=0.000000/0.000000/0.015573
+[49] unknown_real_001: PASS pred=1 expected=-1 ref_pred=1 err(prob/logit/stage)=0.000000/0.000001/0.049569
+[50] unknown_real_002: PASS pred=5 expected=-1 ref_pred=5 err(prob/logit/stage)=0.000000/0.000000/0.041793
+[51] unknown_real_003: PASS pred=0 expected=-1 ref_pred=0 err(prob/logit/stage)=0.000000/0.000001/0.029493
+[52] unknown_real_004: PASS pred=2 expected=-1 ref_pred=2 err(prob/logit/stage)=0.000000/0.000001/0.020816
+[53] unknown_real_005: PASS pred=2 expected=-1 ref_pred=2 err(prob/logit/stage)=0.000000/0.000000/0.070491
+[54] unknown_real_006: PASS pred=4 expected=-1 ref_pred=4 err(prob/logit/stage)=0.000000/0.000001/0.014095
+[55] unknown_real_007: PASS pred=3 expected=-1 ref_pred=3 err(prob/logit/stage)=0.000000/0.000001/0.028388
+[56] bg_real_000: PASS pred=4 expected=-1 ref_pred=4 err(prob/logit/stage)=0.000000/0.000000/0.022459
+[57] bg_real_001: PASS pred=4 expected=-1 ref_pred=4 err(prob/logit/stage)=0.000000/0.000001/0.045556
+
+Summary
+  pred vs expected labels : 45/58
+  pred vs expected labels (labeled only): 45/48
+  pred vs ref_pred_label  : 58/58
+  full reference pass     : 58/58
+  prob_fail/logit_fail/stage_fail: 0/0/0
+  missing reference cases : 0
+
+Stage order
+  [00] input
+  [01] conv1
+  [02] relu1
+  [03] pool1
+  [04] conv2
+  [05] relu2
+  [06] pool2
+  [07] conv3
+  [08] relu3
+  [09] gap
+  [10] fc_logits
+  [11] softmax

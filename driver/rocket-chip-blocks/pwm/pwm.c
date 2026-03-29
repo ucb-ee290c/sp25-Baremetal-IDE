@@ -9,6 +9,7 @@
  */
 
 #include "pwm.h"
+#include <stdio.h>
 
 extern uint64_t sys_clk_freq;
 

@@ -4,6 +4,18 @@
 #include "tinyspeech_inputs.h"
 #include "tinyspeech_reference.h"
 
+#if (TINYSPEECH_TEST_NUM_CASES != 58)
+#error "tinyspeech_inputs.h mismatch: expected 58 cases"
+#endif
+
+#if (TINYSPEECH_TEST_BANDPASS_LOW_HZ != 0) || (TINYSPEECH_TEST_BANDPASS_HIGH_HZ != 8000)
+#error "tinyspeech_inputs.h mismatch: expected bandpass 0..8000 Hz"
+#endif
+
+#if (TINYSPEECH_REF_NUM_CASES != 58) || (TINYSPEECH_REF_NUM_STAGES != 12)
+#error "tinyspeech_reference.h mismatch: expected 58 reference cases and 12 stages"
+#endif
+
 static const char *k_labels[TINYSPEECH_NUM_CLASSES] = {
     "yes", "no", "on", "off", "stop", "go"
 };

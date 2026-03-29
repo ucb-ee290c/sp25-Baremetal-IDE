@@ -33,6 +33,10 @@ void reg_write64(unsigned long addr, uint64_t data);
 
 uint64_t reg_read64(unsigned long addr);
 
+uint32_t reg_amo_swap32(uintptr_t addr, uint32_t data);
+
+uint64_t reg_amo_swap64(unsigned long addr, uint64_t data);
+
 
 #ifdef __cplusplus
 }

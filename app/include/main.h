@@ -38,7 +38,6 @@ extern "C" {
 
 #include "riscv.h"
 
-
 /**
  * This section controls which peripheral device is included in the application program.
  * To save the memory space, the unused peripheral device can be commented out.

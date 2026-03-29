@@ -30,7 +30,7 @@ option(BAREMETAL_BUILD_RISCV        "Build for RISC-V platform"               ON
 option(BAREMETAL_BUILD_X86          "Build for x86 platform"                  OFF )
 
 option(CHIP                         "Build for a specific platform"           OFF )
-option(LINKER                "Linker to store program on DRAM or FLASH"       OFF )
+set(LINKER                         "" CACHE STRING "Linker script variant (e.g. sims, chip, flash)")
 
 option(PROF_COV                     "Build with profiling and coverage"       OFF )
 option(GCNO_ONLY                    "Only build gcno files"                   OFF )
@@ -99,7 +99,20 @@ set(SPEC_FLAGS          -specs=${SPECS})
 
 # convert CHIP to lowercase
 string(TOLOWER ${CHIP} CHIP)
-string(TOLOWER ${LINKER} LINKER)
+string(TOLOWER "${PLATFORM}" PLATFORM_LOWER)
+
+# Resolve linker variant:
+# - If LINKER is explicitly provided, honor it.
+# - Otherwise derive from PLATFORM to avoid accidental "-off.ld".
+if ((NOT DEFINED LINKER) OR (LINKER STREQUAL "") OR (LINKER STREQUAL "OFF") OR (LINKER STREQUAL "off"))
+  if (PLATFORM_LOWER STREQUAL "sims")
+    set(LINKER "sims")
+  else()
+    set(LINKER "chip")
+  endif()
+endif()
+string(TOLOWER "${LINKER}" LINKER)
+message(STATUS "Resolved linker variant LINKER=${LINKER} (PLATFORM=${PLATFORM})")
 
 # linker script
 # HACK: ideally this should be handled by glossy, but currently i couldn't 

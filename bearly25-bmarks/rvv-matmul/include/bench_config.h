@@ -68,7 +68,7 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_PACKED
-#define RVV_BENCH_ENABLE_PACKED 1
+#define RVV_BENCH_ENABLE_PACKED 0
 #endif
 
 // Hart that is allowed to print benchmark logs.
@@ -76,9 +76,28 @@
 #define RVV_BENCH_PRINT_HART 0u
 #endif
 
+// Multicore matmul: split M rows across 2 harts.
+#ifndef RVV_BENCH_ENABLE_MULTICORE
+#define RVV_BENCH_ENABLE_MULTICORE 1
+#endif
+
+#ifndef RVV_BENCH_MC_ROWS_HART0
+#define RVV_BENCH_MC_ROWS_HART0 35u
+#endif
+
+#ifndef RVV_BENCH_MC_ROWS_HART1
+#define RVV_BENCH_MC_ROWS_HART1 29u
+#endif
+
 // Number of harts participating in post-GEMM synchronization.
+// With multicore enabled, hart 1 is in WFI (hthread __main) and does
+// not participate in the barrier loop, so set to 1 to avoid deadlock.
 #ifndef RVV_BENCH_SYNC_HARTS
+#if RVV_BENCH_ENABLE_MULTICORE
+#define RVV_BENCH_SYNC_HARTS 1u
+#else
 #define RVV_BENCH_SYNC_HARTS 2u
+#endif
 #endif
 
 typedef struct {

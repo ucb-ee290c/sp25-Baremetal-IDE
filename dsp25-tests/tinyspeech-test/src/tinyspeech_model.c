@@ -86,14 +86,18 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     trace_add("conv1", &x);
     relu(&x);
     trace_add("relu1", &x);
-    x = maxpool2d(&x, 2, 2);
+    Tensor p1 = maxpool2d(&x, 2, 2);
+    free_tensor(&x);
+    x = p1;
     trace_add("pool1", &x);
 
     x = conv2d(&x, W(3), W(4), W(5), 1, 1);
     trace_add("conv2", &x);
     relu(&x);
     trace_add("relu2", &x);
-    x = maxpool2d(&x, 2, 2);
+    Tensor p2 = maxpool2d(&x, 2, 2);
+    free_tensor(&x);
+    x = p2;
     trace_add("pool2", &x);
 
     x = conv2d(&x, W(6), W(7), W(8), 1, 1);

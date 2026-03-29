@@ -236,19 +236,22 @@ void save_tensor(const char* filename, Tensor* tensor) {
 }
 
 void free_tensor(Tensor* tensor) {
-    if (!tensor->data) { 
-        if (!tensor->f_data) { 
-            perror("tensor.data nor f_data initialized!"); 
-            exit(EXIT_FAILURE); 
-        } else { 
-            free(tensor->f_data);
-        }
-    } else { 
+    if (tensor == NULL) {
+        return;
+    }
+
+    if (tensor->data != NULL) {
         free(tensor->data);
     }
-    if (tensor->shape) free(tensor->shape);
+    if (tensor->f_data != NULL) {
+        free(tensor->f_data);
+    }
+    if (tensor->shape != NULL) {
+        free(tensor->shape);
+    }
+
     tensor->shape = NULL;
-    tensor->data = NULL; 
+    tensor->data = NULL;
     tensor->f_data = NULL;
 }
 

@@ -3,7 +3,7 @@
 
 add_executable(matmul-28ope-test
   src/main.c
-  src/opervv.c
+  # src/opervv.c  # disabled for OPE isolation test
 )
 
 target_include_directories(matmul-28ope-test PRIVATE

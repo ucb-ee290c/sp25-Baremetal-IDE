@@ -215,9 +215,14 @@ extern void trap_entry();
     This function sets our trap handler as the jumping of any triggered trap.
 */
 void setup_trap_handler() {
-    uint64_t mtvec_value = (uint64_t)trap_entry;
+    // uint64_t mtvec_value = (uint64_t)trap_entry;
 
-    mtvec_value &= ~0x3; // Set mtvec fields 00 last two bits; says we are using a global trap handler
+    // mtvec_value &= ~0x3; // Set mtvec fields 00 last two bits; says we are using a global trap handler
+    // write_csr(mtvec, mtvec_value);
+    uintptr_t mtvec_value;
+
+    asm volatile ("la %0, trap_entry" : "=r"(mtvec_value));
+    mtvec_value &= ~0x3;
     write_csr(mtvec, mtvec_value);
 }
 

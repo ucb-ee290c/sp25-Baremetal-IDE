@@ -11,7 +11,15 @@ extern "C" {
 #include <string.h>
 
 #ifndef TINYSPEECH_DEBUG_TRACE
-#define TINYSPEECH_DEBUG_TRACE 1
+#define TINYSPEECH_DEBUG_TRACE 0
+#endif
+
+#ifndef TINYSPEECH_VERBOSE_CASE_LOGS
+#define TINYSPEECH_VERBOSE_CASE_LOGS 0
+#endif
+
+#ifndef TINYSPEECH_EXPECTED_NUM_CASES
+#define TINYSPEECH_EXPECTED_NUM_CASES 100
 #endif
 
 void app_init(void);

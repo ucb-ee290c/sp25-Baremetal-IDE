@@ -29,6 +29,10 @@ This directory is self-contained for TinySpeech model training/export and valida
 - `tinyspeech_pipeline.py`
   - Shared parsing, runtime forward path, and `weights.h` writer helpers.
 
+- `gen_tinyspeech_subset_headers.py`
+  - Builds `tinyspeech_inputs.h` and `tinyspeech_reference.h` directly from Speech Commands archive.
+  - Generates a balanced fixed-size labeled subset (default: 100 cases on the chosen split).
+
 ## Quick Usage
 
 ```bash
@@ -43,5 +47,12 @@ python3 dsp25-tests/tinyspeech-test/scripts/rebuild_weights_simplecnn.py \
 ```bash
 python3 dsp25-tests/tinyspeech-test/scripts/evaluate_archive_accuracy.py \
   --archive /path/to/speech_commands_v0.02.tar.gz \
+  --split test
+```
+
+```bash
+python3 dsp25-tests/tinyspeech-test/scripts/gen_tinyspeech_subset_headers.py \
+  --archive /path/to/speech_commands_v0.02.tar.gz \
+  --num-cases 100 \
   --split test
 ```

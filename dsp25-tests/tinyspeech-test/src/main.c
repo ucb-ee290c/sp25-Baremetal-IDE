@@ -279,34 +279,64 @@ int app_main(void) {
             }
         }
 
-        if (ok && ref_ok) {
+        int case_pass = (ok && ref_ok);
+        if (case_pass) {
             pass++;
-            if (TINYSPEECH_VERBOSE_CASE_LOGS) {
-                printf("    status    = PASS\n\n");
-            }
         } else {
             fail++;
-            if (TINYSPEECH_VERBOSE_CASE_LOGS) {
-                if (!ok) {
-                    printf("    status    = FAIL (invalid probability vector)\n\n");
-                } else {
-                    printf("    status    = FAIL (reference mismatch)\n\n");
+        }
+
+        if (!TINYSPEECH_VERBOSE_CASE_LOGS && TINYSPEECH_PRINT_CASE_OUTPUTS) {
+            const char *exp_str =
+                ((c->expected_label >= 0) && (c->expected_label < TINYSPEECH_NUM_CLASSES))
+                    ? k_labels[c->expected_label]
+                    : "<unknown/bg>";
+            const char *pred_str =
+                ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES))
+                    ? k_labels[pred]
+                    : "<oor>";
+
+            printf("[CASE %lu] %s exp=%s pred=%s conf=%.6f sum=%.6f cycles=%lu status=%s\n",
+                   (unsigned long)tc,
+                   c->name,
+                   exp_str,
+                   pred_str,
+                   max_prob,
+                   sum,
+                   (unsigned long)cycles,
+                   case_pass ? "PASS" : "FAIL");
+
+            if (TINYSPEECH_PRINT_CASE_PROBS) {
+                printf("    probs =");
+                for (int32_t i = 0; i < probs.size; i++) {
+                    printf(" %.6f", probs.f_data[i]);
                 }
+                printf("\n");
+            }
+        }
+
+        if (TINYSPEECH_VERBOSE_CASE_LOGS) {
+            if (case_pass) {
+                printf("    status    = PASS\n\n");
+            } else if (!ok) {
+                printf("    status    = FAIL (invalid probability vector)\n\n");
             } else {
-                if ((c->expected_label >= 0) && (c->expected_label < TINYSPEECH_NUM_CLASSES)) {
-                    printf("[CASE %lu] FAIL %s expected=%s pred=%s cycles=%lu\n",
-                           (unsigned long)tc,
-                           c->name,
-                           k_labels[c->expected_label],
-                           ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) ? k_labels[pred] : "<oor>",
-                           (unsigned long)cycles);
-                } else {
-                    printf("[CASE %lu] FAIL %s expected=<unknown/bg> pred=%s cycles=%lu\n",
-                           (unsigned long)tc,
-                           c->name,
-                           ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) ? k_labels[pred] : "<oor>",
-                           (unsigned long)cycles);
-                }
+                printf("    status    = FAIL (reference mismatch)\n\n");
+            }
+        } else if (!TINYSPEECH_PRINT_CASE_OUTPUTS && !case_pass) {
+            if ((c->expected_label >= 0) && (c->expected_label < TINYSPEECH_NUM_CLASSES)) {
+                printf("[CASE %lu] FAIL %s expected=%s pred=%s cycles=%lu\n",
+                       (unsigned long)tc,
+                       c->name,
+                       k_labels[c->expected_label],
+                       ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) ? k_labels[pred] : "<oor>",
+                       (unsigned long)cycles);
+            } else {
+                printf("[CASE %lu] FAIL %s expected=<unknown/bg> pred=%s cycles=%lu\n",
+                       (unsigned long)tc,
+                       c->name,
+                       ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) ? k_labels[pred] : "<oor>",
+                       (unsigned long)cycles);
             }
         }
 

@@ -237,40 +237,36 @@ void __main(void) {
     htask_t task;
 
     while (1) {
-        asm volatile("wfi");
-        CLINT->MSIP[mhartid] = 0u;
-
         // Secondary harts can reach __main before hart0 finishes runtime init.
-        // Ignore wakeups until hthread_init publishes a valid runtime cookie.
+        // Ignore scheduler work until hthread_init publishes a valid cookie.
         if (runtime_cookie != HTHREAD_RUNTIME_COOKIE) {
+            asm volatile("nop");
             continue;
         }
 
-        while (1) {
-            int did_work = 0;
+        int did_work = 0;
 
-            if (ws_pop(mhartid, &task)) {
-                hart_busy[mhartid] = 1u;
-                run_task(&task);
-                did_work = 1;
-            } else {
-                for (uint32_t victim = 0; victim < N_HARTS; victim++) {
-                    if (victim == mhartid) {
-                        continue;
-                    }
-                    if (ws_steal(victim, &task)) {
-                        hart_busy[mhartid] = 1u;
-                        run_task(&task);
-                        did_work = 1;
-                        break;
-                    }
+        if (ws_pop(mhartid, &task)) {
+            hart_busy[mhartid] = 1u;
+            run_task(&task);
+            did_work = 1;
+        } else {
+            for (uint32_t victim = 0; victim < N_HARTS; victim++) {
+                if (victim == mhartid) {
+                    continue;
+                }
+                if (ws_steal(victim, &task)) {
+                    hart_busy[mhartid] = 1u;
+                    run_task(&task);
+                    did_work = 1;
+                    break;
                 }
             }
+        }
 
-            if (!did_work) {
-                hart_busy[mhartid] = 0u;
-                break;
-            }
+        if (!did_work) {
+            hart_busy[mhartid] = 0u;
+            asm volatile("nop");
         }
     }
 }

@@ -13,9 +13,12 @@ static volatile uint32_t deque_locks[N_HARTS];
 static volatile uint32_t pending_tasks[N_HARTS];
 static volatile uint8_t hart_busy[N_HARTS];
 static volatile uint32_t dispatch_rr = 0;
+static volatile uint32_t runtime_cookie = 0;
 
 static volatile uint32_t barrier_count = 0;
 static volatile uint32_t barrier_epoch = 0;
+
+#define HTHREAD_RUNTIME_COOKIE 0x48545244u
 
 static inline void lock_deque(uint32_t hartid) {
     while (__sync_lock_test_and_set(&deque_locks[hartid], 1u) != 0u) {
@@ -209,6 +212,7 @@ void hthread_barrier() {
 
 // Initializes the entire threading subsystem before any parallel work happens
 void hthread_init() {
+    runtime_cookie = 0u;
     dispatch_rr = 0u;
     barrier_count = 0u;
     barrier_epoch = 0u;
@@ -223,6 +227,8 @@ void hthread_init() {
     }
 
     __sync_synchronize();
+    runtime_cookie = HTHREAD_RUNTIME_COOKIE;
+    __sync_synchronize();
 }
 
 // Define the infinite scheduling loop running on every hart except hart0
@@ -231,58 +237,40 @@ void __main(void) {
     htask_t task;
 
     while (1) {
-        int did_work = 0;
-
-        if (ws_pop(mhartid, &task)) {
-            hart_busy[mhartid] = 1u;
-            run_task(&task);
-            did_work = 1;
-        } else {
-            for (uint32_t victim = 0; victim < N_HARTS; victim++) {
-                if (victim == mhartid) {
-                    continue;
-                }
-
-                if (ws_steal(victim, &task)) {
-                    hart_busy[mhartid] = 1u;
-                    run_task(&task);
-                    did_work = 1;
-                    break;
-                }
-            }
-        }
-
-        if (did_work) {
-            continue;
-        }
-
-        // Avoid missing a wakeup if producer enqueues while we transition to WFI.
-        hart_busy[mhartid] = 0u;
+        asm volatile("wfi");
         CLINT->MSIP[mhartid] = 0u;
-        __sync_synchronize();
 
-        if (ws_pop(mhartid, &task)) {
-            hart_busy[mhartid] = 1u;
-            run_task(&task);
+        // Secondary harts can reach __main before hart0 finishes runtime init.
+        // Ignore wakeups until hthread_init publishes a valid runtime cookie.
+        if (runtime_cookie != HTHREAD_RUNTIME_COOKIE) {
             continue;
         }
 
-        for (uint32_t victim = 0; victim < N_HARTS; victim++) {
-            if (victim == mhartid) {
-                continue;
-            }
-            if (ws_steal(victim, &task)) {
+        while (1) {
+            int did_work = 0;
+
+            if (ws_pop(mhartid, &task)) {
                 hart_busy[mhartid] = 1u;
                 run_task(&task);
                 did_work = 1;
+            } else {
+                for (uint32_t victim = 0; victim < N_HARTS; victim++) {
+                    if (victim == mhartid) {
+                        continue;
+                    }
+                    if (ws_steal(victim, &task)) {
+                        hart_busy[mhartid] = 1u;
+                        run_task(&task);
+                        did_work = 1;
+                        break;
+                    }
+                }
+            }
+
+            if (!did_work) {
+                hart_busy[mhartid] = 0u;
                 break;
             }
         }
-
-        if (did_work) {
-            continue;
-        }
-
-        asm volatile("wfi");
     }
 }

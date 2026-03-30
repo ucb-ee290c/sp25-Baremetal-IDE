@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 void run_all_tests(void);
+extern int g_threadlib_multicore_ok;
 
 void test_basic_local_queue(void);
 void test_basic_lifo_order(void);

@@ -13,7 +13,6 @@ static volatile uint32_t deque_locks[N_HARTS];
 static volatile uint32_t pending_tasks[N_HARTS];
 static volatile uint8_t hart_busy[N_HARTS];
 static volatile uint32_t dispatch_rr = 0;
-static volatile uint32_t runtime_ready = 0;
 
 static volatile uint32_t barrier_count = 0;
 static volatile uint32_t barrier_epoch = 0;
@@ -210,7 +209,6 @@ void hthread_barrier() {
 
 // Initializes the entire threading subsystem before any parallel work happens
 void hthread_init() {
-    runtime_ready = 0u;
     dispatch_rr = 0u;
     barrier_count = 0u;
     barrier_epoch = 0u;
@@ -225,39 +223,32 @@ void hthread_init() {
     }
 
     __sync_synchronize();
-    runtime_ready = 1u;
-    wake_other_harts((uint32_t)READ_CSR("mhartid"));
 }
 
 // Define the infinite scheduling loop running on every hart except hart0
 void __main(void) {
     uint32_t mhartid = (uint32_t)READ_CSR("mhartid");
     htask_t task;
-    CLINT->MSIP[mhartid] = 0u;
-
-    while (runtime_ready == 0u) {
-        asm volatile("wfi");
-        CLINT->MSIP[mhartid] = 0u;
-    }
 
     while (1) {
+        int did_work = 0;
+
         if (ws_pop(mhartid, &task)) {
             hart_busy[mhartid] = 1u;
             run_task(&task);
-            continue;
-        }
+            did_work = 1;
+        } else {
+            for (uint32_t victim = 0; victim < N_HARTS; victim++) {
+                if (victim == mhartid) {
+                    continue;
+                }
 
-        int did_work = 0;
-        for (uint32_t victim = 0; victim < N_HARTS; victim++) {
-            if (victim == mhartid) {
-                continue;
-            }
-
-            if (ws_steal(victim, &task)) {
-                hart_busy[mhartid] = 1u;
-                run_task(&task);
-                did_work = 1;
-                break;
+                if (ws_steal(victim, &task)) {
+                    hart_busy[mhartid] = 1u;
+                    run_task(&task);
+                    did_work = 1;
+                    break;
+                }
             }
         }
 
@@ -265,7 +256,7 @@ void __main(void) {
             continue;
         }
 
-        // Avoid missing a wakeup if a producer enqueues right around WFI entry.
+        // Avoid missing a wakeup if producer enqueues while we transition to WFI.
         hart_busy[mhartid] = 0u;
         CLINT->MSIP[mhartid] = 0u;
         __sync_synchronize();

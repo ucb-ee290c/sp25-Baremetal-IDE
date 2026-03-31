@@ -154,14 +154,14 @@ void app_main(void)
     //     }
     // }
 
-    if (errors) {
-        printf("  FAIL: %d mismatches\n", errors);
-        printf("  First mismatch at C[%d][%d]: got %d, exp %d  (region: %s)\n",
-               first_err_row, first_err_col, (int)first_got, (int)first_exp,
-               first_err_row < OPE_ROWS ? "OPE" : "RVV");
-    } else {
-        printf("  PASS: all %d×%d elements correct\n", DIM, DIM);
-    }
+    // if (errors) {
+    //     printf("  FAIL: %d mismatches\n", errors);
+    //     printf("  First mismatch at C[%d][%d]: got %d, exp %d  (region: %s)\n",
+    //            first_err_row, first_err_col, (int)first_got, (int)first_exp,
+    //            first_err_row < OPE_ROWS ? "OPE" : "RVV");
+    // } else {
+    //     printf("  PASS: all %d×%d elements correct\n", DIM, DIM);
+    // }
 
     /* ── Pure-RVV baseline (all 32 rows via Saturn) ── */
     printf("\n[rvv-only] packing A for all %d rows...\n", DIM);
@@ -181,10 +181,10 @@ void app_main(void)
     // for (int i = 0; i < DIM * DIM; i++) {
     //     if (C_rvv_only[i] != C_ref[i]) rvv_errors++;
     // }
-    if (rvv_errors)
-        printf("[rvv-only] FAIL: %d mismatches vs reference\n", rvv_errors);
-    else
-        printf("[rvv-only] PASS: all elements correct\n");
+    // if (rvv_errors)
+    //     printf("[rvv-only] FAIL: %d mismatches vs reference\n", rvv_errors);
+    // else
+    //     printf("[rvv-only] PASS: all elements correct\n");
 
     /* ── Comparison ── */
     printf("\n=== Performance comparison ===\n");

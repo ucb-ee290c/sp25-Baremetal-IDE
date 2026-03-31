@@ -13,6 +13,10 @@
 #define TINYSPEECH_CONV_FUSE_RELU 0
 #endif
 
+#ifndef TINYSPEECH_FUSE_POOL
+#define TINYSPEECH_FUSE_POOL 0
+#endif
+
 static inline Tensor *W(u_int8_t idx) {
     return model_weights[idx].address;
 }
@@ -95,6 +99,17 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     trace_add("input", input);
 
     Tensor input_f = make_float_input_copy(input);
+#if TINYSPEECH_FUSE_POOL
+    Tensor x = conv2d_relu_maxpool2d(&input_f, W(0), W(1), W(2), 1, 1, 2, 2);
+    trace_add("conv1", &x);
+    trace_add("relu1", &x);
+    trace_add("pool1", &x);
+
+    x = conv2d_relu_maxpool2d(&x, W(3), W(4), W(5), 1, 1, 2, 2);
+    trace_add("conv2", &x);
+    trace_add("relu2", &x);
+    trace_add("pool2", &x);
+#else
     Tensor x = conv2d(&input_f, W(0), W(1), W(2), 1, 1);
     trace_add("conv1", &x);
 #if !TINYSPEECH_CONV_FUSE_RELU
@@ -116,6 +131,7 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     free_tensor(&x);
     x = p2;
     trace_add("pool2", &x);
+#endif
 
     x = conv2d(&x, W(6), W(7), W(8), 1, 1);
     trace_add("conv3", &x);

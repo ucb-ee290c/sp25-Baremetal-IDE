@@ -1,5 +1,7 @@
 add_subdirectory(mfcc-test)
 add_subdirectory(tinyspeech-test)
+add_subdirectory(tinyspeech-optimized-test)
+add_subdirectory(tinyspeech-optimized2-test)
 add_subdirectory(dsp-1d-conv-tests)
 add_subdirectory(i2s-test)
 add_subdirectory(dma-tests)

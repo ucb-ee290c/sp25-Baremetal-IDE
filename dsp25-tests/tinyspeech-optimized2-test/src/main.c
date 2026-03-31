@@ -16,6 +16,10 @@
 #error "tinyspeech_reference.h mismatch: unexpected case count/stage count"
 #endif
 
+#ifndef TINYSPEECH_REF_CHECK_STAGE_SUM
+#define TINYSPEECH_REF_CHECK_STAGE_SUM 1
+#endif
+
 static const char *k_labels[TINYSPEECH_NUM_CLASSES] = {
     "yes", "no", "on", "off", "stop", "go"
 };
@@ -41,6 +45,7 @@ static void print_input_preview(const int8_t *flat_data) {
     printf("\n");
 }
 
+#if TINYSPEECH_OUTPUT_SOFTMAX
 static int output_is_valid(const Tensor *probs, float *sum_out) {
     float sum = 0.0f;
     for (int32_t i = 0; i < probs->size; i++) {
@@ -60,6 +65,26 @@ static int output_is_valid(const Tensor *probs, float *sum_out) {
 
     return fabsf(sum - 1.0f) < 0.02f;
 }
+#else
+static int output_is_valid(const Tensor *logits, float *sum_out) {
+    float sum = 0.0f;
+    for (int32_t i = 0; i < logits->size; i++) {
+        float v = logits->f_data[i];
+        if (!isfinite(v)) {
+            if (sum_out != NULL) {
+                *sum_out = sum;
+            }
+            return 0;
+        }
+        sum += v;
+    }
+
+    if (sum_out != NULL) {
+        *sum_out = sum;
+    }
+    return 1;
+}
+#endif
 
 static const tinyspeech_ref_case_t *get_reference_case(uint32_t tc,
                                                        const tinyspeech_test_input_case_t *c) {
@@ -109,6 +134,7 @@ static int compare_with_reference(uint32_t tc,
 
     int prob_ok = 1;
     float max_prob_diff = 0.0f;
+#if TINYSPEECH_OUTPUT_SOFTMAX
     for (int32_t i = 0; i < TINYSPEECH_REF_NUM_CLASSES; i++) {
         float d = fabsf(probs->f_data[i] - r->ref_probs[i]);
         if (d > max_prob_diff) {
@@ -118,6 +144,7 @@ static int compare_with_reference(uint32_t tc,
             prob_ok = 0;
         }
     }
+#endif
     if (!prob_ok) {
         summary->prob_fail++;
     }
@@ -143,6 +170,7 @@ static int compare_with_reference(uint32_t tc,
 
     int stage_ok = 1;
     float max_stage_diff = 0.0f;
+#if TINYSPEECH_REF_CHECK_STAGE_SUM
     if (trace->num_stages == TINYSPEECH_REF_NUM_STAGES) {
         for (int32_t i = 0; i < TINYSPEECH_REF_NUM_STAGES; i++) {
             float d = fabsf(trace->stages[i].sum - r->ref_stage_sums[i]);
@@ -156,6 +184,7 @@ static int compare_with_reference(uint32_t tc,
     } else {
         stage_ok = 0;
     }
+#endif
     if (!stage_ok) {
         summary->stage_fail++;
     }
@@ -201,7 +230,35 @@ static void print_debug_trace(void) {
 void app_init(void) {
 }
 
+typedef struct {
+    uint64_t sum;
+    uint64_t min;
+    uint64_t max;
+} cycle_stat_t;
+
+static inline void cycle_stat_init(cycle_stat_t *s) {
+    s->sum = 0;
+    s->min = UINT64_MAX;
+    s->max = 0;
+}
+
+static inline void cycle_stat_update(cycle_stat_t *s, uint64_t v) {
+    s->sum += v;
+    if (v < s->min) {
+        s->min = v;
+    }
+    if (v > s->max) {
+        s->max = v;
+    }
+}
+
 int app_main(void) {
+#if TINYSPEECH_OUTPUT_SOFTMAX
+    const char *score_label = "conf";
+#else
+    const char *score_label = "score";
+#endif
+
     printf("=== DSP25 TinySpeech Optimized2 Test (Implicit GEMM RVV) ===\n");
 #if defined(__riscv_vector)
     printf("  kernel mode: RVV implicit-GEMM convolution/matmul\n");
@@ -217,6 +274,17 @@ int app_main(void) {
            TINYSPEECH_TEST_BANDPASS_LOW_HZ,
            TINYSPEECH_TEST_BANDPASS_HIGH_HZ);
     printf("  bn scale offset: 2 (fixed to activation_scale)\n");
+#if TINYSPEECH_OUTPUT_SOFTMAX
+    printf("  output   : softmax probabilities\n");
+#else
+    printf("  output   : logits (softmax skipped for top1)\n");
+#endif
+#if !TINYSPEECH_REF_CHECK_STAGE_SUM
+    printf("  note     : stage-sum reference check disabled (fused conv trace semantics)\n");
+#endif
+#if !TINYSPEECH_ENABLE_TRACE
+    printf("  note     : layer trace capture disabled (perf mode)\n");
+#endif
 
     uint32_t pass = 0;
     uint32_t fail = 0;
@@ -226,6 +294,20 @@ int app_main(void) {
     uint64_t cycles_min = UINT64_MAX;
     uint64_t cycles_max = 0;
     ref_cmp_summary_t ref_summary = {0};
+    cycle_stat_t st_input_cast;
+    cycle_stat_t st_conv1_pool1;
+    cycle_stat_t st_conv2_pool2;
+    cycle_stat_t st_conv3_gap;
+    cycle_stat_t st_fc_logits;
+    cycle_stat_t st_softmax;
+    cycle_stat_t st_model_total;
+    cycle_stat_init(&st_input_cast);
+    cycle_stat_init(&st_conv1_pool1);
+    cycle_stat_init(&st_conv2_pool2);
+    cycle_stat_init(&st_conv3_gap);
+    cycle_stat_init(&st_fc_logits);
+    cycle_stat_init(&st_softmax);
+    cycle_stat_init(&st_model_total);
 
     for (uint32_t tc = 0; tc < TINYSPEECH_TEST_NUM_CASES; tc++) {
         const tinyspeech_test_input_case_t *c = &g_tinyspeech_test_inputs[tc];
@@ -238,6 +320,8 @@ int app_main(void) {
         uint64_t c0 = rdcycle64();
         Tensor probs = tinyspeech_run_inference(&input);
         uint64_t c1 = rdcycle64();
+        free_tensor(&input);
+        const tinyspeech_cycle_profile_t *prof = tinyspeech_last_cycle_profile();
         uint64_t cycles = c1 - c0;
         cycles_sum += cycles;
         if (cycles < cycles_min) {
@@ -246,6 +330,13 @@ int app_main(void) {
         if (cycles > cycles_max) {
             cycles_max = cycles;
         }
+        cycle_stat_update(&st_input_cast, prof->input_cast);
+        cycle_stat_update(&st_conv1_pool1, prof->conv1_pool1);
+        cycle_stat_update(&st_conv2_pool2, prof->conv2_pool2);
+        cycle_stat_update(&st_conv3_gap, prof->conv3_gap);
+        cycle_stat_update(&st_fc_logits, prof->fc_logits);
+        cycle_stat_update(&st_softmax, prof->softmax);
+        cycle_stat_update(&st_model_total, prof->total);
 
         float max_prob = 0.0f;
         int32_t pred = tinyspeech_argmax(&probs, &max_prob);
@@ -258,17 +349,19 @@ int app_main(void) {
             } else {
                 printf("    expected  = <background/unknown>\n");
             }
-            printf("    probs     =");
+            printf("    output    =");
             for (int32_t i = 0; i < probs.size; i++) {
                 printf(" %.6f", probs.f_data[i]);
             }
             printf("\n");
             if ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) {
-                printf("    predict   = %s (%ld), conf=%.6f\n", k_labels[pred], (long)pred, max_prob);
+                printf("    predict   = %s (%ld), %s=%.6f\n",
+                       k_labels[pred], (long)pred, score_label, max_prob);
             } else {
-                printf("    predict   = <out-of-range> (%ld), conf=%.6f\n", (long)pred, max_prob);
+                printf("    predict   = <out-of-range> (%ld), %s=%.6f\n",
+                       (long)pred, score_label, max_prob);
             }
-            printf("    prob_sum  = %.6f\n", sum);
+            printf("    output_sum= %.6f\n", sum);
             printf("    cycles    = %lu\n", (unsigned long)cycles);
         }
         int ref_ok = compare_with_reference(tc, c, &probs, pred, &ref_summary);
@@ -301,18 +394,19 @@ int app_main(void) {
                     ? k_labels[pred]
                     : "<oor>";
 
-            printf("[CASE %lu] %s exp=%s pred=%s conf=%.6f sum=%.6f cycles=%lu status=%s\n",
+            printf("[CASE %lu] %s exp=%s pred=%s %s=%.6f sum=%.6f cycles=%lu status=%s\n",
                    (unsigned long)tc,
                    c->name,
                    exp_str,
                    pred_str,
+                   score_label,
                    max_prob,
                    sum,
                    (unsigned long)cycles,
                    case_pass ? "PASS" : "FAIL");
 
             if (TINYSPEECH_PRINT_CASE_PROBS) {
-                printf("    probs =");
+                printf("    output =");
                 for (int32_t i = 0; i < probs.size; i++) {
                     printf(" %.6f", probs.f_data[i]);
                 }
@@ -324,7 +418,7 @@ int app_main(void) {
             if (case_pass) {
                 printf("    status    = PASS\n\n");
             } else if (!ok) {
-                printf("    status    = FAIL (invalid probability vector)\n\n");
+                printf("    status    = FAIL (invalid output vector)\n\n");
             } else {
                 printf("    status    = FAIL (reference mismatch)\n\n");
             }
@@ -367,6 +461,36 @@ int app_main(void) {
                (unsigned long)cycles_min,
                avg_cycles,
                (unsigned long)cycles_max);
+        const uint64_t ncases = (uint64_t)TINYSPEECH_TEST_NUM_CASES;
+        printf("Layer-cycle summary:\n");
+        printf("  input_cast   : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_input_cast.min,
+               (unsigned long)(st_input_cast.sum / ncases),
+               (unsigned long)st_input_cast.max);
+        printf("  conv1+pool1  : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_conv1_pool1.min,
+               (unsigned long)(st_conv1_pool1.sum / ncases),
+               (unsigned long)st_conv1_pool1.max);
+        printf("  conv2+pool2  : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_conv2_pool2.min,
+               (unsigned long)(st_conv2_pool2.sum / ncases),
+               (unsigned long)st_conv2_pool2.max);
+        printf("  conv3+gap    : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_conv3_gap.min,
+               (unsigned long)(st_conv3_gap.sum / ncases),
+               (unsigned long)st_conv3_gap.max);
+        printf("  fc_logits    : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_fc_logits.min,
+               (unsigned long)(st_fc_logits.sum / ncases),
+               (unsigned long)st_fc_logits.max);
+        printf("  softmax      : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_softmax.min,
+               (unsigned long)(st_softmax.sum / ncases),
+               (unsigned long)st_softmax.max);
+        printf("  model_total  : min=%lu avg=%lu max=%lu\n",
+               (unsigned long)st_model_total.min,
+               (unsigned long)(st_model_total.sum / ncases),
+               (unsigned long)st_model_total.max);
     }
 
     return (fail == 0) ? 0 : 1;

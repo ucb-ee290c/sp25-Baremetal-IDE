@@ -1,6 +1,45 @@
 #include "tensor.h"
 #include "misc.h"
 
+#ifndef TINYSPEECH_USE_TENSOR_ARENA
+#define TINYSPEECH_USE_TENSOR_ARENA 1
+#endif
+
+#ifndef TINYSPEECH_TENSOR_ARENA_SIZE
+#define TINYSPEECH_TENSOR_ARENA_SIZE (512 * 1024)
+#endif
+
+#if TINYSPEECH_USE_TENSOR_ARENA
+static uint8_t g_tensor_arena[TINYSPEECH_TENSOR_ARENA_SIZE];
+static size_t g_tensor_arena_offset = 0;
+
+static inline void *tensor_arena_alloc(size_t bytes) {
+    size_t aligned = (bytes + 15u) & ~((size_t)15u);
+    if (g_tensor_arena_offset + aligned > TINYSPEECH_TENSOR_ARENA_SIZE) {
+        return NULL;
+    }
+    void *ptr = &g_tensor_arena[g_tensor_arena_offset];
+    g_tensor_arena_offset += aligned;
+    return ptr;
+}
+
+static inline int ptr_in_tensor_arena(const void *p) {
+    if (p == NULL) {
+        return 0;
+    }
+    const uintptr_t x = (uintptr_t)p;
+    const uintptr_t lo = (uintptr_t)&g_tensor_arena[0];
+    const uintptr_t hi = (uintptr_t)&g_tensor_arena[TINYSPEECH_TENSOR_ARENA_SIZE];
+    return (x >= lo) && (x < hi);
+}
+#endif
+
+void tinyspeech_tensor_arena_reset(void) {
+#if TINYSPEECH_USE_TENSOR_ARENA
+    g_tensor_arena_offset = 0;
+#endif
+}
+
 void print_tensor_upto_n(Tensor* input, int len) { 
     for (int i = 0; i < len; i++) { 
         printf("%d, ", input->data[i]);
@@ -50,7 +89,13 @@ Tensor f_create_tensor(u_int8_t* shape, int8_t dims) {
 
     tensor.dims = dims; 
     tensor.data = NULL;
-    tensor.shape = (u_int8_t *)malloc(dims * sizeof(int8_t));
+    tensor.shape = NULL;
+#if TINYSPEECH_USE_TENSOR_ARENA
+    tensor.shape = (u_int8_t *)tensor_arena_alloc((size_t)dims * sizeof(int8_t));
+#endif
+    if (tensor.shape == NULL) {
+        tensor.shape = (u_int8_t *)malloc((size_t)dims * sizeof(int8_t));
+    }
     if (!tensor.shape) {
         perror("Memory allocation failed for tensor.shape");
         exit(EXIT_FAILURE);
@@ -68,7 +113,13 @@ Tensor f_create_tensor(u_int8_t* shape, int8_t dims) {
         exit(EXIT_FAILURE);
     }
 
-    tensor.f_data = (float *)malloc(tensor.size * sizeof(float));
+    tensor.f_data = NULL;
+#if TINYSPEECH_USE_TENSOR_ARENA
+    tensor.f_data = (float *)tensor_arena_alloc((size_t)tensor.size * sizeof(float));
+#endif
+    if (tensor.f_data == NULL) {
+        tensor.f_data = (float *)malloc((size_t)tensor.size * sizeof(float));
+    }
     if (!tensor.f_data) {
         perror("Memory allocation failed for tensor.data");
         exit(EXIT_FAILURE);
@@ -240,13 +291,25 @@ void free_tensor(Tensor* tensor) {
         return;
     }
 
-    if (tensor->data != NULL) {
+    if ((tensor->data != NULL)
+#if TINYSPEECH_USE_TENSOR_ARENA
+        && !ptr_in_tensor_arena(tensor->data)
+#endif
+    ) {
         free(tensor->data);
     }
-    if (tensor->f_data != NULL) {
+    if ((tensor->f_data != NULL)
+#if TINYSPEECH_USE_TENSOR_ARENA
+        && !ptr_in_tensor_arena(tensor->f_data)
+#endif
+    ) {
         free(tensor->f_data);
     }
-    if (tensor->shape != NULL) {
+    if ((tensor->shape != NULL)
+#if TINYSPEECH_USE_TENSOR_ARENA
+        && !ptr_in_tensor_arena(tensor->shape)
+#endif
+    ) {
         free(tensor->shape);
     }
 

@@ -21,6 +21,10 @@
 #define TINYSPEECH_OUTPUT_SOFTMAX 0
 #endif
 
+#ifndef TINYSPEECH_ENABLE_TRACE
+#define TINYSPEECH_ENABLE_TRACE 0
+#endif
+
 static inline uint64_t rdcycle64_model(void) {
     uint64_t x;
     __asm__ volatile("rdcycle %0" : "=r"(x));
@@ -50,10 +54,19 @@ static Tensor make_float_input_copy(const Tensor *input) {
 }
 
 static void trace_reset(void) {
+#if TINYSPEECH_ENABLE_TRACE
     memset(&g_last_trace, 0, sizeof(g_last_trace));
+#else
+    g_last_trace.num_stages = 0;
+#endif
 }
 
 static void trace_add(const char *name, const Tensor *t) {
+#if !TINYSPEECH_ENABLE_TRACE
+    (void)name;
+    (void)t;
+    return;
+#else
     if (g_last_trace.num_stages >= TINYSPEECH_MAX_DEBUG_STAGES) {
         return;
     }
@@ -88,6 +101,7 @@ static void trace_add(const char *name, const Tensor *t) {
     stage->abs_sum = abs_sum_v;
     stage->min = min_v;
     stage->max = max_v;
+#endif
 }
 
 static void trace_store_logits(const Tensor *t) {
@@ -100,6 +114,12 @@ static void trace_store_logits(const Tensor *t) {
         g_last_trace.logits[i] = tensor_get_value(t, i);
     }
 }
+
+#if TINYSPEECH_ENABLE_TRACE
+#define TRACE_ADD(name, tensor_ptr) trace_add((name), (tensor_ptr))
+#else
+#define TRACE_ADD(name, tensor_ptr) do { (void)(name); (void)(tensor_ptr); } while (0)
+#endif
 
 const tinyspeech_debug_trace_t *tinyspeech_debug_last_trace(void) {
     return &g_last_trace;
@@ -115,7 +135,7 @@ Tensor tinyspeech_run_inference(Tensor *input) {
 
     tinyspeech_tensor_arena_reset();
     trace_reset();
-    trace_add("input", input);
+    TRACE_ADD("input", input);
 
     uint64_t t0 = rdcycle64_model();
     Tensor input_f = make_float_input_copy(input);
@@ -126,67 +146,67 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     Tensor x = conv2d_relu_maxpool2d(&input_f, W(0), W(1), W(2), 1, 1, 2, 2);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv1_pool1 = t1 - t0;
-    trace_add("conv1", &x);
-    trace_add("relu1", &x);
-    trace_add("pool1", &x);
+    TRACE_ADD("conv1", &x);
+    TRACE_ADD("relu1", &x);
+    TRACE_ADD("pool1", &x);
 
     t0 = rdcycle64_model();
     x = conv2d_relu_maxpool2d(&x, W(3), W(4), W(5), 1, 1, 2, 2);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv2_pool2 = t1 - t0;
-    trace_add("conv2", &x);
-    trace_add("relu2", &x);
-    trace_add("pool2", &x);
+    TRACE_ADD("conv2", &x);
+    TRACE_ADD("relu2", &x);
+    TRACE_ADD("pool2", &x);
 #else
     t0 = rdcycle64_model();
     Tensor x = conv2d(&input_f, W(0), W(1), W(2), 1, 1);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv1_pool1 = t1 - t0;
-    trace_add("conv1", &x);
+    TRACE_ADD("conv1", &x);
 #if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
 #endif
-    trace_add("relu1", &x);
+    TRACE_ADD("relu1", &x);
     t0 = rdcycle64_model();
     Tensor p1 = maxpool2d(&x, 2, 2);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv1_pool1 += (t1 - t0);
     free_tensor(&x);
     x = p1;
-    trace_add("pool1", &x);
+    TRACE_ADD("pool1", &x);
 
     t0 = rdcycle64_model();
     x = conv2d(&x, W(3), W(4), W(5), 1, 1);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv2_pool2 = t1 - t0;
-    trace_add("conv2", &x);
+    TRACE_ADD("conv2", &x);
 #if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
 #endif
-    trace_add("relu2", &x);
+    TRACE_ADD("relu2", &x);
     t0 = rdcycle64_model();
     Tensor p2 = maxpool2d(&x, 2, 2);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv2_pool2 += (t1 - t0);
     free_tensor(&x);
     x = p2;
-    trace_add("pool2", &x);
+    TRACE_ADD("pool2", &x);
 #endif
 
     t0 = rdcycle64_model();
     Tensor pooled = conv2d_relu_gap(&x, W(6), W(7), W(8), 1, 1);
     t1 = rdcycle64_model();
     g_last_cycle_profile.conv3_gap = t1 - t0;
-    trace_add("conv3", &pooled);
-    trace_add("relu3", &pooled);
-    trace_add("gap", &pooled);
+    TRACE_ADD("conv3", &pooled);
+    TRACE_ADD("relu3", &pooled);
+    TRACE_ADD("gap", &pooled);
 
     t0 = rdcycle64_model();
     Tensor probs = fc_layer(&pooled, W(9));
     t1 = rdcycle64_model();
     g_last_cycle_profile.fc_logits = t1 - t0;
     trace_store_logits(&probs);
-    trace_add("fc_logits", &probs);
+    TRACE_ADD("fc_logits", &probs);
     free_tensor(&pooled);
 
 #if TINYSPEECH_OUTPUT_SOFTMAX
@@ -194,7 +214,7 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     softmax(&probs);
     t1 = rdcycle64_model();
     g_last_cycle_profile.softmax = t1 - t0;
-    trace_add("softmax", &probs);
+    TRACE_ADD("softmax", &probs);
 #endif
 
     g_last_cycle_profile.total = rdcycle64_model() - t_total0;

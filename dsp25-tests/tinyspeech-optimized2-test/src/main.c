@@ -282,6 +282,9 @@ int app_main(void) {
 #if !TINYSPEECH_REF_CHECK_STAGE_SUM
     printf("  note     : stage-sum reference check disabled (fused conv trace semantics)\n");
 #endif
+#if !TINYSPEECH_ENABLE_TRACE
+    printf("  note     : layer trace capture disabled (perf mode)\n");
+#endif
 
     uint32_t pass = 0;
     uint32_t fail = 0;

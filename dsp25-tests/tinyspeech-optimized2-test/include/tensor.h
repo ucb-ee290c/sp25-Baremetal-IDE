@@ -21,6 +21,7 @@ Tensor create_tensor(u_int8_t* shape, int8_t dims);
 Tensor f_load_tensor(const char* filename, int8_t dims);
 Tensor load_tensor(const char* filename, int8_t dims);
 void free_tensor(Tensor* tensor);
+void tinyspeech_tensor_arena_reset(void);
 
 // TODO: Remove these functions and their use in ./inference 
 void save_tensor(const char* filename, Tensor* tensor);

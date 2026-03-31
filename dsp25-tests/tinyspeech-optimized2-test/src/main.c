@@ -247,6 +247,7 @@ int app_main(void) {
         uint64_t c0 = rdcycle64();
         Tensor probs = tinyspeech_run_inference(&input);
         uint64_t c1 = rdcycle64();
+        free_tensor(&input);
         uint64_t cycles = c1 - c0;
         cycles_sum += cycles;
         if (cycles < cycles_min) {

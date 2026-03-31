@@ -95,6 +95,7 @@ const tinyspeech_debug_trace_t *tinyspeech_debug_last_trace(void) {
 }
 
 Tensor tinyspeech_run_inference(Tensor *input) {
+    tinyspeech_tensor_arena_reset();
     trace_reset();
     trace_add("input", input);
 
@@ -133,16 +134,10 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     trace_add("pool2", &x);
 #endif
 
-    x = conv2d(&x, W(6), W(7), W(8), 1, 1);
-    trace_add("conv3", &x);
-#if !TINYSPEECH_CONV_FUSE_RELU
-    relu(&x);
-#endif
-    trace_add("relu3", &x);
-
-    Tensor pooled = adaptive_avg_pool2d(&x);
+    Tensor pooled = conv2d_relu_gap(&x, W(6), W(7), W(8), 1, 1);
+    trace_add("conv3", &pooled);
+    trace_add("relu3", &pooled);
     trace_add("gap", &pooled);
-    free_tensor(&x);
 
     Tensor probs = fc_layer(&pooled, W(9));
     trace_store_logits(&probs);

@@ -1120,6 +1120,97 @@ Tensor conv2d_relu_maxpool2d(Tensor *input, Tensor *weights, Tensor *bias, Tenso
     return output;
 }
 
+Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale,
+                       u_int8_t stride, u_int8_t padding) {
+    const int32_t batch_size = input->shape[0];
+    const int32_t in_height = input->shape[2];
+    const int32_t in_width = input->shape[3];
+    const int32_t out_channels = weights->shape[0];
+    const int32_t kernel_height = weights->shape[2];
+    const int32_t kernel_width = weights->shape[3];
+
+    const int32_t out_height = (in_height + (2 * padding) - kernel_height) / stride + 1;
+    const int32_t out_width = (in_width + (2 * padding) - kernel_width) / stride + 1;
+    const int32_t out_hw = out_height * out_width;
+
+    u_int8_t output_shape[4] = {
+        (u_int8_t)batch_size,
+        (u_int8_t)out_channels,
+        1,
+        1,
+    };
+    Tensor output = f_create_tensor(output_shape, 4);
+
+    float out_scale = decode_packed_float(tensor_get_value(scale, 0));
+    if (fabsf(out_scale) < 1e-12f) {
+        out_scale = 1.0f;
+    }
+
+#if defined(__riscv_vector)
+    int handled = 0;
+    if ((input->f_data != NULL) && (weights->f_data != NULL) && (bias->f_data != NULL) &&
+        (stride == 1) && (padding == 1) && (kernel_height == 3) && (kernel_width == 3)) {
+        const int32_t in_channels = input->shape[1];
+        const int32_t K = in_channels * 9;
+        const float *wpack = get_packed_conv_weights(weights, out_channels, K);
+        if (wpack != NULL) {
+            const float inv_scale = 1.0f / out_scale;
+            const float inv_hw = 1.0f / (float)out_hw;
+            for (int32_t n = 0; n < batch_size; n++) {
+                const float *in_n = input->f_data + n * (in_channels * in_height * in_width);
+                float *out_n = output.f_data + n * out_channels;
+                for (int32_t oc0 = 0; oc0 < out_channels; ) {
+                    size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
+                    vfloat32m4_t vsum = __riscv_vfmv_v_f_f32m4(0.0f, vl);
+                    for (int32_t oh = 0; oh < out_height; oh++) {
+                        for (int32_t ow = 0; ow < out_width; ow++) {
+                            vfloat32m4_t v =
+                                conv_point_is_interior(oh, ow, in_height, in_width, (int32_t)padding)
+                                    ? conv_block_rvv_interior(in_n, wpack, bias->f_data, out_channels, in_channels,
+                                                              in_height, in_width, oh, ow, (int32_t)padding,
+                                                              oc0, vl, inv_scale)
+                                    : conv_block_rvv_border(in_n, wpack, bias->f_data, out_channels, in_channels,
+                                                            in_height, in_width, oh, ow, (int32_t)padding,
+                                                            oc0, vl, inv_scale);
+#if !TINYSPEECH_CONV_FUSE_RELU
+                            v = __riscv_vfmax_vf_f32m4(v, 0.0f, vl);
+#endif
+                            vsum = __riscv_vfadd_vv_f32m4(vsum, v, vl);
+                        }
+                    }
+                    vsum = __riscv_vfmul_vf_f32m4(vsum, inv_hw, vl);
+                    __riscv_vse32_v_f32m4(out_n + oc0, vsum, vl);
+                    oc0 += (int32_t)vl;
+                }
+            }
+            handled = 1;
+        }
+    }
+    if (!handled) {
+        free_tensor(&output);
+        Tensor conv = conv2d(input, weights, bias, scale, stride, padding);
+#if !TINYSPEECH_CONV_FUSE_RELU
+        relu(&conv);
+#endif
+        Tensor pooled = adaptive_avg_pool2d(&conv);
+        free_tensor(&conv);
+        return pooled;
+    }
+#else
+    free_tensor(&output);
+    Tensor conv = conv2d(input, weights, bias, scale, stride, padding);
+#if !TINYSPEECH_CONV_FUSE_RELU
+    relu(&conv);
+#endif
+    Tensor pooled = adaptive_avg_pool2d(&conv);
+    free_tensor(&conv);
+    return pooled;
+#endif
+
+    free_tensor(input);
+    return output;
+}
+
 Tensor fc_layer(Tensor *input, Tensor *weights) {
     int32_t batch_size = input->shape[0];
     int32_t input_features = input->shape[1];

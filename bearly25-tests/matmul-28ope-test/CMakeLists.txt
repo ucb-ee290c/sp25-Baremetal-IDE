@@ -3,11 +3,14 @@
 
 add_executable(matmul-28ope-test
   src/main.c
-  # src/opervv.c  # disabled for OPE isolation test
+  src/opervv.c
+  ${CMAKE_SOURCE_DIR}/bearly25-bmarks/rvv-matmul/src/i8_i32_matmul_rvv.c
+  ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 
 target_include_directories(matmul-28ope-test PRIVATE
   ${CMAKE_SOURCE_DIR}/platform/bearly25/include
+  ${CMAKE_SOURCE_DIR}/bmark-lib
 )
 
 target_link_libraries(matmul-28ope-test PRIVATE

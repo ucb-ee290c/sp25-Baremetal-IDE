@@ -1066,7 +1066,7 @@ static inline vfloat32m4_t conv_pool2x2_block_rvv_interior_24ic(const float *in_
                                                                  size_t vl,
                                                                  float inv_scale) {
     const int32_t in_hw = in_height * in_width;
-    vfloat32m4_t v00 = vbias;
+    vfloat32m4_t v00 = __riscv_vfmv_v_f_f32m4(0.0f, vl);
     vfloat32m4_t v01 = v00;
     vfloat32m4_t v10 = v00;
     vfloat32m4_t v11 = v00;
@@ -1150,6 +1150,7 @@ static inline vfloat32m4_t conv_pool2x2_block_rvv_interior_24ic(const float *in_
     vfloat32m4_t vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
     vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
     vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
+    vmax = __riscv_vfadd_vv_f32m4(vmax, vbias, vl);
     if (inv_scale != 1.0f) {
         vmax = __riscv_vfmul_vf_f32m4(vmax, inv_scale, vl);
     }

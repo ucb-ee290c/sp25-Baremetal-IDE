@@ -1,9 +1,13 @@
 /*
- * opervv.c — OPE 8-row + RVV (DIM-8)-row kernels for DIM×DIM int8 matmul
+ * opervv.c — 64×64 int8 matmul via 32×32 blocking
  *
- * Generalized for arbitrary DIM (multiple of 8).
- * OPE handles rows 0-7, RVV handles the rest.
- * ACC stride capped at 32: K is broken into ceil(K/32) ACC calls per tile.
+ * The 64×64 problem is decomposed into 8 sub-multiplies of 32×32,
+ * each using the exact same OPE+RVV kernel proven at 32×32:
+ *   - K=32, N=32, ldc=32, EXT stride=32
+ *   - Single ACC(32) per col-tile
+ *   - 4 col-tiles × [7,7,7,3] RVV rows = 24 interleaved rows
+ *
+ * C[i,j] = Σ_k A[i,k] × B[k,j]   (i,j,k ∈ {0,1}, each block 32×32)
  *
  * RVV uses gemm_i8_i32_7xm4 / gemm_i8_i32_1xm4 from bearly25-bmarks/rvv-matmul.
  */
@@ -80,6 +84,36 @@ static inline void OP_ACC_L(int8_t *U, int8_t *V, int L) {
 #define _OP_EXT_NS_NT(rs2)     \
   ROCC_INSTRUCTION_SS(OPE_CUSTOM, 0,   rs2, FCTN7_EXTRACT|(0<<2)|(0<<3))
 
+/*
+ * Re-prime just the 8 cache lines for one EXT tile immediately before EXT.
+ * Each tile row lands on exactly one 64-byte cache line.
+ * stride_elements is in int32 units.
+ */
+static inline void ope_prime_tile_lines(int32_t *arr, int stride_elements) {
+    volatile int32_t sink;
+    for (int r = 0; r < 8; r++) {
+        sink = arr[r * stride_elements];
+    }
+    asm volatile("fence r, rw" ::: "memory");
+}
+
+/*
+ * Prime the ACC input vectors immediately before OP_ACC_L to prevent nacks
+ * on OPE's cache reads of U and V.
+ *
+ * Each OP_ACC_L(ap, bp, L) causes the OPE to issue reads over L*8 bytes from
+ * both ap and bp.  Touch one address per 64-byte cache line in each range.
+ */
+static inline void ope_prime_acc_inputs(const int8_t *ap, const int8_t *bp, int L) {
+    volatile int8_t sink;
+    int bytes = L * 8;
+    for (int off = 0; off < bytes; off += 64) {
+        sink = ap[off];
+        sink = bp[off];
+    }
+    asm volatile("fence r, rw" ::: "memory");
+}
+
 /* ──────────────────────── end OPE interface ──────────────────────── */
 
 /* Forward declarations for RVV kernels from bearly25-bmarks/rvv-matmul */
@@ -122,6 +156,14 @@ void pack_B_ope(const int8_t *B, int ldb, int8_t *B_packed, int K, int N)
     }
 }
 
+void pack_A_rvv(const int8_t *A, int lda, int8_t *A_packed,
+                int row_start, int num_rows, int K)
+{
+    for (int r = 0; r < num_rows; r++)
+        for (int k = 0; k < K; k++)
+            A_packed[r * K + k] = A[(row_start + r) * lda + k];
+}
+
 void pack_B_rvv_bias(const int8_t *B, int ldb, int8_t *B_packed, int K, int N)
 {
     memset(B_packed, 0, (size_t)N);  /* bias row */
@@ -131,8 +173,7 @@ void pack_B_rvv_bias(const int8_t *B, int ldb, int8_t *B_packed, int K, int N)
 }
 
 /* ====================================================================
- * rvv_compute_rows — compute a batch of RVV output rows.
- * Processes in batches of 7 (7xm4), then singles (1xm4) for remainder.
+ * rvv_compute_rows — compute a batch of RVV rows using 7xm4 + 1xm4.
  * ==================================================================== */
 static void rvv_compute_rows(
     const int8_t *a, int num_rows,
@@ -159,53 +200,69 @@ static void rvv_compute_rows(
 }
 
 /* ====================================================================
- * gemm_ope_rvv — OPE 8 rows + RVV (num_rvv_rows) rows, interleaved.
+ * prime_32x32 — bring OPE data for one 32×32 sub-kernel into L1.
  *
- * Generalized for any DIM (multiple of 8).
- * ACC stride capped at 32: K is broken into ceil(K/32) ACC calls.
- * RVV rows are distributed across N/8 col-tiles, 7 per tile.
- *
- * Priming is done by the caller before timing begins.
+ * Only primes OPE ACC inputs and EXT output region.
+ * RVV inputs/outputs are NOT primed — Saturn handles cache misses
+ * gracefully, and with page-aligned work sets the RVV data occupies
+ * different cache sets than OPE data (no eviction risk).
  * ==================================================================== */
-void gemm_ope_rvv(
-    const int8_t *A_packed,
-    const int8_t *B_packed,
-    int32_t *C,
-    int N, int K, int ldc,
-    const int8_t *A_rvv,
-    const int8_t *B_rvv,
-    int num_rvv_rows,
-    int32_t *C_rvv)
+void prime_32x32(int32_t *C, int ldc)
 {
+    volatile int32_t sink32;
+    /* OPE EXT output (8 rows × 32 cols × 4B = 1024B = 16 lines).
+     * EXT writes MUST hit L1 — misses cause nacks that hang the FSM.
+     * ACC read misses are slow but safe (no hang), so skip A_ope/B_ope. */
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 32; c += 16)
+            sink32 = C[r * ldc + c];
+    asm volatile("fence r, rw" ::: "memory");
+}
+
+/* ====================================================================
+ * gemm_ope_rvv_32x32 — 32×32 sub-kernel, IDENTICAL to proven 32×32.
+ *
+ * All parameters fixed at 32×32:
+ *   N=32, K=32, ldc=32, EXT stride=32
+ *   Single ACC(32) per col-tile, 4 col-tiles
+ *   RVV: [7,7,7,3] rows interleaved
+ *
+ * Caller must prime data into L1 before calling.
+ * A_rvv must be contiguously packed (stride = K = 32).
+ * ==================================================================== */
+void gemm_ope_rvv_32x32(
+    const int8_t *A_packed,   /* OPE-packed, 1×32×8 = 256 bytes */
+    const int8_t *B_packed,   /* OPE-packed, 4×32×8 = 1024 bytes */
+    int32_t *C,               /* output 32×32, ldc=32 */
+    const int8_t *A_rvv,      /* contiguous 24×32, stride=32 */
+    const int8_t *B_rvv,      /* (33)×32 with bias row */
+    int num_rvv_rows)         /* 24 */
+{
+    const int N = 32;
+    const int K = 32;
+    const int ldc = 32;
     int rvv_row_cursor = 0;
 
     for (int j = 0; j < N / 8; j++) {
         const int8_t *ap = A_packed;
         const int8_t *bp = B_packed + j * K * 8;
 
-        /* ── 1. Fire ZERO + ACC (multiple ACC calls if K > 32) ── */
+        /* ── ZERO + single ACC(32) ── */
         OP_ZERO();
-        int k_rem = K;
-        while (k_rem > 0) {
-            int L = MIN(32, k_rem);
-            OP_ACC_L((int8_t *)ap, (int8_t *)bp, L);
-            ap += L * 8;
-            bp += L * 8;
-            k_rem -= L;
-        }
+        OP_ACC_L((int8_t *)ap, (int8_t *)bp, K);
 
-        /* ── 2. RVV batch — hides ACC latency ── */
+        /* ── RVV batch — hides ACC latency ── */
         int rvv_count = MIN(7, num_rvv_rows - rvv_row_cursor);
         if (rvv_count > 0) {
             rvv_compute_rows(
                 A_rvv + (size_t)rvv_row_cursor * K,
                 rvv_count, N, K,
                 B_rvv,
-                C_rvv + rvv_row_cursor * ldc, ldc);
+                C + (8 + rvv_row_cursor) * ldc, ldc);
             rvv_row_cursor += rvv_count;
         }
 
-        /* ── 3. Fire EXT ── */
+        /* ── EXT with stride=32 ── */
         {
             register uint64_t rs1 asm("x11") = (uint64_t)ldc;
             register uint64_t rs2 asm("x12") = (uint64_t)(C + j * 8);
@@ -214,37 +271,28 @@ void gemm_ope_rvv(
         }
     }
 
-    /* Compute any remaining RVV rows not covered during OPE tiles */
-    if (rvv_row_cursor < num_rvv_rows) {
-        rvv_compute_rows(
-            A_rvv + (size_t)rvv_row_cursor * K,
-            num_rvv_rows - rvv_row_cursor, N, K,
-            B_rvv,
-            C_rvv + rvv_row_cursor * ldc, ldc);
-    }
-
-    /* Drain all in-flight OPE EXT writes and RVV stores. */
+    /* Drain all in-flight OPE EXT writes */
     asm volatile("fence w, rw" ::: "memory");
 }
 
 /* ====================================================================
- * gemm_rvv_all — pure RVV baseline for all M rows (no OPE).
+ * gemm_rvv_all — pure RVV baseline for M rows (no OPE, no blocking).
  * ==================================================================== */
-void gemm_rvv_all(const int8_t *A_rvv, const int8_t *B_rvv,
+void gemm_rvv_all(const int8_t *A, const int8_t *B_rvv,
                   int32_t *C, int M, int N, int K, int ldc)
 {
     size_t cm_stride = (size_t)ldc * sizeof(int32_t);
     int r = 0;
     while (r + 7 <= M) {
         gemm_i8_i32_7xm4(7, N, K,
-                          A_rvv + (size_t)r * K, K,
+                          A + (size_t)r * K, K,
                           B_rvv,
                           C + r * ldc, cm_stride, 0);
         r += 7;
     }
     while (r < M) {
         gemm_i8_i32_1xm4(1, N, K,
-                          A_rvv + (size_t)r * K, K,
+                          A + (size_t)r * K, K,
                           B_rvv,
                           C + r * ldc, cm_stride, 0);
         r++;

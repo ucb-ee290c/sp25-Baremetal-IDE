@@ -6,7 +6,7 @@
  * C[i,j] = Σ_k A[i,k] × B[k,j]   (i,j,k ∈ {0,1}, each block 32×32)
  * = 8 sub-multiplies, each using the proven 32×32 OPE+RVV kernel.
  *
- * All OPE parameters stay at 32: K=32, N=32, ldc=32, EXT stride=32.
+ * Double-ACC: ZERO+ACC(k0)+ACC(k1) per col-tile reduces 8→4 sub-kernels.
  * Partial products are accumulated outside the timed region.
  */
 
@@ -29,11 +29,28 @@ void pack_B_ope(const int8_t *B, int ldb, int8_t *B_packed, int K, int N);
 void pack_A_rvv(const int8_t *A, int lda, int8_t *A_packed,
                 int row_start, int num_rows, int K);
 void pack_B_rvv_bias(const int8_t *B, int ldb, int8_t *B_packed, int K, int N);
-void prime_32x32(int32_t *C, int ldc);
-void gemm_ope_rvv_32x32(const int8_t *A_packed, const int8_t *B_packed,
-                         int32_t *C,
-                         const int8_t *A_rvv, const int8_t *B_rvv,
-                         int num_rvv_rows);
+/*
+ * Inline: drain previous OPE EXT writes, then prime next sub_out.
+ * Drain fence is here (not at end of kernel) so OPE writes overlap
+ * with loop iteration overhead.
+ */
+static inline void prime_32x32(int32_t *C, int ldc)
+{
+    /* Drain previous OPE EXT writes before touching sub_out cache sets */
+    asm volatile("fence w, rw" ::: "memory");
+    volatile int32_t sink32;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 32; c += 16)
+            sink32 = C[r * ldc + c];
+    asm volatile("fence r, rw" ::: "memory");
+}
+
+void gemm_ope_rvv_32x32_2k(
+    const int8_t *A_ope_k0, const int8_t *B_ope_k0,
+    const int8_t *A_ope_k1, const int8_t *B_ope_k1,
+    int32_t *C,
+    const int8_t *A_rvv, const int8_t *B_rvv,
+    int num_rvv_rows);
 void gemm_rvv_all(const int8_t *A, const int8_t *B_rvv,
                   int32_t *C, int M, int N, int K, int ldc);
 
@@ -48,30 +65,33 @@ static int8_t  B[DIM * DIM];
  */
 static int8_t  all_A_ope[4][(OPE_ROWS / 8) * BLK * 8] __attribute__((aligned(64)));
 static int8_t  all_B_ope[4][(BLK / 8) * BLK * 8]      __attribute__((aligned(64)));
-static int8_t  all_A_rvv[4][RVV_ROWS * BLK]            __attribute__((aligned(64)));
-static int8_t  all_B_rvv[4][(BLK + 1) * BLK]           __attribute__((aligned(64)));
 
 /*
- * 8 pre-populated work buffer sets, one per sub-multiply.
- * Page-aligned (4096) so every set has identical cache set mapping:
- *   A_ope at page offset 0, B_ope at 256, A_rvv at 1280, B_rvv at 2336.
- * Each set occupies exactly one page → max 3 lines per cache set
- * (2 from sub_out + 1 from work), safe with 4-way associativity.
+ * Double-ACC work sets: one per (bi,bj) pair (4 total).
+ * Each holds BOTH k-blocks' OPE data plus K=64 RVV data.
+ * Page-aligned so every set has identical cache set mapping.
+ *
+ * A_ope_k0/k1 (256 B each) and B_ope_k0/k1 (1024 B each) are the
+ * OPE inputs for k=0:31 and k=32:63.  A_rvv (24×64=1536 B) and
+ * B_rvv (65×32=2080 B) are the RVV inputs for the full K=64.
+ *
+ * Total: 256+1024+256+1024+1536+2080 = 6176 B → pad to 8192 (2 pages).
  */
 typedef struct {
-    int8_t A_ope[(OPE_ROWS / 8) * BLK * 8];  /* 256 B,  offset 0    */
-    int8_t B_ope[(BLK / 8) * BLK * 8];       /* 1024 B, offset 256  */
-    int8_t A_rvv[RVV_ROWS * BLK];            /* 768 B,  offset 1280 */
-    int8_t B_rvv[(BLK + 1) * BLK];           /* 1056 B, offset 2336 */
-    int8_t _pad[4096 - 256 - 1024 - 768 - 1056]; /* pad to 4096     */
+    int8_t A_ope_k0[(OPE_ROWS / 8) * BLK * 8];  /* 256 B  */
+    int8_t B_ope_k0[(BLK / 8) * BLK * 8];       /* 1024 B */
+    int8_t A_ope_k1[(OPE_ROWS / 8) * BLK * 8];  /* 256 B  */
+    int8_t B_ope_k1[(BLK / 8) * BLK * 8];       /* 1024 B */
+    int8_t A_rvv[RVV_ROWS * DIM];               /* 1536 B (24×64) */
+    int8_t B_rvv[(DIM + 1) * BLK];              /* 2080 B (65×32) */
+    int8_t _pad[8192 - 256 - 1024 - 256 - 1024 - 1536 - 2080];
 } work_set_t;
 
-static work_set_t work_sets[NBLK * NBLK * NBLK] __attribute__((aligned(4096)));
+static work_set_t work_sets[NBLK * NBLK] __attribute__((aligned(4096)));
 
-/* Sub-kernel outputs: one per sub-multiply (8 total = 2×2×2).
- * Page-align for deterministic OPE cache set mapping.
- * Index: sub_out[bi][bj][bk] */
-static int32_t sub_out[NBLK][NBLK][NBLK][BLK * BLK] __attribute__((aligned(4096)));
+/* Sub-kernel outputs: one per (bi,bj) pair (4 total).
+ * Page-align for deterministic OPE cache set mapping. */
+static int32_t sub_out[NBLK][NBLK][BLK * BLK] __attribute__((aligned(4096)));
 
 /* Final output */
 static int32_t C_out[DIM * DIM];
@@ -112,64 +132,71 @@ void app_main(void)
             B[i * DIM + j] = (int8_t)((i * 5 + j * 2 + 3) % 13 - 6);
         }
 
-    /* ── Pre-pack all 4 A-blocks and 4 B-blocks ── */
+    /* ── Pre-pack OPE blocks (4 A-blocks, 4 B-blocks) ── */
     printf("[pack] pre-packing all sub-blocks...\n");
-    for (int bi = 0; bi < NBLK; bi++) {
+    for (int bi = 0; bi < NBLK; bi++)
         for (int bk = 0; bk < NBLK; bk++) {
             int a_idx = bi * NBLK + bk;
             const int8_t *A_sub = A + bk * BLK;
             pack_A_ope(A_sub, DIM, all_A_ope[a_idx], bi * BLK, OPE_ROWS, BLK);
-            pack_A_rvv(A_sub, DIM, all_A_rvv[a_idx], bi * BLK + OPE_ROWS, RVV_ROWS, BLK);
         }
-    }
-    for (int bk = 0; bk < NBLK; bk++) {
+    for (int bk = 0; bk < NBLK; bk++)
         for (int bj = 0; bj < NBLK; bj++) {
             int b_idx = bk * NBLK + bj;
             const int8_t *B_sub = B + bk * BLK * DIM + bj * BLK;
             pack_B_ope(B_sub, DIM, all_B_ope[b_idx], BLK, BLK);
-            pack_B_rvv_bias(B_sub, DIM, all_B_rvv[b_idx], BLK, BLK);
         }
-    }
 
     /* ── Full-size B_rvv for pure-RVV baseline ── */
     pack_B_rvv_bias(B, DIM, B_rvv_full, DIM, DIM);
 
-    /* ── Pre-populate work sets (before timing) ── */
+    /* ── Pre-populate double-ACC work sets (before timing) ──
+     * Each work_set[bi*2+bj] holds both k-blocks' OPE data and
+     * K=64 RVV data for the full (bi,bj) output block. */
     for (int bi = 0; bi < NBLK; bi++)
-        for (int bj = 0; bj < NBLK; bj++)
-            for (int bk = 0; bk < NBLK; bk++) {
-                int idx = bi * NBLK * NBLK + bj * NBLK + bk;
-                int a_idx = bi * NBLK + bk;
-                int b_idx = bk * NBLK + bj;
-                memcpy(work_sets[idx].A_ope, all_A_ope[a_idx], sizeof(work_sets[0].A_ope));
-                memcpy(work_sets[idx].B_ope, all_B_ope[b_idx], sizeof(work_sets[0].B_ope));
-                memcpy(work_sets[idx].A_rvv, all_A_rvv[a_idx], sizeof(work_sets[0].A_rvv));
-                memcpy(work_sets[idx].B_rvv, all_B_rvv[b_idx], sizeof(work_sets[0].B_rvv));
-            }
+        for (int bj = 0; bj < NBLK; bj++) {
+            int idx = bi * NBLK + bj;
+            work_set_t *w = &work_sets[idx];
+            /* OPE data for k=0:31 */
+            int a0 = bi * NBLK + 0;
+            int b0 = 0 * NBLK + bj;
+            memcpy(w->A_ope_k0, all_A_ope[a0], sizeof(w->A_ope_k0));
+            memcpy(w->B_ope_k0, all_B_ope[b0], sizeof(w->B_ope_k0));
+            /* OPE data for k=32:63 */
+            int a1 = bi * NBLK + 1;
+            int b1 = 1 * NBLK + bj;
+            memcpy(w->A_ope_k1, all_A_ope[a1], sizeof(w->A_ope_k1));
+            memcpy(w->B_ope_k1, all_B_ope[b1], sizeof(w->B_ope_k1));
+            /* RVV A: pack rows [bi*32+8, bi*32+32) with full K=64 */
+            pack_A_rvv(A, DIM, w->A_rvv,
+                        bi * BLK + OPE_ROWS, RVV_ROWS, DIM);
+            /* RVV B: pack B columns [bj*32, bj*32+32) with full K=64 */
+            const int8_t *B_col = B + bj * BLK;
+            pack_B_rvv_bias(B_col, DIM, w->B_rvv, DIM, BLK);
+        }
 
-    /* ── OPE+RVV: 8 sub-multiplies ── */
+    /* ── OPE+RVV: 4 sub-kernels (double ACC merges bk loop) ── */
     memset(C_out, 0, sizeof(C_out));
     memset(sub_out, 0, sizeof(sub_out));
 
-    printf("[ope+rvv] running 8 sub-multiplies (32x32 each)...\n");
+    printf("[ope+rvv] running 4 sub-kernels (double-ACC 32x32)...\n");
     uint64_t t0 = rdcycle64();
 
     for (int bi = 0; bi < NBLK; bi++) {
         for (int bj = 0; bj < NBLK; bj++) {
-            for (int bk = 0; bk < NBLK; bk++) {
-                int idx = bi * NBLK * NBLK + bj * NBLK + bk;
-                work_set_t *w = &work_sets[idx];
+            int idx = bi * NBLK + bj;
+            work_set_t *w = &work_sets[idx];
 
-                /* Prime OPE EXT output into L1 (must not miss) */
-                prime_32x32(sub_out[bi][bj][bk], BLK);
+            /* Prime OPE EXT output into L1 */
+            prime_32x32(sub_out[bi][bj], BLK);
 
-                /* Run the proven 32×32 kernel */
-                gemm_ope_rvv_32x32(
-                    w->A_ope, w->B_ope,
-                    sub_out[bi][bj][bk],
-                    w->A_rvv, w->B_rvv,
-                    RVV_ROWS);
-            }
+            /* Double-ACC kernel: ZERO+ACC(k0)+ACC(k1) per col-tile */
+            gemm_ope_rvv_32x32_2k(
+                w->A_ope_k0, w->B_ope_k0,
+                w->A_ope_k1, w->B_ope_k1,
+                sub_out[bi][bj],
+                w->A_rvv, w->B_rvv,
+                RVV_ROWS);
         }
     }
 
@@ -179,8 +206,7 @@ void app_main(void)
     /* Accumulate sub-block results into C_out (outside timed region) */
     for (int bi = 0; bi < NBLK; bi++)
         for (int bj = 0; bj < NBLK; bj++)
-            for (int bk = 0; bk < NBLK; bk++)
-                accum_block(sub_out[bi][bj][bk], C_out, bi, bj, DIM);
+            accum_block(sub_out[bi][bj], C_out, bi, bj, DIM);
 
     /* ── Pure-RVV baseline (no blocking needed) ── */
     memset(C_rvv_only, 0, sizeof(C_rvv_only));

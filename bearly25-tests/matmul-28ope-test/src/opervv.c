@@ -327,14 +327,7 @@ void gemm_ope_16rows(
 
         /* ── 1. Fire ZERO + ACC ── */
         OP_ZERO();
-        int k_rem = K;
-        while (k_rem > 0) {
-            int L = MIN(32, k_rem);
-            OP_ACC_L((int8_t *)ap, (int8_t *)bp, L);
-            ap += L * 8;
-            bp += L * 8;
-            k_rem -= L;
-        }
+        OP_ACC_L((int8_t *)ap, (int8_t *)bp, K);
 
         /* ── 2. RVV batch — hides ACC latency ── */
         int rvv_count = MIN(7, num_rvv_rows - rvv_row_cursor);
@@ -347,12 +340,7 @@ void gemm_ope_16rows(
             rvv_row_cursor += rvv_count;
         }
 
-        /* ── 3. Fire EXT — no per-tile re-priming needed ──
-         * C_out is page-aligned (4096), so OPE output rows 0-7
-         * occupy cache sets 0-15.  RVV output (rows 8-31) is in
-         * sets 16-63.  A_rvv/B_rvv are separate buffers unlikely
-         * to conflict with sets 0-15.  The upfront prime suffices.
-         */
+        /* ── 3. Fire EXT ── */
         {
             register uint64_t rs1 asm("x11") = (uint64_t)ldc;
             register uint64_t rs2 asm("x12") = (uint64_t)(C + j * 8);

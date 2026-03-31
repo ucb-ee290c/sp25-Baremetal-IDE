@@ -207,16 +207,58 @@ static void rvv_compute_rows(
  * gracefully, and with page-aligned work sets the RVV data occupies
  * different cache sets than OPE data (no eviction risk).
  * ==================================================================== */
-void prime_32x32(int32_t *C, int ldc)
+/* Moved to header-style static inline — called from main.c via
+ * direct include or duplicated there.  See main.c. */
+
+/* ====================================================================
+ * gemm_ope_rvv_32x32_2k — 32×32 sub-kernel with double ACC (K=32+32).
+ *
+ * Issues ZERO + ACC(k0) + ACC(k1) per col-tile to compute the full
+ * K=64 reduction in one pass.  Halves the number of sub-kernels
+ * (4 instead of 8) and eliminates cross-k accumulation.
+ *
+ * RVV interleaved work uses K=64 data (A_rvv is 24×64, B_rvv is 65×32).
+ * ==================================================================== */
+void gemm_ope_rvv_32x32_2k(
+    const int8_t *A_ope_k0,   /* OPE-packed for k=0:31, 256 bytes */
+    const int8_t *B_ope_k0,   /* OPE-packed for k=0:31, 1024 bytes */
+    const int8_t *A_ope_k1,   /* OPE-packed for k=32:63, 256 bytes */
+    const int8_t *B_ope_k1,   /* OPE-packed for k=32:63, 1024 bytes */
+    int32_t *C,               /* output base pointer (32×32, stride=32) */
+    const int8_t *A_rvv,      /* contiguous 24×64, stride=64 */
+    const int8_t *B_rvv,      /* (65)×32 with bias row */
+    int num_rvv_rows)         /* 24 */
 {
-    volatile int32_t sink32;
-    /* OPE EXT output (8 rows × 32 cols × 4B = 1024B = 16 lines).
-     * EXT writes MUST hit L1 — misses cause nacks that hang the FSM.
-     * ACC read misses are slow but safe (no hang), so skip A_ope/B_ope. */
-    for (int r = 0; r < 8; r++)
-        for (int c = 0; c < 32; c += 16)
-            sink32 = C[r * ldc + c];
-    asm volatile("fence r, rw" ::: "memory");
+    const int N = 32;
+    const int ldc = 32;
+    const int K_rvv = 64;
+    int rvv_row_cursor = 0;
+
+    for (int j = 0; j < N / 8; j++) {
+        /* ── ZERO + double ACC (k0 then k1) ── */
+        OP_ZERO();
+        OP_ACC_L((int8_t *)A_ope_k0, (int8_t *)(B_ope_k0 + j * 32 * 8), 32);
+        OP_ACC_L((int8_t *)A_ope_k1, (int8_t *)(B_ope_k1 + j * 32 * 8), 32);
+
+        /* ── RVV batch — more ACC latency to hide with double ACC ── */
+        int rvv_count = MIN(7, num_rvv_rows - rvv_row_cursor);
+        if (rvv_count > 0) {
+            rvv_compute_rows(
+                A_rvv + (size_t)rvv_row_cursor * K_rvv,
+                rvv_count, N, K_rvv,
+                B_rvv,
+                C + (8 + rvv_row_cursor) * ldc, ldc);
+            rvv_row_cursor += rvv_count;
+        }
+
+        /* ── EXT with stride=32 ── */
+        {
+            register uint64_t rs1 asm("x11") = (uint64_t)ldc;
+            register uint64_t rs2 asm("x12") = (uint64_t)(C + j * 8);
+            if (OPE_EXT_FLIP) { _OP_EXT_S_T(rs1, rs2);  }
+            else              { _OP_EXT_S_NT(rs1, rs2); }
+        }
+    }
 }
 
 /* ====================================================================
@@ -270,9 +312,7 @@ void gemm_ope_rvv_32x32(
             else              { _OP_EXT_S_NT(rs1, rs2); }
         }
     }
-
-    /* Drain all in-flight OPE EXT writes */
-    asm volatile("fence w, rw" ::: "memory");
+    /* No drain fence — prime_32x32 issues it before next sub_out. */
 }
 
 /* ====================================================================

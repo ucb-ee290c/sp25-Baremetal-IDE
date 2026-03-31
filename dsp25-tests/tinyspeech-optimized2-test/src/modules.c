@@ -504,6 +504,30 @@ Tensor adaptive_avg_pool2d(Tensor *input) {
     u_int8_t shape[4] = {(u_int8_t)batch_size, (u_int8_t)channels, 1, 1};
     Tensor output = f_create_tensor(shape, 4);
 
+#if defined(__riscv_vector)
+    if (input->f_data != NULL) {
+        const int32_t hw = height * width;
+        for (int32_t n = 0; n < batch_size; n++) {
+            const float *in_n = input->f_data + n * (channels * hw);
+            for (int32_t c = 0; c < channels; c++) {
+                const float *src = in_n + c * hw;
+                int32_t i = 0;
+                vfloat32m1_t acc = __riscv_vfmv_v_f_f32m1(0.0f, 1);
+                while (i < hw) {
+                    size_t vl = __riscv_vsetvl_e32m8((size_t)(hw - i));
+                    vfloat32m8_t vx = __riscv_vle32_v_f32m8(src + i, vl);
+                    acc = __riscv_vfredusum_vs_f32m8_f32m1(vx, acc, vl);
+                    i += (int32_t)vl;
+                }
+                float sum = __riscv_vfmv_f_s_f32m1_f32(acc);
+                int32_t out_index = n * channels + c;
+                output.f_data[out_index] = sum / (float)hw;
+            }
+        }
+        return output;
+    }
+#endif
+
     for (int32_t n = 0; n < batch_size; n++) {
         for (int32_t c = 0; c < channels; c++) {
             float sum = 0.0f;
@@ -617,6 +641,56 @@ Tensor maxpool2d(Tensor *input, int kernel_size, int stride) {
     };
 
     Tensor output = (input->data != NULL) ? create_tensor(shape, 4) : f_create_tensor(shape, 4);
+
+#if defined(__riscv_vector)
+    if ((input->f_data != NULL) && (kernel_size == 2) && (stride == 2)) {
+        const ptrdiff_t in_stride_bytes = (ptrdiff_t)(2 * (int32_t)sizeof(float));
+        const int32_t in_h = input->shape[2];
+        const int32_t in_w = input->shape[3];
+        const int32_t out_h = output.shape[2];
+        const int32_t out_w = output.shape[3];
+
+        for (int32_t b = 0; b < output.shape[0]; b++) {
+            for (int32_t c = 0; c < output.shape[1]; c++) {
+                const float *in_base =
+                    input->f_data +
+                    b * (input->shape[1] * in_h * in_w) +
+                    c * (in_h * in_w);
+                float *out_base =
+                    output.f_data +
+                    b * (output.shape[1] * out_h * out_w) +
+                    c * (out_h * out_w);
+
+                for (int32_t oh = 0; oh < out_h; oh++) {
+                    const float *r0 = in_base + (2 * oh) * in_w;
+                    const float *r1 = r0 + in_w;
+                    float *dst = out_base + oh * out_w;
+
+                    int32_t ow = 0;
+                    while (ow < out_w) {
+                        size_t vl = __riscv_vsetvl_e32m4((size_t)(out_w - ow));
+                        const float *p00 = r0 + (2 * ow);
+                        const float *p01 = p00 + 1;
+                        const float *p10 = r1 + (2 * ow);
+                        const float *p11 = p10 + 1;
+
+                        vfloat32m4_t v00 = __riscv_vlse32_v_f32m4(p00, in_stride_bytes, vl);
+                        vfloat32m4_t v01 = __riscv_vlse32_v_f32m4(p01, in_stride_bytes, vl);
+                        vfloat32m4_t v10 = __riscv_vlse32_v_f32m4(p10, in_stride_bytes, vl);
+                        vfloat32m4_t v11 = __riscv_vlse32_v_f32m4(p11, in_stride_bytes, vl);
+
+                        vfloat32m4_t vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
+                        vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
+                        vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
+                        __riscv_vse32_v_f32m4(dst + ow, vmax, vl);
+                        ow += (int32_t)vl;
+                    }
+                }
+            }
+        }
+        return output;
+    }
+#endif
 
     for (int32_t b = 0; b < output.shape[0]; b++) {
         for (int32_t c = 0; c < output.shape[1]; c++) {

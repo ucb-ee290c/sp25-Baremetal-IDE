@@ -1,127 +1,85 @@
 /**
  * \file    hal_dma.h
- * \brief   DSP DMA driver.
- * \version 0.1
- * 
- * \copyright Copyright (c) 2025
- * 
+ * \brief   DSP'25 DMA driver.
  */
 
- #ifndef __HAL_DMA_H__
- #define __HAL_DMA_H__
- 
- #ifdef __cplusplus
- extern "C" {
- #endif
- 
- // Baremetal IDE Definitions //
- #include "metal.h"
- #include <stdbool.h>
- #include <stdint.h>
- #include <riscv-pk/encoding.h>
+#ifndef __HAL_DMA_H__
+#define __HAL_DMA_H__
 
-  typedef struct {
-    // ==========================================
-    // Global DMA MMIO Registers
-    // Base Address: 0x08812000
-    // ==========================================
-    __IO uint8_t DMA_RESET;         // 0x00: DMA Reset Signal. RW
-    __I  uint8_t INFLIGHT_STATUS;   // 0x01: Number of current inflight transactions. R
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-    // ==========================================
-    // Per-Core Interrupt MMIO Registers
-    // Base Offset: 0x10 + (core_id * 0x10)
-    // ==========================================
-    // Max 9 cores by definition of MMIO (since range is 0x10 to 0x100, with 0x10 per-core stride).
-    __O  uint8_t  INTERRUPT_SERVICED;         // 0x00: An ACK, inform DMA interrupt received. W
-    __I  uint8_t  INTERRUPT_VALID;            // 0x01: Pending interrupt exists. R
-    __I  uint16_t INTERRUPT_TRANSACTION_ID;   // 0x02: Transaction ID causing interrupt. R
-    __I  uint8_t  INTERRUPT_IS_ERROR;         // 0x04: Interrupting transaction errored. R
-    __I  uint64_t INTERRUPT_ADDRESS;          // 0x08: Interrupting transaction errored while reading/writing to this address. R
+#include "metal.h"
+#include "hal_mmio.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <riscv-pk/encoding.h>
 
-    //8 + 8 + 16 + 8 + 64 = 104 bits per core. Max 9 - 1 cores. 104 * (9 - 1) / 8 = 104.
-    uint8_t CORE_RESERVED[104];
+/*
+ * DMA transaction descriptor written into a channel slot.
+ *
+ * Address/stride units are bytes.
+ * `len` is the number of packets, each packet size = 2^logw bytes.
+ */
+typedef struct {
+  uint8_t core;
+  uint16_t transaction_id;
+  uint8_t transaction_priority;
+  uint8_t peripheral_id;
+  uint64_t addr_r;
+  uint64_t addr_w;
+  uint16_t inc_r;
+  uint16_t inc_w;
+  uint16_t len;
+  uint8_t logw;
+  bool do_interrupt;
+  bool do_address_gate;
+} dma_transaction_t;
 
-    // ==========================================
-    // Per-Channel MMIO Registers
-    // Base Offset: 0x100 + (channel_id * 0x40)
-    // ==========================================
-    // Assumptions: 7 channel, max depth of 256 (min 8 bits).
-    __O  uint8_t  START;                    // 0x00: Start channel operation. W
-    __I  uint8_t  READY_STATUS;             // 0x02: Is channel ready. R
-    __I  uint8_t  CHANNEL_BUFFER_COUNT;     // 0x03: # elements pending in channel (log₂(depth)). R
-    __IO uint8_t  CORE_ID;                  // 0x04: mhartid of core loading this transaction. RW
-    __IO uint16_t TRANSACTION_ID;           // 0x08: Desired transaction ID. RW
-    __IO uint8_t  PERIPHERAL_ID;            // 0x0A: Peripheral ID to read/write. RW
-    __IO uint8_t  TRANSACTION_PRIORITY;     // 0x0C: Transaction priority. RW
-    __IO uint8_t  MODE;                     // 0x0E: Mode (bit 0 = addr gating, bit 1 = interrupts). RW
-    __IO uint64_t ADDR_READ;                // 0x10: Read address. RW
-    __IO uint64_t ADDR_WRITE;               // 0x18: Write address. RW
-    __IO uint16_t NUM_PACKETS;              // 0x20: Number of packets to transfer. RW
-    __IO uint8_t  LG_WIDTH;                 // 0x22: Log of # bytes per packet. RW
-    __IO uint16_t READ_STRIDE;              // 0x24: Stride between read packets. RW
-    __IO uint16_t WRITE_STRIDE;             // 0x26: Stride between write packets. RW
-    __IO uint8_t  BUSY;                     // 0x28: If high, another core is writing to this channel. RW
+typedef struct {
+  bool valid;
+  uint8_t core_id;
+  uint16_t transaction_id;
+  bool is_error;
+  uint64_t address;
+} dma_interrupt_t;
 
-    //264 bits per channel, max 7 channel. 264 * (7 - 1) / 8 = 198
-    uint8_t CHANNEL_RESERVED[198];
-  } DMA_Type;
+#define DMA_MODE_INTERRUPT_EN   (0x1U)
+#define DMA_MODE_ADDRESS_GATING (0x2U)
 
-  typedef struct {
-    uint8_t core;
-    uint16_t transaction_id;
-    uint8_t transaction_priority;
-    uint8_t peripheral_id;
-    uint64_t addr_r;
-    uint64_t addr_w;
-    uint16_t inc_r;
-    uint16_t inc_w;
-    uint16_t len;
-    uint8_t logw;
-    bool do_interrupt;
-    bool do_address_gate;
-  } dma_transaction_t;
+#define ALWAYS_PRINT    0
+#define PRINT_ON_ERROR  1
+#define NEVER_PRINT     2
 
-  //Default functions
-  void reg_write8(uintptr_t addr, uint8_t data);
-  uint8_t reg_read8(uintptr_t addr);
-  void reg_write16(uintptr_t addr, uint16_t data);
-  uint16_t reg_read16(uintptr_t addr);
-  void reg_write32(uintptr_t addr, uint32_t data);
-  uint32_t reg_read32(uintptr_t addr);
-  void reg_write64(unsigned long addr, uint64_t data);
-  uint64_t reg_read64(unsigned long addr);
+/* DMA setup and programming */
+void setup_interrupts(void);
+bool set_DMA_C(uint32_t channel, dma_transaction_t transaction, bool retry);
+bool set_DMA_P(uint32_t channel, dma_transaction_t transaction, bool retry);
+void start_DMA(uint32_t channel, uint16_t transaction_id, bool *finished);
 
-  //DMA specific functions
-  void setup_interrupts();
+/* DMA status/control */
+int dma_status(void);
+void dma_reset(void);
+void dma_wait_till_inactive(int cycle_no_inflight);
+void dma_wait_till_interrupt(bool *finished);
+void dma_wait_till_done(size_t mhartid, bool *finished);
 
-  bool set_DMA_C(uint32_t channel, dma_transaction_t transaction, bool retry);
-  bool set_DMA_P(uint32_t channel, dma_transaction_t transaction, bool retry);
-  
-  void start_DMA(uint32_t channel, uint16_t transaction_id, bool* finished);
-  
-  #define ALWAYS_PRINT 0
-  #define PRINT_ON_ERROR 1
-  #define NEVER_PRINT 2
-  
-  bool check_val8(int i, unsigned int ref, long unsigned int addr, int print);
-  bool check_val16(int i, unsigned int ref, long unsigned int addr, int print);
-  bool check_val32(int i, unsigned int ref, long unsigned int addr, int print);
-  bool check_val64(int i, long unsigned int ref, long unsigned int addr, int print);
-  
-  int dma_status();
-  void dma_reset();
-  
-  void dma_wait_till_inactive(int cycle_no_inflight);
-  void dma_wait_till_interrupt(bool* finished);
-  void dma_wait_till_done(size_t mhartid, bool* finished);
-  
-  size_t ticks();
-  
-  void end_dma();
+/* Optional polling helper for interrupt MMIO slots */
+bool dma_poll_interrupt(size_t mhartid, dma_interrupt_t *out);
 
-  #ifdef __cplusplus
-  }
-  #endif
+/* Test helpers */
+bool check_val8(int i, unsigned int ref, unsigned long addr, int print);
+bool check_val16(int i, unsigned int ref, unsigned long addr, int print);
+bool check_val32(int i, unsigned int ref, unsigned long addr, int print);
+bool check_val64(int i, unsigned long ref, unsigned long addr, int print);
 
-  #endif // __HAL_DMA_H__
+size_t ticks(void);
+void end_dma(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __HAL_DMA_H__ */

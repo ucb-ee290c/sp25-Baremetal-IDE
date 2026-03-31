@@ -17,6 +17,9 @@
 typedef struct {
     void (*fn)(void *);
     void *arg;
+    /* Runtime-managed metadata for ownership/steal policy. */
+    uint32_t owner;
+    uint32_t flags;
 } htask_t;
 
 typedef struct {
@@ -24,6 +27,8 @@ typedef struct {
     volatile uint32_t bottom;
     htask_t tasks[WSQ_SIZE];
 } wsdeque_t;
+
+#define HTHREAD_TASK_STEALABLE (1u << 0)
 
 void hthread_init();
 void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);

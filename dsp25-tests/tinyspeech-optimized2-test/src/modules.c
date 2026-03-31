@@ -296,6 +296,90 @@ static inline void conv_point_rvv_interior(const float *in_n,
     }
 }
 
+static inline void conv_point2_rvv_interior(const float *in_n,
+                                            const float *wpack,
+                                            const float *bias_data,
+                                            float *out_n,
+                                            int32_t out_channels,
+                                            int32_t in_channels,
+                                            int32_t in_height,
+                                            int32_t in_width,
+                                            int32_t out_hw,
+                                            int32_t oh,
+                                            int32_t ow,
+                                            int32_t padding,
+                                            int32_t m0,
+                                            int32_t m1,
+                                            float inv_scale) {
+    const int32_t in_hw = in_width * in_height;
+    const int32_t ih0 = oh - padding;
+    const int32_t iw0 = ow - padding;
+
+    int32_t oc0 = 0;
+    while (oc0 < out_channels) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
+        vfloat32m4_t vacc0 = __riscv_vle32_v_f32m4(bias_data + oc0, vl);
+        vfloat32m4_t vacc1 = __riscv_vle32_v_f32m4(bias_data + oc0, vl);
+
+        int32_t kbase = 0;
+        for (int32_t ic = 0; ic < in_channels; ic++, kbase += 9) {
+            const float *p = in_n + ic * in_hw + ih0 * in_width + iw0;
+            const float x00 = p[0];
+            const float x01 = p[1];
+            const float x02 = p[2];
+            const float x03 = p[3];
+            const float x10 = p[in_width + 0];
+            const float x11 = p[in_width + 1];
+            const float x12 = p[in_width + 2];
+            const float x13 = p[in_width + 3];
+            const float x20 = p[(2 * in_width) + 0];
+            const float x21 = p[(2 * in_width) + 1];
+            const float x22 = p[(2 * in_width) + 2];
+            const float x23 = p[(2 * in_width) + 3];
+
+            vfloat32m4_t vw;
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 0) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x00, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x01, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 1) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x01, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x02, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 2) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x02, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x03, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 3) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x10, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x11, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 4) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x11, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x12, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 5) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x12, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x13, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 6) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x20, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x21, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 7) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x21, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x22, vw, vl);
+            vw = __riscv_vle32_v_f32m4(wpack + (kbase + 8) * out_channels + oc0, vl);
+            vacc0 = __riscv_vfmacc_vf_f32m4(vacc0, x22, vw, vl);
+            vacc1 = __riscv_vfmacc_vf_f32m4(vacc1, x23, vw, vl);
+        }
+
+        if (inv_scale != 1.0f) {
+            vacc0 = __riscv_vfmul_vf_f32m4(vacc0, inv_scale, vl);
+            vacc1 = __riscv_vfmul_vf_f32m4(vacc1, inv_scale, vl);
+        }
+
+        float *dst0 = out_n + oc0 * out_hw + m0;
+        float *dst1 = out_n + oc0 * out_hw + m1;
+        __riscv_vsse32_v_f32m4(dst0, (ptrdiff_t)(out_hw * (int32_t)sizeof(float)), vacc0, vl);
+        __riscv_vsse32_v_f32m4(dst1, (ptrdiff_t)(out_hw * (int32_t)sizeof(float)), vacc1, vl);
+        oc0 += (int32_t)vl;
+    }
+}
+
 static int conv2d_rvv_implicit_gemm_impl(const Tensor *input,
                                          const Tensor *weights,
                                          const Tensor *bias,
@@ -329,14 +413,39 @@ static int conv2d_rvv_implicit_gemm_impl(const Tensor *input,
         float *out_n = output->f_data + n * (out_channels * out_hw);
 
         for (int32_t oh = 0; oh < out_height; oh++) {
-            for (int32_t ow = 0; ow < out_width; ow++) {
-                const int32_t m = oh * out_width + ow;
-                if ((oh >= oh_interior_begin) && (oh < oh_interior_end) &&
-                    (ow >= ow_interior_begin) && (ow < ow_interior_end)) {
+            if ((oh >= oh_interior_begin) && (oh < oh_interior_end)) {
+                int32_t ow = 0;
+                for (; (ow < out_width) && (ow < ow_interior_begin); ow++) {
+                    const int32_t m = oh * out_width + ow;
+                    conv_point_rvv_border(in_n, wpack, bias->f_data, out_n,
+                                          out_channels, in_channels, in_height, in_width,
+                                          out_hw, oh, ow, padding, m, inv_scale);
+                }
+
+                for (; (ow + 1) < ow_interior_end; ow += 2) {
+                    const int32_t m0 = oh * out_width + ow;
+                    const int32_t m1 = m0 + 1;
+                    conv_point2_rvv_interior(in_n, wpack, bias->f_data, out_n,
+                                             out_channels, in_channels, in_height, in_width,
+                                             out_hw, oh, ow, padding, m0, m1, inv_scale);
+                }
+
+                for (; ow < ow_interior_end; ow++) {
+                    const int32_t m = oh * out_width + ow;
                     conv_point_rvv_interior(in_n, wpack, bias->f_data, out_n,
                                             out_channels, in_channels, in_height, in_width,
                                             out_hw, oh, ow, padding, m, inv_scale);
-                } else {
+                }
+
+                for (; ow < out_width; ow++) {
+                    const int32_t m = oh * out_width + ow;
+                    conv_point_rvv_border(in_n, wpack, bias->f_data, out_n,
+                                          out_channels, in_channels, in_height, in_width,
+                                          out_hw, oh, ow, padding, m, inv_scale);
+                }
+            } else {
+                for (int32_t ow = 0; ow < out_width; ow++) {
+                    const int32_t m = oh * out_width + ow;
                     conv_point_rvv_border(in_n, wpack, bias->f_data, out_n,
                                           out_channels, in_channels, in_height, in_width,
                                           out_hw, oh, ow, padding, m, inv_scale);

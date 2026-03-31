@@ -4,6 +4,7 @@
 #include <float.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <math.h>
 
 #if defined(__riscv_vector)
 #include <riscv_vector.h>
@@ -1347,6 +1348,72 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
 
     u_int8_t shape[2] = {(u_int8_t)batch_size, (u_int8_t)output_features};
     Tensor output = f_create_tensor(shape, 2);
+
+    if ((input->f_data != NULL) && (weights->f_data != NULL) &&
+        (input_features == 96) && (output_features == 6)) {
+        for (int32_t n = 0; n < batch_size; n++) {
+            const float *x = input->f_data + n * 96;
+            const float *w0 = weights->f_data + 0 * 96;
+            const float *w1 = weights->f_data + 1 * 96;
+            const float *w2 = weights->f_data + 2 * 96;
+            const float *w3 = weights->f_data + 3 * 96;
+            const float *w4 = weights->f_data + 4 * 96;
+            const float *w5 = weights->f_data + 5 * 96;
+
+            float s0 = 0.0f;
+            float s1 = 0.0f;
+            float s2 = 0.0f;
+            float s3 = 0.0f;
+            float s4 = 0.0f;
+            float s5 = 0.0f;
+
+            for (int32_t i = 0; i < 96; i += 4) {
+                const float x0 = x[i + 0];
+                const float x1 = x[i + 1];
+                const float x2 = x[i + 2];
+                const float x3 = x[i + 3];
+
+                s0 = fmaf(x0, w0[i + 0], s0);
+                s0 = fmaf(x1, w0[i + 1], s0);
+                s0 = fmaf(x2, w0[i + 2], s0);
+                s0 = fmaf(x3, w0[i + 3], s0);
+
+                s1 = fmaf(x0, w1[i + 0], s1);
+                s1 = fmaf(x1, w1[i + 1], s1);
+                s1 = fmaf(x2, w1[i + 2], s1);
+                s1 = fmaf(x3, w1[i + 3], s1);
+
+                s2 = fmaf(x0, w2[i + 0], s2);
+                s2 = fmaf(x1, w2[i + 1], s2);
+                s2 = fmaf(x2, w2[i + 2], s2);
+                s2 = fmaf(x3, w2[i + 3], s2);
+
+                s3 = fmaf(x0, w3[i + 0], s3);
+                s3 = fmaf(x1, w3[i + 1], s3);
+                s3 = fmaf(x2, w3[i + 2], s3);
+                s3 = fmaf(x3, w3[i + 3], s3);
+
+                s4 = fmaf(x0, w4[i + 0], s4);
+                s4 = fmaf(x1, w4[i + 1], s4);
+                s4 = fmaf(x2, w4[i + 2], s4);
+                s4 = fmaf(x3, w4[i + 3], s4);
+
+                s5 = fmaf(x0, w5[i + 0], s5);
+                s5 = fmaf(x1, w5[i + 1], s5);
+                s5 = fmaf(x2, w5[i + 2], s5);
+                s5 = fmaf(x3, w5[i + 3], s5);
+            }
+
+            float *out = output.f_data + n * 6;
+            out[0] = s0;
+            out[1] = s1;
+            out[2] = s2;
+            out[3] = s3;
+            out[4] = s4;
+            out[5] = s5;
+        }
+        return output;
+    }
 
 #if defined(__riscv_vector)
     if ((input->f_data != NULL) && (weights->f_data != NULL)) {

@@ -30,6 +30,10 @@ extern "C" {
 #define TINYSPEECH_EXPECTED_NUM_CASES 100
 #endif
 
+#ifndef TINYSPEECH_OUTPUT_SOFTMAX
+#define TINYSPEECH_OUTPUT_SOFTMAX 0
+#endif
+
 void app_init(void);
 int app_main(void);
 

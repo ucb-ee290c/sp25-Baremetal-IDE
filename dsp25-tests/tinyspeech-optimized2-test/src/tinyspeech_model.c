@@ -17,11 +17,22 @@
 #define TINYSPEECH_FUSE_POOL 0
 #endif
 
+#ifndef TINYSPEECH_OUTPUT_SOFTMAX
+#define TINYSPEECH_OUTPUT_SOFTMAX 0
+#endif
+
+static inline uint64_t rdcycle64_model(void) {
+    uint64_t x;
+    __asm__ volatile("rdcycle %0" : "=r"(x));
+    return x;
+}
+
 static inline Tensor *W(u_int8_t idx) {
     return model_weights[idx].address;
 }
 
 static tinyspeech_debug_trace_t g_last_trace;
+static tinyspeech_cycle_profile_t g_last_cycle_profile;
 
 static inline float tensor_get_value(const Tensor *t, int32_t idx) {
     if (t->f_data != NULL) {
@@ -94,59 +105,99 @@ const tinyspeech_debug_trace_t *tinyspeech_debug_last_trace(void) {
     return &g_last_trace;
 }
 
+const tinyspeech_cycle_profile_t *tinyspeech_last_cycle_profile(void) {
+    return &g_last_cycle_profile;
+}
+
 Tensor tinyspeech_run_inference(Tensor *input) {
+    memset(&g_last_cycle_profile, 0, sizeof(g_last_cycle_profile));
+    uint64_t t_total0 = rdcycle64_model();
+
     tinyspeech_tensor_arena_reset();
     trace_reset();
     trace_add("input", input);
 
+    uint64_t t0 = rdcycle64_model();
     Tensor input_f = make_float_input_copy(input);
+    uint64_t t1 = rdcycle64_model();
+    g_last_cycle_profile.input_cast = t1 - t0;
 #if TINYSPEECH_FUSE_POOL
+    t0 = rdcycle64_model();
     Tensor x = conv2d_relu_maxpool2d(&input_f, W(0), W(1), W(2), 1, 1, 2, 2);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv1_pool1 = t1 - t0;
     trace_add("conv1", &x);
     trace_add("relu1", &x);
     trace_add("pool1", &x);
 
+    t0 = rdcycle64_model();
     x = conv2d_relu_maxpool2d(&x, W(3), W(4), W(5), 1, 1, 2, 2);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv2_pool2 = t1 - t0;
     trace_add("conv2", &x);
     trace_add("relu2", &x);
     trace_add("pool2", &x);
 #else
+    t0 = rdcycle64_model();
     Tensor x = conv2d(&input_f, W(0), W(1), W(2), 1, 1);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv1_pool1 = t1 - t0;
     trace_add("conv1", &x);
 #if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
 #endif
     trace_add("relu1", &x);
+    t0 = rdcycle64_model();
     Tensor p1 = maxpool2d(&x, 2, 2);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv1_pool1 += (t1 - t0);
     free_tensor(&x);
     x = p1;
     trace_add("pool1", &x);
 
+    t0 = rdcycle64_model();
     x = conv2d(&x, W(3), W(4), W(5), 1, 1);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv2_pool2 = t1 - t0;
     trace_add("conv2", &x);
 #if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
 #endif
     trace_add("relu2", &x);
+    t0 = rdcycle64_model();
     Tensor p2 = maxpool2d(&x, 2, 2);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv2_pool2 += (t1 - t0);
     free_tensor(&x);
     x = p2;
     trace_add("pool2", &x);
 #endif
 
+    t0 = rdcycle64_model();
     Tensor pooled = conv2d_relu_gap(&x, W(6), W(7), W(8), 1, 1);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.conv3_gap = t1 - t0;
     trace_add("conv3", &pooled);
     trace_add("relu3", &pooled);
     trace_add("gap", &pooled);
 
+    t0 = rdcycle64_model();
     Tensor probs = fc_layer(&pooled, W(9));
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.fc_logits = t1 - t0;
     trace_store_logits(&probs);
     trace_add("fc_logits", &probs);
     free_tensor(&pooled);
 
+#if TINYSPEECH_OUTPUT_SOFTMAX
+    t0 = rdcycle64_model();
     softmax(&probs);
+    t1 = rdcycle64_model();
+    g_last_cycle_profile.softmax = t1 - t0;
     trace_add("softmax", &probs);
+#endif
 
+    g_last_cycle_profile.total = rdcycle64_model() - t_total0;
     return probs;
 }
 

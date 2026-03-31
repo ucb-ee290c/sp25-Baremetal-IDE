@@ -9,6 +9,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef TINYSPEECH_CONV_FUSE_RELU
+#define TINYSPEECH_CONV_FUSE_RELU 0
+#endif
+
 static inline Tensor *W(u_int8_t idx) {
     return model_weights[idx].address;
 }
@@ -93,7 +97,9 @@ Tensor tinyspeech_run_inference(Tensor *input) {
     Tensor input_f = make_float_input_copy(input);
     Tensor x = conv2d(&input_f, W(0), W(1), W(2), 1, 1);
     trace_add("conv1", &x);
+#if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
+#endif
     trace_add("relu1", &x);
     Tensor p1 = maxpool2d(&x, 2, 2);
     free_tensor(&x);
@@ -102,7 +108,9 @@ Tensor tinyspeech_run_inference(Tensor *input) {
 
     x = conv2d(&x, W(3), W(4), W(5), 1, 1);
     trace_add("conv2", &x);
+#if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
+#endif
     trace_add("relu2", &x);
     Tensor p2 = maxpool2d(&x, 2, 2);
     free_tensor(&x);
@@ -111,7 +119,9 @@ Tensor tinyspeech_run_inference(Tensor *input) {
 
     x = conv2d(&x, W(6), W(7), W(8), 1, 1);
     trace_add("conv3", &x);
+#if !TINYSPEECH_CONV_FUSE_RELU
     relu(&x);
+#endif
     trace_add("relu3", &x);
 
     Tensor pooled = adaptive_avg_pool2d(&x);

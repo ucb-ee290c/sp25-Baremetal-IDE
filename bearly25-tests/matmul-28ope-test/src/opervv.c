@@ -318,17 +318,8 @@ void gemm_ope_16rows(
 {
     int rvv_row_cursor = 0;
 
-    /* ── Prime all OPE data once upfront ── */
-    ope_prime_output_region(C, 8, N, ldc);
-    {
-        volatile int8_t sink;
-        int total_b = (N / 8) * K * 8;
-        for (int off = 0; off < K * 8; off += 64)
-            sink = A_packed[off];
-        for (int off = 0; off < total_b; off += 64)
-            sink = B_packed[off];
-        asm volatile("fence r, rw" ::: "memory");
-    }
+    /* Priming is done by the caller before timing begins.
+     * All OPE + RVV data is already warm in L1. */
 
     for (int j = 0; j < N / 8; j++) {
         const int8_t *ap = A_packed;

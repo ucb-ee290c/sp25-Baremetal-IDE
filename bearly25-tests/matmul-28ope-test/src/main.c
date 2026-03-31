@@ -52,14 +52,9 @@ static int8_t  B[DIM * DIM];
 static int8_t  A_ope[(OPE_ROWS / 8) * DIM * 8] __attribute__((aligned(64)));
 static int8_t  B_ope[(DIM / 8) * DIM * 8]      __attribute__((aligned(64)));
 
-/* Packed RVV inputs:
- *   A_rvv: RVV_ROWS rows × DIM k-steps  =  24 × 32  = 768 bytes (row-major)
- *   B_rvv: (DIM+1) rows × DIM cols      =  33 × 32  = 1056 bytes (zero bias row) */
-static int8_t  A_rvv[DIM * RVV_ROWS]            __attribute__((aligned(64)));
+/* RVV reads A directly (K == DIM, so stride matches — no separate A_rvv needed).
+ * B_rvv: (DIM+1) rows × DIM cols = 33 × 32 = 1056 bytes (zero bias row) */
 static int8_t  B_rvv[(DIM + 1) * DIM]           __attribute__((aligned(64)));
-
-/* Pure-RVV baseline: all 32 rows packed for RVV */
-static int8_t  A_rvv_all[DIM * DIM]             __attribute__((aligned(64)));
 
 /* Outputs — OPE writes C_out via TileLink.
  * Page-align C_out so OPE output rows 0-7 land in cache sets 0-15
@@ -115,8 +110,7 @@ void app_main(void)
     printf("[pack] B_ope...\n");
     pack_B_ope(B, DIM, B_ope, DIM, DIM);
 
-    printf("[pack] A_rvv (rows %d-%d)...\n", RVV_START, DIM - 1);
-    pack_A_rvv(A, DIM, A_rvv, RVV_START, RVV_ROWS, DIM);
+    /* A_rvv eliminated: RVV reads A directly (K == DIM, stride matches) */
 
     printf("[pack] B_rvv (with bias row)...\n");
     pack_B_rvv_bias(B, DIM, B_rvv, DIM, DIM);
@@ -124,10 +118,36 @@ void app_main(void)
     /* ── OPE + interleaved RVV ── */
     memset(C_out, 0, sizeof(C_out));
 
+    /* Prime all data into L1 before timing begins.
+     * This way priming overhead doesn't contaminate cycle count. */
+    {
+        volatile int8_t sink;
+        volatile int32_t sink32;
+        /* OPE output region (8 rows × 32 cols × 4B = 1024B = 16 lines) */
+        for (int r = 0; r < OPE_ROWS; r++)
+            for (int c = 0; c < DIM; c += 16)
+                sink32 = C_out[r * DIM + c];
+        /* OPE ACC inputs */
+        for (int off = 0; off < (OPE_ROWS / 8) * DIM * 8; off += 64)
+            sink = A_ope[off];
+        for (int off = 0; off < (DIM / 8) * DIM * 8; off += 64)
+            sink = B_ope[off];
+        /* RVV inputs */
+        for (int off = 0; off < RVV_ROWS * DIM; off += 64)
+            sink = (A + RVV_START * DIM)[off];
+        for (int off = 0; off < (DIM + 1) * DIM; off += 64)
+            sink = B_rvv[off];
+        /* RVV output region */
+        for (int r = 0; r < RVV_ROWS; r += 4)
+            sink32 = C_out[(RVV_START + r) * DIM];
+        asm volatile("fence r, rw" ::: "memory");
+    }
+
     printf("[ope+rvv] gemm_ope_16rows (interleaved)...\n");
     uint64_t t0 = rdcycle64();
     gemm_ope_16rows(A_ope, B_ope, C_out, DIM, DIM, /*ldc=*/DIM,
-                    A_rvv, B_rvv, RVV_ROWS, C_out + RVV_START * DIM);
+                    A + RVV_START * DIM, B_rvv, RVV_ROWS,
+                    C_out + RVV_START * DIM);
     uint64_t t1 = rdcycle64();
     printf("[ope+rvv] done, cycles=%llu\n", (unsigned long long)(t1 - t0));
 
@@ -166,13 +186,24 @@ void app_main(void)
     // }
 
     /* ── Pure-RVV baseline (all 32 rows via Saturn) ── */
-    printf("\n[rvv-only] packing A for all %d rows...\n", DIM);
-    pack_A_rvv(A, DIM, A_rvv_all, /*row_start=*/0, DIM, DIM);
-
     memset(C_rvv_only, 0, sizeof(C_rvv_only));
+
+    /* Prime RVV-only data before timing (fair comparison) */
+    {
+        volatile int8_t sink;
+        volatile int32_t sink32;
+        for (int off = 0; off < DIM * DIM; off += 64)
+            sink = A[off];
+        for (int off = 0; off < (DIM + 1) * DIM; off += 64)
+            sink = B_rvv[off];
+        for (int r = 0; r < DIM; r += 4)
+            sink32 = C_rvv_only[r * DIM];
+        asm volatile("fence r, rw" ::: "memory");
+    }
+
     printf("[rvv-only] gemm_rvv_32rows...\n");
     uint64_t t2 = rdcycle64();
-    gemm_rvv_32rows(A_rvv_all, B_rvv, C_rvv_only, DIM, DIM, DIM);
+    gemm_rvv_32rows(A, B_rvv, C_rvv_only, DIM, DIM, DIM);
     uint64_t t3 = rdcycle64();
     uint64_t rvv_cycles = t3 - t2;
     uint64_t ope_rvv_cycles = t1 - t0;

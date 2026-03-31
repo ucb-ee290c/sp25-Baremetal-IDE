@@ -61,8 +61,10 @@ static int8_t  B_rvv[(DIM + 1) * DIM]           __attribute__((aligned(64)));
 /* Pure-RVV baseline: all 32 rows packed for RVV */
 static int8_t  A_rvv_all[DIM * DIM]             __attribute__((aligned(64)));
 
-/* Outputs — OPE writes C_out via TileLink, keep 8-byte aligned */
-static int32_t C_out[DIM * DIM]      __attribute__((aligned(64)));
+/* Outputs — OPE writes C_out via TileLink.
+ * Page-align C_out so OPE output rows 0-7 land in cache sets 0-15
+ * deterministically, avoiding set conflicts with RVV buffers. */
+static int32_t C_out[DIM * DIM]      __attribute__((aligned(4096)));
 static int32_t C_rvv_only[DIM * DIM] __attribute__((aligned(64)));
 static int32_t C_ref[DIM * DIM];
 

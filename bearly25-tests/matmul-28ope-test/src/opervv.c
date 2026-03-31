@@ -356,7 +356,12 @@ void gemm_ope_16rows(
             rvv_row_cursor += rvv_count;
         }
 
-        /* ── 3. Fire EXT ── */
+        /* ── 3. Fire EXT — no per-tile re-priming needed ──
+         * C_out is page-aligned (4096), so OPE output rows 0-7
+         * occupy cache sets 0-15.  RVV output (rows 8-31) is in
+         * sets 16-63.  A_rvv/B_rvv are separate buffers unlikely
+         * to conflict with sets 0-15.  The upfront prime suffices.
+         */
         {
             register uint64_t rs1 asm("x11") = (uint64_t)ldc;
             register uint64_t rs2 asm("x12") = (uint64_t)(C + j * 8);

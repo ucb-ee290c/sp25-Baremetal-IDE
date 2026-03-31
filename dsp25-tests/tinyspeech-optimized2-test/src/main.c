@@ -16,6 +16,10 @@
 #error "tinyspeech_reference.h mismatch: unexpected case count/stage count"
 #endif
 
+#ifndef TINYSPEECH_REF_CHECK_STAGE_SUM
+#define TINYSPEECH_REF_CHECK_STAGE_SUM 1
+#endif
+
 static const char *k_labels[TINYSPEECH_NUM_CLASSES] = {
     "yes", "no", "on", "off", "stop", "go"
 };
@@ -143,6 +147,7 @@ static int compare_with_reference(uint32_t tc,
 
     int stage_ok = 1;
     float max_stage_diff = 0.0f;
+#if TINYSPEECH_REF_CHECK_STAGE_SUM
     if (trace->num_stages == TINYSPEECH_REF_NUM_STAGES) {
         for (int32_t i = 0; i < TINYSPEECH_REF_NUM_STAGES; i++) {
             float d = fabsf(trace->stages[i].sum - r->ref_stage_sums[i]);
@@ -156,6 +161,7 @@ static int compare_with_reference(uint32_t tc,
     } else {
         stage_ok = 0;
     }
+#endif
     if (!stage_ok) {
         summary->stage_fail++;
     }
@@ -217,6 +223,9 @@ int app_main(void) {
            TINYSPEECH_TEST_BANDPASS_LOW_HZ,
            TINYSPEECH_TEST_BANDPASS_HIGH_HZ);
     printf("  bn scale offset: 2 (fixed to activation_scale)\n");
+#if !TINYSPEECH_REF_CHECK_STAGE_SUM
+    printf("  note     : stage-sum reference check disabled (fused conv trace semantics)\n");
+#endif
 
     uint32_t pass = 0;
     uint32_t fail = 0;

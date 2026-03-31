@@ -15,6 +15,7 @@ target_compile_options(tinyspeech-optimized2-test PRIVATE -O3)
 target_compile_definitions(tinyspeech-optimized2-test PRIVATE
   TINYSPEECH_OPT_VARIANT_GEMM_RVV=1
   TINYSPEECH_CONV_FUSE_RELU=1
+  TINYSPEECH_REF_CHECK_STAGE_SUM=0
 )
 
 target_link_libraries(tinyspeech-optimized2-test PRIVATE

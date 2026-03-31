@@ -250,9 +250,11 @@ void pack_B_rvv_bias(const int8_t *B, int ldb, int8_t *B_packed, int K, int N)
  *
  * Fills the OPE ACC latency window with useful vector work.
  * Processes num_rows rows in batches of 7 (7xm4), then 1 (1xm4) for remainder.
+ * Uses 1xm4 for the tail to minimise cache pressure — 7xm4 with small mr
+ * can evict OPE output lines and cause L1 nacks / hangs.
  *
  * a:         A_rvv + rvv_row_cursor*K  (row-major, K bytes stride between rows)
- * num_rows:  number of rows to compute
+ * num_rows:  number of rows to compute (1..24)
  * B_rvv:     (K+1)×N, row 0 = zero bias, rows 1..K = B[0..K-1]
  * C_row:     C_rvv + rvv_row_cursor*ldc  (pointer to first output row)
  *
@@ -284,37 +286,25 @@ static void rvv_compute_rows(
 }
 
 /* ====================================================================
- * gemm_ope_16rows — OPE kernel for rows 0-7, interleaved with RVV rows 8-31
+ * gemm_ope_16rows — OPE 8 rows + RVV 24 rows, interleaved
  *
  * OPE: 1 row-tile × (N/8) col-tiles of 8×8.
- *   A_packed: [1][K][8]      (pack_A_ope, row_start=0, num_rows=8)
- *   B_packed: [(N/8)][K][8]  (pack_B_ope)
- *   EXTRACT uses stride=ldc (≤32) directly into C — no tmp buffer or scatter.
+ * RVV: up to 7 rows per col-tile → [7, 7, 7, 3] for 24 rows.
  *
- * RVV interleaving: distributes num_rvv_rows rows in batches of up to 7 across
- *   the (N/8) OPE col-tiles, using gemm_i8_i32_7xm4 / gemm_i8_i32_1xm4 from
- *   bearly25-bmarks/rvv-matmul. For N=32 and num_rvv_rows=24 this gives
- *   [7, 7, 7, 3] rows per tile.
+ * Per col-tile:
+ *   1. ZERO → ACC  (fire into OPE, CPU moves on immediately)
+ *   2. RVV batch   (Saturn computes while OPE processes ACC)
+ *   3. EXT         (fire-and-forget, OPE serialises after ACC)
  *
- *   A_rvv:    row-major (r*K + k), K bytes stride  — different region from A_ope/B_ope
- *   B_rvv:    (K+1)×N, row 0 = zero bias           — compatible with 7xm4 kernel
- *   C_rvv:    C + RVV_START*ldc
- *
- * Interleaving strategy:
- *   Each col-tile follows the pattern:
- *     prime ACC inputs → ZERO → ACC(s) → RVV batch (hides ACC latency) →
- *     re-prime EXT output lines → fire EXT (no per-tile fence)
- *   A single fence at the end drains all in-flight EXT writes.  This lets
- *   the CPU issue ZERO+ACC for tile j+1 into the OPE command queue
- *   immediately after firing EXT for tile j, so the OPE is never idle
- *   between col-tiles.
+ * OPE command queue is shallow, so interleaving is essential — the CPU
+ * does productive RVV work while the OPE processes each ACC, rather
+ * than stalling on queue-full.
  *
  * L1 nack avoidance:
- *   ope_prime_output_region touches every cache line of the OPE output
- *   region at the start, before any EXT.  ope_prime_acc_inputs touches
- *   every cache line of U and V before each ACC.  ope_prime_tile_lines
- *   re-primes the 8 per-row lines immediately before each EXT fires.
- *   Together these guarantee every OPE TileLink request hits in L1.
+ *   All ACC inputs + EXT outputs primed once upfront (no per-tile
+ *   priming).  OPE consumes ACC data within ~32 cycles per tile.
+ *   OPE output (rows 0-7) and RVV output (rows 8-31) map to
+ *   consecutive cache sets — no set conflicts.
  * ==================================================================== */
 void gemm_ope_16rows(
     const int8_t *A_packed,
@@ -328,28 +318,23 @@ void gemm_ope_16rows(
 {
     int rvv_row_cursor = 0;
 
-    /*
-     * Pre-prime every cache line in the OPE output region (all 8 rows × N cols).
-     * With ldc=32 each row is 128 bytes = 2 cache lines; ope_prime_output_region
-     * strides by 16 int32s (64 bytes) so both lines per row are touched.
-     * This ensures all subsequent EXTRACT writes are guaranteed L1 hits regardless
-     * of which cache lines the RVV kernel may evict between here and the EXT.
-     */
+    /* ── Prime all OPE data once upfront ── */
     ope_prime_output_region(C, 8, N, ldc);
+    {
+        volatile int8_t sink;
+        int total_b = (N / 8) * K * 8;
+        for (int off = 0; off < K * 8; off += 64)
+            sink = A_packed[off];
+        for (int off = 0; off < total_b; off += 64)
+            sink = B_packed[off];
+        asm volatile("fence r, rw" ::: "memory");
+    }
 
-    /* OPE: 1 row-tile (i=0), N/8 col-tiles */
     for (int j = 0; j < N / 8; j++) {
-        const int8_t *ap = A_packed;               /* row-tile 0, fixed across j */
+        const int8_t *ap = A_packed;
         const int8_t *bp = B_packed + j * K * 8;
 
-        /*
-         * Prime ACC input vectors before issuing ZERO/ACC to prevent L1 nacks
-         * on the OPE's TileLink reads of U (ap) and V (bp).
-         * bytes = K*8; for K=32 this primes 256 bytes at 64-byte intervals
-         * covering all cache lines the upcoming OP_ACC_L will access.
-         */
-        ope_prime_acc_inputs(ap, bp, K);
-
+        /* ── 1. Fire ZERO + ACC ── */
         OP_ZERO();
         int k_rem = K;
         while (k_rem > 0) {
@@ -360,13 +345,7 @@ void gemm_ope_16rows(
             k_rem -= L;
         }
 
-        /*
-         * Interleave up to 7 RVV rows during the OPE ACC latency window.
-         * A_rvv/B_rvv are in different memory regions from A_packed/B_packed
-         * so these vector loads cannot evict the OPE's ACC input cache lines.
-         * OPE rows 0-7 and RVV rows 8-31 occupy disjoint regions of C,
-         * so RVV stores cannot conflict with OPE's pending EXT writes.
-         */
+        /* ── 2. RVV batch — hides ACC latency ── */
         int rvv_count = MIN(7, num_rvv_rows - rvv_row_cursor);
         if (rvv_count > 0) {
             rvv_compute_rows(
@@ -377,23 +356,7 @@ void gemm_ope_16rows(
             rvv_row_cursor += rvv_count;
         }
 
-        /*
-         * Re-prime this tile's 8 output cache lines immediately before EXTRACT.
-         * RVV stores to rows 8-31 are to different cache sets but re-priming
-         * here is cheap insurance against any L1 eviction since the upfront prime.
-         * stride=ldc=32 (≤ 32 limit): each of the 8 rows is 128 bytes apart so
-         * every load touches a distinct 64-byte cache line.
-         */
-        ope_prime_tile_lines(C + j * 8, ldc);
-
-        /*
-         * Fire EXTRACT directly into C with stride=ldc (≤ 32), writing
-         *   C[r*ldc + j*8 .. j*8+7]  for r = 0..7
-         * No per-tile fence: EXT is a fire-and-forget RoCC instruction (xd=0).
-         * The OPE command queue ensures EXT executes after all preceding ACCs,
-         * and ZERO/ACC for tile j+1 (issued next iteration) execute after EXT.
-         * A single fence at the end of the loop drains all in-flight EXT writes.
-         */
+        /* ── 3. Fire EXT ── */
         {
             register uint64_t rs1 asm("x11") = (uint64_t)ldc;
             register uint64_t rs2 asm("x12") = (uint64_t)(C + j * 8);
@@ -402,7 +365,38 @@ void gemm_ope_16rows(
         }
     }
 
-    /* Drain all in-flight OPE EXT writes and RVV stores before returning. */
+    /* Drain all in-flight OPE EXT writes and RVV stores. */
     asm volatile("fence w, rw" ::: "memory");
+}
+
+/* ====================================================================
+ * gemm_rvv_32rows — pure RVV baseline for all 32 rows (no OPE).
+ *
+ * Uses the same gemm_i8_i32_7xm4 / 1xm4 kernels.
+ * 32 rows = 4 batches of 7 + 4 singles.
+ *
+ * A_rvv: row-major [32 × K], K bytes stride
+ * B_rvv: (K+1) × N, row 0 = zero bias (same format as OPE+RVV path)
+ * C:     output [32 × ldc] int32
+ * ==================================================================== */
+void gemm_rvv_32rows(const int8_t *A_rvv, const int8_t *B_rvv,
+                     int32_t *C, int N, int K, int ldc)
+{
+    size_t cm_stride = (size_t)ldc * sizeof(int32_t);
+    int r = 0;
+    while (r + 7 <= 32) {
+        gemm_i8_i32_7xm4(7, N, K,
+                          A_rvv + (size_t)r * K, K,
+                          B_rvv,
+                          C + r * ldc, cm_stride, 0);
+        r += 7;
+    }
+    while (r < 32) {
+        gemm_i8_i32_1xm4(1, N, K,
+                          A_rvv + (size_t)r * K, K,
+                          B_rvv,
+                          C + r * ldc, cm_stride, 0);
+        r++;
+    }
 }
 

@@ -1,10 +1,14 @@
 /*
  * matmul-28ope-test/src/main.c
  *
- * Simple OPE matmul test using hal_ope API directly
- * (mimics ope-bmarks to verify OPE works in this test context).
+ * 32×32 int8 matmul: rows 0-7 via OPE, rows 8-31 via RVV.
+ * RVV rows are interleaved inside gemm_ope_16rows during OPE ACC latency,
+ * using the 7xm4 kernel from bearly25-bmarks/rvv-matmul (7 rows at a time).
  *
- * Once this works, we can layer in RVV + OPE fusion.
+ * Call order:
+ *   1. pack inputs for OPE and RVV
+ *   2. gemm_ope_16rows  → C[0:8, :] (OPE) + C[8:32, :] (RVV, interleaved)
+ *   3. scalar reference + correctness check
  */
 
 #include <stdint.h>
@@ -12,9 +16,51 @@
 #include <string.h>
 
 #include "chip_config.h"
-#include "hal_ope.h"
 
-#define DIM 72   /* 72 = 9 * 8, multiple of 8 */
+#define DIM        32   /* must be multiple of 8 */
+#define OPE_ROWS    8   /* rows handled by OPE (one 8-row tile) */
+#define RVV_ROWS   24   /* rows handled by RVV (= DIM - OPE_ROWS) */
+#define RVV_START  OPE_ROWS
+
+/* ── forward declarations (opervv.c) ── */
+void pack_A_ope(const int8_t *A, int lda, int8_t *A_packed,
+                int row_start, int num_rows, int K);
+void pack_B_ope(const int8_t *B, int ldb, int8_t *B_packed, int K, int N);
+void pack_A_rvv(const int8_t *A, int lda, int8_t *A_packed,
+                int row_start, int num_rows, int K);
+void pack_B_rvv_bias(const int8_t *B, int ldb, int8_t *B_packed, int K, int N);
+void gemm_ope_16rows(const int8_t *A_packed, const int8_t *B_packed,
+                     int32_t *C, int N, int K, int ldc,
+                     const int8_t *A_rvv, const int8_t *B_rvv,
+                     int num_rvv_rows, int32_t *C_rvv);
+
+/* ── static buffers (BSS) ── */
+/*
+ * OPE RoCC memory requests require 8-byte alignment.
+ * All packed buffers and the OPE output must be __attribute__((aligned(64))).
+ */
+
+/* Input matrices (not passed to OPE directly, no alignment requirement) */
+static int8_t  A[DIM * DIM];
+static int8_t  B[DIM * DIM];
+
+/* Packed OPE inputs — must be 8-byte aligned:
+ *   A_ope: OPE_ROWS/8 chunks × DIM × 8  =  1 × 32 × 8  = 256 bytes
+ *   B_ope: DIM/8 chunks × DIM × 8       =  4 × 32 × 8  = 1024 bytes */
+static int8_t  A_ope[(OPE_ROWS / 8) * DIM * 8] __attribute__((aligned(64)));
+static int8_t  B_ope[(DIM / 8) * DIM * 8]      __attribute__((aligned(64)));
+
+/* Packed RVV inputs:
+ *   A_rvv: RVV_ROWS rows × DIM k-steps  =  24 × 32  = 768 bytes (row-major)
+ *   B_rvv: (DIM+1) rows × DIM cols      =  33 × 32  = 1056 bytes (zero bias row) */
+static int8_t  A_rvv[DIM * RVV_ROWS]            __attribute__((aligned(64)));
+static int8_t  B_rvv[(DIM + 1) * DIM]           __attribute__((aligned(64)));
+
+/* Outputs — OPE writes C_out via TileLink, keep 8-byte aligned */
+static int32_t C_out[DIM * DIM] __attribute__((aligned(64)));
+static int32_t C_ref[DIM * DIM];
+
+/* ── helpers ── */
 
 static inline uint64_t rdcycle64(void) {
     uint64_t x;
@@ -22,105 +68,98 @@ static inline uint64_t rdcycle64(void) {
     return x;
 }
 
-/* Scalar reference: C = A * B (A is MxK row-major, B is KxN row-major) */
-static void ref_matmul(const int8_t *A, int Aldc,
-                       const int8_t *B, int Bldc,
+/* Scalar reference: C = A * B, A[M×K] B[K×N] row-major */
+static void ref_matmul(const int8_t *A, int lda,
+                       const int8_t *B, int ldb,
                        int32_t *C, int M, int N, int K)
 {
     for (int i = 0; i < M; i++)
         for (int j = 0; j < N; j++) {
             int32_t acc = 0;
             for (int k = 0; k < K; k++)
-                acc += (int32_t)A[i * Aldc + k] * (int32_t)B[k * Bldc + j];
+                acc += (int32_t)A[i * lda + k] * (int32_t)B[k * ldb + j];
             C[i * N + j] = acc;
         }
 }
 
-void app_init(void) {}
+/* ── application entry ── */
 
-void app_main(void) {
-    printf("=== OPE-only test  %dx%d matmul (hal_ope API) ===\n", DIM, DIM);
+void app_init(void) {
+    // init_test(500000000ULL);
+}
 
-    /* Allocate matrices via hal_ope */
-    ope_mat8_t  *A = ope_mat8_init(DIM, DIM, OPE_MAT_ZERO);
-    ope_mat8_t  *B = ope_mat8_init(DIM, DIM, OPE_MAT_ZERO);
-    ope_mat32_t *C = ope_mat32_init(DIM, DIM, OPE_MAT_ZERO);
+void app_main(void)
+{
+    printf("=== OPE(%d rows) + RVV(%d rows) interleaved matmul %dx%d ===\n",
+           OPE_ROWS, RVV_ROWS, DIM, DIM);
 
-    if (!A || !B || !C) {
-        printf("ERROR: allocation failed\n");
-        return;
-    }
-
-    printf("[dbg] rowsU=%d colsU=%d\n", A->rowsU, A->colsU);
-
-    /* Deterministic fill */
-    printf("[dbg] filling inputs...\n");
+    /* ── Fill A and B with a deterministic pattern ── */
     for (int i = 0; i < DIM; i++)
         for (int j = 0; j < DIM; j++) {
-            A->data[i * A->colsU + j] = (int8_t)((i * 3 + j * 7 + 1) % 17 - 8);
-            B->data[i * B->colsU + j] = (int8_t)((i * 5 + j * 2 + 3) % 13 - 6);
+            A[i * DIM + j] = (int8_t)((i * 3 + j * 7 + 1) % 17 - 8);
+            B[i * DIM + j] = (int8_t)((i * 5 + j * 2 + 3) % 13 - 6);
         }
 
-    /* Pre-allocate workspace (like ope-bmarks does) */
-    printf("[dbg] init workspace...\n");
-    ope_init_workspace(DIM, DIM, DIM);
+    /* ── Pack inputs ── */
+    printf("[pack] A_ope (rows 0-%d)...\n", OPE_ROWS - 1);
+    pack_A_ope(A, DIM, A_ope, /*row_start=*/0, OPE_ROWS, DIM);
 
-    /* Warm-up run */
-    printf("[dbg] warm-up run...\n");
-    memset(C->data, 0, (size_t)C->rowsU * C->colsU * sizeof(int32_t));
-    long cyc_warmup = ope_matmul_arb(A, B, C);
-    printf("[dbg] warm-up done, cycles=%ld\n", cyc_warmup);
+    printf("[pack] B_ope...\n");
+    pack_B_ope(B, DIM, B_ope, DIM, DIM);
 
-    /* Timed run */
-    printf("[dbg] timed run...\n");
-    memset(C->data, 0, (size_t)C->rowsU * C->colsU * sizeof(int32_t));
+    printf("[pack] A_rvv (rows %d-%d)...\n", RVV_START, DIM - 1);
+    pack_A_rvv(A, DIM, A_rvv, RVV_START, RVV_ROWS, DIM);
+
+    printf("[pack] B_rvv (with bias row)...\n");
+    pack_B_rvv_bias(B, DIM, B_rvv, DIM, DIM);
+
+    /* ── OPE + interleaved RVV ── */
+    memset(C_out, 0, sizeof(C_out));
+
+    printf("[ope+rvv] gemm_ope_16rows (interleaved)...\n");
     uint64_t t0 = rdcycle64();
-    long cyc_ope = ope_matmul_arb(A, B, C);
+    gemm_ope_16rows(A_ope, B_ope, C_out, DIM, DIM, /*ldc=*/DIM,
+                    A_rvv, B_rvv, RVV_ROWS, C_out + RVV_START * DIM);
     uint64_t t1 = rdcycle64();
-    printf("[dbg] timed run done\n");
+    printf("[ope+rvv] done, cycles=%llu\n", (unsigned long long)(t1 - t0));
 
-    printf("  OPE cycles: %ld\n", cyc_ope);
-    printf("  Total cycles: %lu\n", (unsigned long)(t1 - t0));
+    /* ── Scalar reference ── */
+    printf("[ref] computing reference...\n");
+    ref_matmul(A, DIM, B, DIM, C_ref, DIM, DIM, DIM);
 
-    /* Quick correctness check */
-    printf("[dbg] reference matmul...\n");
-    static int32_t C_ref[DIM * DIM];
-    ref_matmul(A->data, A->colsU, B->data, B->colsU, C_ref, DIM, DIM, DIM);
-
-    /* OPE with EXT_FLIP=1 outputs tiles transposed; unflip for comparison */
+    /* ── Correctness check ── */
     int errors = 0;
-    for (int tr = 0; tr < C->rowsU; tr += 8) {
-        for (int tc = 0; tc < C->colsU; tc += 8) {
-            for (int r = 0; r < 8 && (tr + r) < DIM; r++) {
-                for (int c = 0; c < 8 && (tc + c) < DIM; c++) {
-                    /* With EXT_FLIP, tile is transposed: row r, col c stored at [r][c]
-                       but represents [c][r] of the logical tile */
-                    int32_t got = C->data[(tr + r) * C->colsU + (tc + c)];
-                    /* The transposed tile means got is actually result[tr+c][tc+r] */
-                    int32_t exp = C_ref[(tr + c) * DIM + (tc + r)];
-                    if (got != exp) {
-                        if (errors == 0)
-                            printf("  First mismatch tile(%d,%d) r=%d c=%d: got %d, exp %d\n",
-                                   tr, tc, r, c, got, exp);
-                        errors++;
-                    }
+    int first_err_row = -1, first_err_col = -1;
+    int32_t first_got = 0, first_exp = 0;
+
+    for (int i = 0; i < DIM && errors < 1000; i++) {
+        for (int j = 0; j < DIM; j++) {
+            int32_t got = C_out[i * DIM + j];
+            int32_t exp = C_ref[i * DIM + j];
+            if (got != exp) {
+                if (errors == 0) {
+                    first_err_row = i;
+                    first_err_col = j;
+                    first_got = got;
+                    first_exp = exp;
                 }
+                errors++;
             }
         }
     }
 
-    if (errors)
-        printf("  %d mismatches\n", errors);
-    else
-        printf("  Result: PASS\n");
-
-    ope_free_workspace();
-    ope_mat8_free(A);
-    ope_mat8_free(B);
-    ope_mat32_free(C);
+    if (errors) {
+        printf("  FAIL: %d mismatches\n", errors);
+        printf("  First mismatch at C[%d][%d]: got %d, exp %d  (region: %s)\n",
+               first_err_row, first_err_col, (int)first_got, (int)first_exp,
+               first_err_row < OPE_ROWS ? "OPE" : "RVV");
+    } else {
+        printf("  PASS: all %d×%d elements correct\n", DIM, DIM);
+    }
 }
 
-int main(void) {
+int main(void)
+{
     app_init();
     app_main();
     return 0;

@@ -1147,22 +1147,15 @@ static inline vfloat32m4_t conv_pool2x2_block_rvv_interior_24ic(const float *in_
         v11 = __riscv_vfmacc_vf_f32m4(v11, r33, vw, vl);
     }
 
-    if (inv_scale != 1.0f) {
-        v00 = __riscv_vfmul_vf_f32m4(v00, inv_scale, vl);
-        v01 = __riscv_vfmul_vf_f32m4(v01, inv_scale, vl);
-        v10 = __riscv_vfmul_vf_f32m4(v10, inv_scale, vl);
-        v11 = __riscv_vfmul_vf_f32m4(v11, inv_scale, vl);
-    }
-#if TINYSPEECH_CONV_FUSE_RELU
-    v00 = __riscv_vfmax_vf_f32m4(v00, 0.0f, vl);
-    v01 = __riscv_vfmax_vf_f32m4(v01, 0.0f, vl);
-    v10 = __riscv_vfmax_vf_f32m4(v10, 0.0f, vl);
-    v11 = __riscv_vfmax_vf_f32m4(v11, 0.0f, vl);
-#endif
-
     vfloat32m4_t vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
     vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
     vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
+    if (inv_scale != 1.0f) {
+        vmax = __riscv_vfmul_vf_f32m4(vmax, inv_scale, vl);
+    }
+#if TINYSPEECH_CONV_FUSE_RELU
+    vmax = __riscv_vfmax_vf_f32m4(vmax, 0.0f, vl);
+#endif
     return vmax;
 }
 

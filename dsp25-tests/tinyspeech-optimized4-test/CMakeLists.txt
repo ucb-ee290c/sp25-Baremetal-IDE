@@ -79,6 +79,40 @@ if (NOT TINYSPEECH_HAS_RVV_I8_CONTIG_PACK_STORE_API4)
   unset(CMAKE_REQUIRED_FLAGS)
 endif()
 
+set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS}")
+check_c_source_compiles("
+  #include <stddef.h>
+  #include <riscv_vector.h>
+  int main(void) {
+    size_t vl = __riscv_vsetvl_e32m4(8);
+    vint32m4_t a = __riscv_vmv_v_x_i32m4(123, vl);
+    vint32m4_t q = __riscv_vsmul_vx_i32m4(a, 0x40000000, __RISCV_VXRM_RNU, vl);
+    return __riscv_vmv_x_s_i32m1_i32(__riscv_vget_v_i32m4_i32m1(q, 0));
+  }" TINYSPEECH_HAS_RVV_VSMUL_API4)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
+unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
+unset(CMAKE_REQUIRED_FLAGS)
+
+if (NOT TINYSPEECH_HAS_RVV_VSMUL_API4)
+  set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+  set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS}")
+  check_c_source_compiles("
+    #include <stddef.h>
+    #include <riscv_vector.h>
+    int main(void) {
+      size_t vl = __riscv_vsetvl_e32m4(8);
+      vint32m4_t a = __riscv_vmv_v_x_i32m4(123, vl);
+      vint32m4_t q = __riscv_vsmul_vx_i32m4(a, 0x40000000, vl);
+      return __riscv_vmv_x_s_i32m1_i32(__riscv_vget_v_i32m4_i32m1(q, 0));
+    }" TINYSPEECH_HAS_RVV_VSMUL_API3)
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
+  unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
+  unset(CMAKE_REQUIRED_FLAGS)
+endif()
+
 if (TINYSPEECH_HAS_ZVFH_INTRINSICS)
   set(TINYSPEECH_FP16_MIXED_VALUE 1)
   message(STATUS "tinyspeech-optimized4-test: fp16 RVV intrinsics available")
@@ -109,6 +143,20 @@ else()
   message(STATUS "tinyspeech-optimized4-test: RVV int8 contiguous pack/store intrinsics unavailable")
 endif()
 
+set(TINYSPEECH_INT8_USE_VSMUL_REQUANT_VALUE 0)
+set(TINYSPEECH_RVV_VSMUL_API_VALUE 0)
+if (TINYSPEECH_HAS_RVV_VSMUL_API4)
+  set(TINYSPEECH_INT8_USE_VSMUL_REQUANT_VALUE 1)
+  set(TINYSPEECH_RVV_VSMUL_API_VALUE 4)
+  message(STATUS "tinyspeech-optimized4-test: RVV i32 vsmul requant available (API=4)")
+elseif (TINYSPEECH_HAS_RVV_VSMUL_API3)
+  set(TINYSPEECH_INT8_USE_VSMUL_REQUANT_VALUE 1)
+  set(TINYSPEECH_RVV_VSMUL_API_VALUE 3)
+  message(STATUS "tinyspeech-optimized4-test: RVV i32 vsmul requant available (API=3)")
+else()
+  message(STATUS "tinyspeech-optimized4-test: RVV i32 vsmul requant unavailable (using widen-mul fallback)")
+endif()
+
 add_executable(tinyspeech-optimized4-test
   src/main.c
   src/tinyspeech_model.c
@@ -137,6 +185,8 @@ target_compile_definitions(tinyspeech-optimized4-test PRIVATE
   TINYSPEECH_INT8_USE_VSSE8_STORE=${TINYSPEECH_INT8_USE_VSSE8_STORE_VALUE}
   TINYSPEECH_INT8_USE_VSE8_PACK_STORE=${TINYSPEECH_INT8_USE_VSE8_PACK_STORE_VALUE}
   TINYSPEECH_RVV_NCLIP_API=${TINYSPEECH_RVV_NCLIP_API_VALUE}
+  TINYSPEECH_INT8_USE_VSMUL_REQUANT=${TINYSPEECH_INT8_USE_VSMUL_REQUANT_VALUE}
+  TINYSPEECH_RVV_VSMUL_API=${TINYSPEECH_RVV_VSMUL_API_VALUE}
   TINYSPEECH_INT8_RVV_UKERNELS=$<IF:$<BOOL:${TINYSPEECH_OPT4_INT8_RVV_UKERNELS}>,1,0>
 )
 

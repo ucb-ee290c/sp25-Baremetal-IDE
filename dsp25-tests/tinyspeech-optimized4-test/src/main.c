@@ -297,6 +297,11 @@ int app_main(void) {
 #else
     printf("  int8 pack: scalar lane-copy fallback\n");
 #endif
+#if TINYSPEECH_INT8_USE_VSMUL_REQUANT
+    printf("  int8 rqnt: RVV vsmul requant enabled (API=%d)\n", TINYSPEECH_RVV_VSMUL_API);
+#else
+    printf("  int8 rqnt: widen-mul requant fallback\n");
+#endif
 #elif defined(__riscv_vector)
     printf("  int8 ukrn: disabled (generic RVV kernels)\n");
 #else

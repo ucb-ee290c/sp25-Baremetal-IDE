@@ -432,6 +432,12 @@ static void conv3x3_acc_c(const int8_t *pad,
 #ifndef TINYSPEECH_RVV_NCLIP_API
 #define TINYSPEECH_RVV_NCLIP_API 0
 #endif
+#ifndef TINYSPEECH_INT8_USE_VSMUL_REQUANT
+#define TINYSPEECH_INT8_USE_VSMUL_REQUANT 0
+#endif
+#ifndef TINYSPEECH_RVV_VSMUL_API
+#define TINYSPEECH_RVV_VSMUL_API 0
+#endif
 #ifndef TINYSPEECH_INT8_RVV_UKERNELS
 #define TINYSPEECH_INT8_RVV_UKERNELS 1
 #endif
@@ -442,9 +448,19 @@ static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
     const vint32m4_t vzero = __riscv_vmv_v_x_i32m4(0, vl);
     const vint32m4_t v127 = __riscv_vmv_v_x_i32m4(127, vl);
     vacc = __riscv_vmax_vv_i32m4(vacc, vzero, vl);
+#if TINYSPEECH_INT8_USE_VSMUL_REQUANT
+#if (TINYSPEECH_RVV_VSMUL_API == 4)
+    vint32m4_t q = __riscv_vsmul_vx_i32m4(vacc, (int32_t)mul_q31, __RISCV_VXRM_RNU, vl);
+#elif (TINYSPEECH_RVV_VSMUL_API == 3)
+    vint32m4_t q = __riscv_vsmul_vx_i32m4(vacc, (int32_t)mul_q31, vl);
+#else
+#error "TINYSPEECH_INT8_USE_VSMUL_REQUANT requires valid TINYSPEECH_RVV_VSMUL_API"
+#endif
+#else
     vint64m8_t prod = __riscv_vwmul_vx_i64m8(vacc, (int32_t)mul_q31, vl);
     prod = __riscv_vadd_vx_i64m8(prod, (int64_t)(1ll << 30), vl);
     vint32m4_t q = __riscv_vnsra_wx_i32m4(prod, 31, vl);
+#endif
     q = __riscv_vmin_vv_i32m4(q, v127, vl);
     return q;
 }

@@ -89,8 +89,7 @@ check_c_source_compiles("
     size_t vl = __riscv_vsetvl_e32m4(8);
     vint32m4_t a = __riscv_vmv_v_x_i32m4(123, vl);
     vint32m4_t q = __riscv_vsmul_vx_i32m4(a, 0x40000000, __RISCV_VXRM_RNU, vl);
-    (void)q;
-    return 0;
+    return __riscv_vmv_x_s_i32m1_i32(__riscv_vget_v_i32m4_i32m1(q, 0));
   }" TINYSPEECH_HAS_RVV_VSMUL_API4)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
 unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
@@ -107,8 +106,7 @@ if (NOT TINYSPEECH_HAS_RVV_VSMUL_API4)
       size_t vl = __riscv_vsetvl_e32m4(8);
       vint32m4_t a = __riscv_vmv_v_x_i32m4(123, vl);
       vint32m4_t q = __riscv_vsmul_vx_i32m4(a, 0x40000000, vl);
-      (void)q;
-      return 0;
+      return __riscv_vmv_x_s_i32m1_i32(__riscv_vget_v_i32m4_i32m1(q, 0));
     }" TINYSPEECH_HAS_RVV_VSMUL_API3)
   set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
   unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)

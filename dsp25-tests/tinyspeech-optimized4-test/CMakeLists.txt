@@ -26,25 +26,6 @@ check_c_source_compiles("
   #include <stddef.h>
   #include <riscv_vector.h>
   int main(void) {
-    size_t vl = __riscv_vsetvl_e32m8(32);
-    vint32m8_t acc = __riscv_vmv_v_x_i32m8(0, vl);
-    vint16m4_t w = __riscv_vmv_v_x_i16m4(1, vl);
-    acc = __riscv_vwmacc_vx_i32m8(acc, 2, w, vl);
-    int32_t out[32];
-    __riscv_vse32_v_i32m8(out, acc, vl);
-    return out[0];
-  }" TINYSPEECH_HAS_RVV_M8_WIDEN)
-set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
-unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
-unset(CMAKE_REQUIRED_FLAGS)
-
-set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
-set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS}")
-check_c_source_compiles("
-  #include <stddef.h>
-  #include <riscv_vector.h>
-  int main(void) {
     size_t vl = __riscv_vsetvl_e32m4(8);
     vint32m4_t a = __riscv_vmv_v_x_i32m4(1, vl);
     vint16m2_t b = __riscv_vnclip_wx_i16m2(a, 0, vl);
@@ -73,14 +54,6 @@ else()
   message(STATUS "tinyspeech-optimized4-test: RVV int8 strided-store intrinsics unavailable (scalar scatter fallback)")
 endif()
 
-if (TINYSPEECH_HAS_RVV_M8_WIDEN)
-  set(TINYSPEECH_INT8_USE_M8_UKERNEL_VALUE 1)
-  message(STATUS "tinyspeech-optimized4-test: RVV m8 widen intrinsics available (conv3 m8 ukernel enabled)")
-else()
-  set(TINYSPEECH_INT8_USE_M8_UKERNEL_VALUE 0)
-  message(STATUS "tinyspeech-optimized4-test: RVV m8 widen intrinsics unavailable (conv3 generic kernel)")
-endif()
-
 add_executable(tinyspeech-optimized4-test
   src/main.c
   src/tinyspeech_model.c
@@ -107,7 +80,6 @@ target_compile_definitions(tinyspeech-optimized4-test PRIVATE
   TINYSPEECH_FP16_FC_ACCEL=0
   TINYSPEECH_INT8_PIPELINE=$<IF:$<BOOL:${TINYSPEECH_OPT4_ENABLE_INT8}>,1,0>
   TINYSPEECH_INT8_USE_VSSE8_STORE=${TINYSPEECH_INT8_USE_VSSE8_STORE_VALUE}
-  TINYSPEECH_HAS_RVV_M8_WIDEN=${TINYSPEECH_INT8_USE_M8_UKERNEL_VALUE}
 )
 
 target_link_libraries(tinyspeech-optimized4-test PRIVATE

@@ -290,16 +290,6 @@ int app_main(void) {
 #endif
 #if TINYSPEECH_INT8_PIPELINE
     printf("  int8 path: enabled (fixed-shape quantized conv/gap/fc)\n");
-#if TINYSPEECH_INT8_USE_VSSE8_STORE
-    printf("  int8 store: RVV vsse8 strided-store enabled\n");
-#else
-    printf("  int8 store: scalar scatter fallback\n");
-#endif
-#if TINYSPEECH_HAS_RVV_M8_WIDEN
-    printf("  int8 ukern: conv3 m8 widen kernel enabled\n");
-#else
-    printf("  int8 ukern: conv3 generic m4 kernel\n");
-#endif
 #else
     printf("  int8 path: disabled\n");
 #endif

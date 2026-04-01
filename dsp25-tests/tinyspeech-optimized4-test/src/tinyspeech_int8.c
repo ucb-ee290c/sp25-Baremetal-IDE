@@ -426,6 +426,12 @@ static void conv3x3_acc_c(const int8_t *pad,
 #ifndef TINYSPEECH_INT8_USE_VSSE8_STORE
 #define TINYSPEECH_INT8_USE_VSSE8_STORE 0
 #endif
+#ifndef TINYSPEECH_INT8_RVV_UKERNELS
+#define TINYSPEECH_INT8_RVV_UKERNELS 1
+#endif
+#ifndef TINYSPEECH_HAS_RVV_M8_WIDEN
+#define TINYSPEECH_HAS_RVV_M8_WIDEN 0
+#endif
 
 static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
                                                         uint32_t mul_q31,
@@ -617,6 +623,127 @@ static void conv3x3_pool2x2_acc_c_rvv(const int8_t *pad,
     }
 }
 
+#if TINYSPEECH_INT8_RVV_UKERNELS
+static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv_uk48x24(const int8_t *pad,
+                                                                  int32_t pad_h,
+                                                                  int32_t pad_w,
+                                                                  const int16_t *w16,
+                                                                  const int32_t *bq,
+                                                                  uint32_t mul_q31,
+                                                                  int8_t *dst_pad,
+                                                                  int32_t dst_pad_h,
+                                                                  int32_t dst_pad_w) {
+    memset(dst_pad, 0, (size_t)(TS_L2_OC * dst_pad_h * dst_pad_w) * sizeof(int8_t));
+    const int32_t pad_hw = pad_h * pad_w;
+    const int32_t dst_hw = dst_pad_h * dst_pad_w;
+    const int32_t w_oc_stride = TS_L2_OC;
+    const int32_t w_ic_stride = TS_K * TS_L2_OC;
+#if !TINYSPEECH_INT8_USE_VSSE8_STORE
+    int32_t lane_buf[TS_L2_OC] __attribute__((aligned(64)));
+#endif
+
+    for (int32_t ph = 0; ph < TS_L2_PH; ph++) {
+        const int32_t h0 = ph << 1;
+        for (int32_t pw = 0; pw < TS_L2_PW; pw++) {
+            const int32_t w0 = pw << 1;
+            for (int32_t oc0 = 0; oc0 < TS_L2_OC; ) {
+                size_t vl = __riscv_vsetvl_e32m4((size_t)(TS_L2_OC - oc0));
+                vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
+                vint32m4_t vacc00 = vbias;
+                vint32m4_t vacc01 = vbias;
+                vint32m4_t vacc10 = vbias;
+                vint32m4_t vacc11 = vbias;
+
+                const int8_t *p00 = pad + h0 * pad_w + w0;
+                const int8_t *p01 = p00 + 1;
+                const int8_t *p10 = p00 + pad_w;
+                const int8_t *p11 = p10 + 1;
+                const int16_t *wk = w16 + oc0;
+
+                for (int32_t ic = 0; ic < TS_L2_IC; ic++) {
+                    vint16m2_t vw;
+                    vw = __riscv_vle16_v_i16m2(wk + 0 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[0], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[0], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[0], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 1 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[1], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[1], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[1], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 2 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[2], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[2], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[2], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 3 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[pad_w + 0], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[pad_w + 0], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[pad_w + 0], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 4 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[pad_w + 1], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[pad_w + 1], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[pad_w + 1], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 5 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[pad_w + 2], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[pad_w + 2], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[pad_w + 2], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 6 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[(2 * pad_w) + 0], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[(2 * pad_w) + 0], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[(2 * pad_w) + 0], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 7 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[(2 * pad_w) + 1], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[(2 * pad_w) + 1], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[(2 * pad_w) + 1], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk + 8 * w_oc_stride, vl);
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[(2 * pad_w) + 2], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[(2 * pad_w) + 2], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[(2 * pad_w) + 2], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[(2 * pad_w) + 2], vw, vl);
+
+                    p00 += pad_hw;
+                    p01 += pad_hw;
+                    p10 += pad_hw;
+                    p11 += pad_hw;
+                    wk += w_ic_stride;
+                }
+
+                vint32m4_t vmax = __riscv_vmax_vv_i32m4(vacc00, vacc01, vl);
+                vint32m4_t vmax2 = __riscv_vmax_vv_i32m4(vacc10, vacc11, vl);
+                vmax = __riscv_vmax_vv_i32m4(vmax, vmax2, vl);
+                vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vmax, mul_q31, vl);
+#if TINYSPEECH_INT8_USE_VSSE8_STORE
+#ifdef __RISCV_VXRM_RNU
+                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, __RISCV_VXRM_RNU, vl);
+                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, __RISCV_VXRM_RNU, vl);
+#else
+                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, vl);
+                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, vl);
+#endif
+                int8_t *dst = dst_pad + oc0 * dst_hw + (ph + 1) * dst_pad_w + (pw + 1);
+                __riscv_vsse8_v_i8m1(dst, (ptrdiff_t)dst_hw, vq8, vl);
+#else
+                __riscv_vse32_v_i32m4(lane_buf, vq, vl);
+                for (size_t lane = 0; lane < vl; lane++) {
+                    int32_t oc = oc0 + (int32_t)lane;
+                    dst_pad[oc * dst_hw + (ph + 1) * dst_pad_w + (pw + 1)] =
+                        (int8_t)lane_buf[lane];
+                }
+#endif
+                oc0 += (int32_t)vl;
+            }
+        }
+    }
+}
+#endif
+
 static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
                                                           int32_t in_c,
                                                           int32_t pad_h,
@@ -630,6 +757,16 @@ static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
                                                           int8_t *dst_pad,
                                                           int32_t dst_pad_h,
                                                           int32_t dst_pad_w) {
+#if TINYSPEECH_INT8_RVV_UKERNELS
+    if (in_c == TS_L2_IC &&
+        out_c == TS_L2_OC &&
+        pool_h == TS_L2_PH &&
+        pool_w == TS_L2_PW) {
+        conv3x3_pool2x2_requant_relu_to_padded_c_rvv_uk48x24(
+            pad, pad_h, pad_w, w16, bq, mul_q31, dst_pad, dst_pad_h, dst_pad_w);
+        return;
+    }
+#endif
     memset(dst_pad, 0, (size_t)(out_c * dst_pad_h * dst_pad_w) * sizeof(int8_t));
     const int32_t pad_hw = pad_h * pad_w;
     const int32_t dst_hw = dst_pad_h * dst_pad_w;
@@ -734,6 +871,189 @@ static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
     }
 }
 
+#if TINYSPEECH_INT8_RVV_UKERNELS && TINYSPEECH_HAS_RVV_M8_WIDEN
+static void conv3x3_relu_gap_acc_c_rvv_uk96x48(const int8_t *pad,
+                                                int32_t pad_h,
+                                                int32_t pad_w,
+                                                const int16_t *w16,
+                                                const int32_t *bq,
+                                                int32_t *gap_sum) {
+    const int32_t pad_hw = pad_h * pad_w;
+    const int32_t w_oc_stride = TS_L3_OC;
+    const int32_t w_ic_stride = TS_K * TS_L3_OC;
+
+    for (int32_t oc0 = 0; oc0 < TS_L3_OC; ) {
+        size_t vl = __riscv_vsetvl_e32m8((size_t)(TS_L3_OC - oc0));
+        vint32m8_t vsum = __riscv_vmv_v_x_i32m8(0, vl);
+        const vint32m8_t vzero = __riscv_vmv_v_x_i32m8(0, vl);
+        const vint32m8_t vbias = __riscv_vle32_v_i32m8(bq + oc0, vl);
+
+        for (int32_t oh = 0; oh < TS_L3_OH; oh++) {
+            int32_t ow = 0;
+            for (; ow + 3 < TS_L3_OW; ow += 4) {
+                vint32m8_t vacc0 = vbias;
+                vint32m8_t vacc1 = vbias;
+                vint32m8_t vacc2 = vbias;
+                vint32m8_t vacc3 = vbias;
+
+                const int8_t *p0 = pad + oh * pad_w + ow;
+                const int8_t *p1 = p0 + 1;
+                const int8_t *p2 = p0 + 2;
+                const int8_t *p3 = p0 + 3;
+                const int16_t *wk = w16 + oc0;
+
+                for (int32_t ic = 0; ic < TS_L3_IC; ic++) {
+                    vint16m4_t vw;
+                    vw = __riscv_vle16_v_i16m4(wk + 0 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 1 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 2 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 3 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[pad_w + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[pad_w + 0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[pad_w + 0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 4 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[pad_w + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[pad_w + 1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[pad_w + 1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 5 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[pad_w + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[pad_w + 2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[pad_w + 2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 6 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[(2 * pad_w) + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[(2 * pad_w) + 0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[(2 * pad_w) + 0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 7 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[(2 * pad_w) + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[(2 * pad_w) + 1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[(2 * pad_w) + 1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 8 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[(2 * pad_w) + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[(2 * pad_w) + 2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m8(vacc2, p2[(2 * pad_w) + 2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m8(vacc3, p3[(2 * pad_w) + 2], vw, vl);
+
+                    p0 += pad_hw;
+                    p1 += pad_hw;
+                    p2 += pad_hw;
+                    p3 += pad_hw;
+                    wk += w_ic_stride;
+                }
+
+                vacc0 = __riscv_vmax_vv_i32m8(vacc0, vzero, vl);
+                vacc1 = __riscv_vmax_vv_i32m8(vacc1, vzero, vl);
+                vacc2 = __riscv_vmax_vv_i32m8(vacc2, vzero, vl);
+                vacc3 = __riscv_vmax_vv_i32m8(vacc3, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc0, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc1, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc2, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc3, vl);
+            }
+
+            for (; ow + 1 < TS_L3_OW; ow += 2) {
+                vint32m8_t vacc0 = vbias;
+                vint32m8_t vacc1 = vbias;
+
+                const int8_t *p0 = pad + oh * pad_w + ow;
+                const int8_t *p1 = p0 + 1;
+                const int16_t *wk = w16 + oc0;
+                for (int32_t ic = 0; ic < TS_L3_IC; ic++) {
+                    vint16m4_t vw;
+                    vw = __riscv_vle16_v_i16m4(wk + 0 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 1 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 2 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 3 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[pad_w + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 4 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[pad_w + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 5 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[pad_w + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 6 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[(2 * pad_w) + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 7 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[(2 * pad_w) + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 8 * w_oc_stride, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m8(vacc0, p0[(2 * pad_w) + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m8(vacc1, p1[(2 * pad_w) + 2], vw, vl);
+
+                    p0 += pad_hw;
+                    p1 += pad_hw;
+                    wk += w_ic_stride;
+                }
+
+                vacc0 = __riscv_vmax_vv_i32m8(vacc0, vzero, vl);
+                vacc1 = __riscv_vmax_vv_i32m8(vacc1, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc0, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc1, vl);
+            }
+
+            if (ow < TS_L3_OW) {
+                vint32m8_t vacc = vbias;
+                const int8_t *p = pad + oh * pad_w + ow;
+                const int16_t *wk = w16 + oc0;
+                for (int32_t ic = 0; ic < TS_L3_IC; ic++) {
+                    vint16m4_t vw;
+                    vw = __riscv_vle16_v_i16m4(wk + 0 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 1 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 2 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 3 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 4 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 5 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 6 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 7 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m4(wk + 8 * w_oc_stride, vl);
+                    vacc = __riscv_vwmacc_vx_i32m8(vacc, p[(2 * pad_w) + 2], vw, vl);
+
+                    p += pad_hw;
+                    wk += w_ic_stride;
+                }
+                vacc = __riscv_vmax_vv_i32m8(vacc, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m8(vsum, vacc, vl);
+            }
+        }
+
+        __riscv_vse32_v_i32m8(gap_sum + oc0, vsum, vl);
+        oc0 += (int32_t)vl;
+    }
+}
+#endif
+
 static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
                                        int32_t in_c,
                                        int32_t pad_h,
@@ -744,6 +1064,15 @@ static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
                                        int32_t out_h,
                                        int32_t out_w,
                                        int32_t *gap_sum) {
+#if TINYSPEECH_INT8_RVV_UKERNELS && TINYSPEECH_HAS_RVV_M8_WIDEN
+    if (in_c == TS_L3_IC &&
+        out_c == TS_L3_OC &&
+        out_h == TS_L3_OH &&
+        out_w == TS_L3_OW) {
+        conv3x3_relu_gap_acc_c_rvv_uk96x48(pad, pad_h, pad_w, w16, bq, gap_sum);
+        return;
+    }
+#endif
     const int32_t pad_hw = pad_h * pad_w;
     for (int32_t oc0 = 0; oc0 < out_c; ) {
         size_t vl = __riscv_vsetvl_e32m4((size_t)(out_c - oc0));

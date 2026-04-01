@@ -423,6 +423,10 @@ static void conv3x3_acc_c(const int8_t *pad,
 }
 
 #if defined(__riscv_vector)
+#ifndef TINYSPEECH_INT8_USE_VSSE8_STORE
+#define TINYSPEECH_INT8_USE_VSSE8_STORE 0
+#endif
+
 static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
                                                         uint32_t mul_q31,
                                                         size_t vl) {
@@ -629,7 +633,9 @@ static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
     memset(dst_pad, 0, (size_t)(out_c * dst_pad_h * dst_pad_w) * sizeof(int8_t));
     const int32_t pad_hw = pad_h * pad_w;
     const int32_t dst_hw = dst_pad_h * dst_pad_w;
+#if !TINYSPEECH_INT8_USE_VSSE8_STORE
     int32_t lane_buf[TS_L2_OC] __attribute__((aligned(64)));
+#endif
 
     for (int32_t ph = 0; ph < pool_h; ph++) {
         const int32_t h0 = ph << 1;
@@ -704,12 +710,24 @@ static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
                 vint32m4_t vmax2 = __riscv_vmax_vv_i32m4(vacc10, vacc11, vl);
                 vmax = __riscv_vmax_vv_i32m4(vmax, vmax2, vl);
                 vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vmax, mul_q31, vl);
+#if TINYSPEECH_INT8_USE_VSSE8_STORE
+#ifdef __RISCV_VXRM_RNU
+                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, __RISCV_VXRM_RNU, vl);
+                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, __RISCV_VXRM_RNU, vl);
+#else
+                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, vl);
+                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, vl);
+#endif
+                int8_t *dst = dst_pad + oc0 * dst_hw + (ph + 1) * dst_pad_w + (pw + 1);
+                __riscv_vsse8_v_i8m1(dst, (ptrdiff_t)dst_hw, vq8, vl);
+#else
                 __riscv_vse32_v_i32m4(lane_buf, vq, vl);
                 for (size_t lane = 0; lane < vl; lane++) {
                     int32_t oc = oc0 + (int32_t)lane;
                     dst_pad[oc * dst_hw + (ph + 1) * dst_pad_w + (pw + 1)] =
                         (int8_t)lane_buf[lane];
                 }
+#endif
                 oc0 += (int32_t)vl;
             }
         }

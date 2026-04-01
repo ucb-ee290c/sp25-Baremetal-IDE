@@ -66,6 +66,7 @@ static uint32_t g_mul3_q31 = 0;
 static float g_s1_fixed = 1.0f;
 static float g_s2_fixed = 1.0f;
 static float g_s3_fixed = 1.0f;
+static int g_pad3_hwc_border_valid = 0;
 
 static int8_t g_in0[TS_IN_H * TS_IN_W] __attribute__((aligned(64)));
 static int8_t g_pad1[(TS_IN_H + 2) * (TS_IN_W + 2)] __attribute__((aligned(64)));
@@ -481,6 +482,38 @@ static inline void clear_l3_hwc_padded_border(int8_t *dst_pad_hwc) {
     }
 }
 
+static inline void requant_acc_i32_to_u7_i8_vec(const int32_t *src,
+                                                int8_t *dst,
+                                                int32_t n,
+                                                uint32_t mul_q31) {
+#if !TINYSPEECH_INT8_USE_VSE8_PACK_STORE
+    int32_t lane_buf[TS_L3_OC] __attribute__((aligned(64)));
+#endif
+    for (int32_t i = 0; i < n; ) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vint32m4_t vacc = __riscv_vle32_v_i32m4(src + i, vl);
+        vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vacc, mul_q31, vl);
+#if TINYSPEECH_INT8_USE_VSE8_PACK_STORE
+#if (TINYSPEECH_RVV_NCLIP_API == 4)
+        vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, __RISCV_VXRM_RNU, vl);
+        vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, __RISCV_VXRM_RNU, vl);
+#elif (TINYSPEECH_RVV_NCLIP_API == 3)
+        vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, vl);
+        vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, vl);
+#else
+#error "TINYSPEECH_INT8_USE_VSE8_PACK_STORE requires valid TINYSPEECH_RVV_NCLIP_API"
+#endif
+        __riscv_vse8_v_i8m1(dst + i, vq8, vl);
+#else
+        __riscv_vse32_v_i32m4(lane_buf, vq, vl);
+        for (size_t lane = 0; lane < vl; lane++) {
+            dst[i + (int32_t)lane] = (int8_t)lane_buf[lane];
+        }
+#endif
+        i += (int32_t)vl;
+    }
+}
+
 #if TINYSPEECH_INT8_RVV_UKERNELS
 static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv_uk48x24(const int8_t *pad,
                                                                   const int16_t *w16,
@@ -617,18 +650,17 @@ static void conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(const int8_
     const int32_t pad_hw = (TS_L2_OH + 2) * (TS_L2_OW + 2);
     const int32_t dst_w = TS_L3_OW + 2;
     const int32_t dst_ic = TS_L3_IC;
-    clear_l3_hwc_padded_border(dst_pad_hwc);
 #if !TINYSPEECH_INT8_USE_VSE8_PACK_STORE
     int32_t lane_buf[TS_L2_OC] __attribute__((aligned(64)));
 #endif
 
-    for (int32_t ph = 0; ph < TS_L2_PH; ph++) {
-        const int32_t h0 = ph << 1;
-        for (int32_t pw = 0; pw < TS_L2_PW; pw++) {
-            const int32_t w0 = pw << 1;
-            for (int32_t oc0 = 0; oc0 < TS_L2_OC; ) {
-                size_t vl = __riscv_vsetvl_e32m4((size_t)(TS_L2_OC - oc0));
-                vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
+    for (int32_t oc0 = 0; oc0 < TS_L2_OC; ) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(TS_L2_OC - oc0));
+        const vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
+        for (int32_t ph = 0; ph < TS_L2_PH; ph++) {
+            const int32_t h0 = ph << 1;
+            for (int32_t pw = 0; pw < TS_L2_PW; pw++) {
+                const int32_t w0 = pw << 1;
                 vint32m4_t vacc00 = vbias;
                 vint32m4_t vacc01 = vbias;
                 vint32m4_t vacc10 = vbias;
@@ -729,9 +761,9 @@ static void conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(const int8_
                     dst[lane] = (int8_t)lane_buf[lane];
                 }
 #endif
-                oc0 += (int32_t)vl;
             }
         }
+        oc0 += (int32_t)vl;
     }
 }
 
@@ -2020,6 +2052,7 @@ int tinyspeech_int8_prepare(const Tensor *conv1_w,
     g_s1_fixed = 1.0f;
     g_s2_fixed = 1.0f;
     g_s3_fixed = 1.0f;
+    g_pad3_hwc_border_valid = 0;
 
     g_prepared = 1;
     return 1;
@@ -2044,6 +2077,7 @@ void tinyspeech_int8_calib_reset(void) {
     g_s1_fixed = 1.0f;
     g_s2_fixed = 1.0f;
     g_s3_fixed = 1.0f;
+    g_pad3_hwc_border_valid = 0;
 }
 
 int tinyspeech_int8_calib_finalize(const Tensor *conv1_bias,
@@ -2072,6 +2106,7 @@ int tinyspeech_int8_calib_finalize(const Tensor *conv1_bias,
 
     g_collect_calib = 0;
     g_fixed_qparams_valid = 1;
+    g_pad3_hwc_border_valid = 0;
     return 1;
 }
 
@@ -2116,6 +2151,7 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
         input->size < (TS_IN_H * TS_IN_W)) {
         return logits;
     }
+    g_pad3_hwc_border_valid = 0;
 
     uint64_t t0 = rdcycle64_int8();
     if (input->data != NULL) {
@@ -2204,9 +2240,7 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
     }
     s3 = out_scale_from_max(s2, g_w3_scale, max_avg);
     uint32_t mul3_q31 = requant_mul_q31_from_max(max_avg);
-    for (int32_t i = 0; i < TS_L3_OC; i++) {
-        g_act3[i] = requant_u7_from_acc(g_gap3_acc[i], mul3_q31);
-    }
+    requant_acc_i32_to_u7_i8_vec(g_gap3_acc, g_act3, TS_L3_OC, mul3_q31);
     calib_track_max(3, max_avg);
 #else
     int32_t max3 = 0;
@@ -2286,6 +2320,10 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
     t0 = rdcycle64_int8();
 #if defined(__riscv_vector)
 #if TINYSPEECH_INT8_RVV_UKERNELS
+    if (!g_pad3_hwc_border_valid) {
+        clear_l3_hwc_padded_border(g_pad3);
+        g_pad3_hwc_border_valid = 1;
+    }
     conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(g_pad2, w2_conv16, g_bias2_q,
                                                               g_mul2_q31, g_pad3);
 #else
@@ -2312,8 +2350,9 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
 #endif
     for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
         int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
-        g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
+        g_gap3_acc[oc] = avg_acc;
     }
+    requant_acc_i32_to_u7_i8_vec(g_gap3_acc, g_act3, TS_L3_OC, g_mul3_q31);
 #else
     conv3x3_acc_c(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2, w3_conv8, w3_conv16, g_bias3_q,
                   TS_L3_OC, TS_L3_OH, TS_L3_OW, g_conv3_acc);

@@ -443,6 +443,22 @@ static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
     return q;
 }
 
+static inline void clear_l3_hwc_padded_border(int8_t *dst_pad_hwc) {
+    const int32_t pad_h = TS_L3_OH + 2;
+    const int32_t pad_w = TS_L3_OW + 2;
+    const int32_t chans = TS_L3_IC;
+    const size_t row_bytes = (size_t)pad_w * (size_t)chans;
+
+    memset(dst_pad_hwc, 0, row_bytes);
+    memset(dst_pad_hwc + (size_t)(pad_h - 1) * row_bytes, 0, row_bytes);
+
+    for (int32_t r = 1; r < (pad_h - 1); r++) {
+        int8_t *row = dst_pad_hwc + (size_t)r * row_bytes;
+        memset(row, 0, (size_t)chans);
+        memset(row + (size_t)(pad_w - 1) * (size_t)chans, 0, (size_t)chans);
+    }
+}
+
 #if TINYSPEECH_INT8_RVV_UKERNELS
 static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv_uk48x24(const int8_t *pad,
                                                                   const int16_t *w16,
@@ -579,7 +595,7 @@ static void conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(const int8_
     const int32_t pad_hw = (TS_L2_OH + 2) * (TS_L2_OW + 2);
     const int32_t dst_w = TS_L3_OW + 2;
     const int32_t dst_ic = TS_L3_IC;
-    memset(dst_pad_hwc, 0, (size_t)((TS_L3_OH + 2) * (TS_L3_OW + 2) * TS_L3_IC) * sizeof(int8_t));
+    clear_l3_hwc_padded_border(dst_pad_hwc);
     int32_t lane_buf[TS_L2_OC] __attribute__((aligned(64)));
 
     for (int32_t ph = 0; ph < TS_L2_PH; ph++) {

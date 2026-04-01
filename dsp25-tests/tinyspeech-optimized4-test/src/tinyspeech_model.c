@@ -159,6 +159,25 @@ void tinyspeech_prepare_runtime(void) {
 #endif
 }
 
+void tinyspeech_int8_calibration_begin(void) {
+#if TINYSPEECH_INT8_PIPELINE
+    if (tinyspeech_int8_is_ready()) {
+        tinyspeech_int8_calib_reset();
+    }
+#endif
+}
+
+int tinyspeech_int8_calibration_end(void) {
+#if TINYSPEECH_INT8_PIPELINE
+    if (!tinyspeech_int8_is_ready()) {
+        return 0;
+    }
+    return tinyspeech_int8_calib_finalize(W(1), W(4), W(7));
+#else
+    return 0;
+#endif
+}
+
 Tensor tinyspeech_run_inference(Tensor *input) {
     memset(&g_last_cycle_profile, 0, sizeof(g_last_cycle_profile));
     uint64_t t_total0 = rdcycle64_model();

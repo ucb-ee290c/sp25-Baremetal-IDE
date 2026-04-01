@@ -320,6 +320,22 @@ int app_main(void) {
     printf("  runtime prep: done\n");
     fflush(stdout);
 
+#if TINYSPEECH_INT8_PIPELINE
+    printf("  calibration: begin (freeze int8 scales/biases)\n");
+    fflush(stdout);
+    tinyspeech_int8_calibration_begin();
+    for (uint32_t tc = 0; tc < TINYSPEECH_TEST_NUM_CASES; tc++) {
+        const tinyspeech_test_input_case_t *c = &g_tinyspeech_test_inputs[tc];
+        Tensor input = make_input_tensor(c->data);
+        Tensor logits = tinyspeech_run_inference(&input);
+        free_tensor(&input);
+        free_tensor(&logits);
+    }
+    int calib_ok = tinyspeech_int8_calibration_end();
+    printf("  calibration: %s\n", calib_ok ? "done" : "failed (falling back to dynamic int8)");
+    fflush(stdout);
+#endif
+
     uint32_t pass = 0;
     uint32_t fail = 0;
     uint32_t labeled_total = 0;

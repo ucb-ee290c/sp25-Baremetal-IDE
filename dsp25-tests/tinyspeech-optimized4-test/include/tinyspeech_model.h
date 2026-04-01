@@ -38,5 +38,7 @@ int32_t tinyspeech_argmax(const Tensor *probs, float *max_prob);
 const tinyspeech_debug_trace_t *tinyspeech_debug_last_trace(void);
 const tinyspeech_cycle_profile_t *tinyspeech_last_cycle_profile(void);
 void tinyspeech_prepare_runtime(void);
+void tinyspeech_int8_calibration_begin(void);
+int tinyspeech_int8_calibration_end(void);
 
 #endif

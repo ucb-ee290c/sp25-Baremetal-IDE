@@ -9,7 +9,7 @@ add_executable(borai
 target_include_directories(borai PUBLIC fp32/include)
 
 option(BORAIQ_TRANSPOSED_WEIGHTS
-  "Enable transposed-weight vectorized matmul in boraiq (requires vecnn)" OFF)
+  "Enable transposed-weight vectorized matmul in boraiq (requires vecnn)" ON)
 
 add_executable(boraiq
   int8/src/main.c
@@ -27,7 +27,7 @@ if(BORAIQ_TRANSPOSED_WEIGHTS)
 endif()
 
 option(BORAIQ_PREFILL_MULTICORE
-  "Enable dual-hart multicore prefill in boraiq (splits attention heads and FFN rows)" OFF)
+  "Enable dual-hart multicore prefill in boraiq (splits attention heads and FFN rows)" ON)
 
 if(BORAIQ_PREFILL_MULTICORE)
   target_compile_definitions(boraiq PRIVATE PREFILL_MULTICORE)

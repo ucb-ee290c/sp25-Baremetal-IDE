@@ -129,6 +129,12 @@ const tinyspeech_cycle_profile_t *tinyspeech_last_cycle_profile(void) {
     return &g_last_cycle_profile;
 }
 
+void tinyspeech_prepare_runtime(void) {
+#if defined(__riscv_vector)
+    tinyspeech_prepack_conv_weights(W(0), W(3), W(6));
+#endif
+}
+
 Tensor tinyspeech_run_inference(Tensor *input) {
     memset(&g_last_cycle_profile, 0, sizeof(g_last_cycle_profile));
     uint64_t t_total0 = rdcycle64_model();

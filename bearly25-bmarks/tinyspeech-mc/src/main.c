@@ -5,7 +5,7 @@
 #include "tinyspeech_model.h"
 #include "tinyspeech_inputs.h"
 #include "tinyspeech_reference.h"
-#include <hthread.h>
+#include "hthread.h"
 
 #if (TINYSPEECH_TEST_NUM_CASES != TINYSPEECH_EXPECTED_NUM_CASES)
 #error "tinyspeech_inputs.h mismatch: unexpected case count"

@@ -174,8 +174,8 @@ add_executable(tinyspeech-mc
 
 target_include_directories(tinyspeech-mc PUBLIC include)
 target_include_directories(tinyspeech-mc PRIVATE
-  ${CMAKE_SOURCE_DIR}/bmark-lib
   ${CMAKE_SOURCE_DIR}/thread-lib
+  ${CMAKE_SOURCE_DIR}/bmark-lib
 )
 
 target_compile_options(tinyspeech-mc PRIVATE -O3)

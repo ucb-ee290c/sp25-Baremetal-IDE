@@ -16,7 +16,7 @@
 #endif
 
 #if TINYSPEECH_INT8_MULTICORE
-#include <hthread.h>
+#include "hthread.h"
 #endif
 
 #define TS_IN_H 12

@@ -18,5 +18,6 @@ Tensor adaptive_avg_pool2d(Tensor *input);
 void tinyspeech_prepack_conv_weights(const Tensor *conv1_w,
                                      const Tensor *conv2_w,
                                      const Tensor *conv3_w);
+void tinyspeech_prepack_fc96x6_weights(const Tensor *fc_w);
 
 #endif

@@ -267,7 +267,13 @@ int app_main(void) {
     printf("  kernel mode: scalar fallback (no RVV)\n");
 #endif
 #if TINYSPEECH_FP16_MIXED
-    printf("  fp16 mix : enabled (fc weights packed to fp16 when Zfh/Zvfh is available)\n");
+#if defined(__riscv_zvfh) && (__riscv_zvfh > 0)
+    printf("  fp16 mix : enabled (RVV Zvfh path active)\n");
+#elif defined(__riscv_zfh) && (__riscv_zfh > 0)
+    printf("  fp16 mix : enabled (Zfh scalar/vector-compatible path)\n");
+#else
+    printf("  fp16 mix : requested, but Zfh/Zvfh unavailable -> fallback path\n");
+#endif
 #else
     printf("  fp16 mix : disabled\n");
 #endif

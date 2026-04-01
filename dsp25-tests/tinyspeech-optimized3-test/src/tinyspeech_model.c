@@ -133,6 +133,7 @@ void tinyspeech_prepare_runtime(void) {
 #if defined(__riscv_vector)
     tinyspeech_prepack_conv_weights(W(0), W(3), W(6));
 #endif
+    tinyspeech_prepack_fc96x6_weights(W(9));
 }
 
 Tensor tinyspeech_run_inference(Tensor *input) {

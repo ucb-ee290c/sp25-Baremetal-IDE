@@ -1642,6 +1642,7 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
 #if TINYSPEECH_FP16_AVAILABLE
 static _Float16 g_fc96x6_w_fp16[6 * 96] __attribute__((aligned(64)));
 static const float *g_fc96x6_w_src = NULL;
+static _Float16 g_fc96x1_x_fp16[96] __attribute__((aligned(64)));
 
 static inline void pack_fc96x6_weights_fp16(const float *w_src) {
     for (int32_t i = 0; i < (6 * 96); i++) {
@@ -1649,7 +1650,38 @@ static inline void pack_fc96x6_weights_fp16(const float *w_src) {
     }
     g_fc96x6_w_src = w_src;
 }
+
+#if defined(__riscv_vector)
+static inline float dot96_f16_rvv(const _Float16 *x, const _Float16 *w) {
+    int32_t i = 0;
+    float acc = 0.0f;
+    while (i < 96) {
+        size_t vl = __riscv_vsetvl_e16m8((size_t)(96 - i));
+        vfloat16m8_t vx = __riscv_vle16_v_f16m8(x + i, vl);
+        vfloat16m8_t vw = __riscv_vle16_v_f16m8(w + i, vl);
+        vfloat16m8_t vp = __riscv_vfmul_vv_f16m8(vx, vw, vl);
+        vfloat16m1_t v0 = __riscv_vfmv_v_f_f16m1((_Float16)0.0f, 1);
+        vfloat16m1_t vs = __riscv_vfredusum_vs_f16m8_f16m1(vp, v0, vl);
+        acc += (float)__riscv_vfmv_f_s_f16m1_f16(vs);
+        i += (int32_t)vl;
+    }
+    return acc;
+}
 #endif
+#endif
+
+void tinyspeech_prepack_fc96x6_weights(const Tensor *fc_w) {
+#if TINYSPEECH_FP16_AVAILABLE
+    if ((fc_w != NULL) && (fc_w->f_data != NULL) &&
+        (fc_w->dims >= 2) && ((int32_t)fc_w->shape[0] == 6) && ((int32_t)fc_w->shape[1] == 96)) {
+        if (g_fc96x6_w_src != fc_w->f_data) {
+            pack_fc96x6_weights_fp16(fc_w->f_data);
+        }
+    }
+#else
+    (void)fc_w;
+#endif
+}
 
 Tensor fc_layer(Tensor *input, Tensor *weights) {
     int32_t batch_size = input->shape[0];
@@ -1662,12 +1694,17 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
     if ((input->f_data != NULL) && (weights->f_data != NULL) &&
         (input_features == 96) && (output_features == 6)) {
 #if TINYSPEECH_FP16_AVAILABLE
+#if defined(__riscv_vector)
         if (g_fc96x6_w_src != weights->f_data) {
             pack_fc96x6_weights_fp16(weights->f_data);
         }
 
         for (int32_t n = 0; n < batch_size; n++) {
             const float *x = input->f_data + n * 96;
+            for (int32_t i = 0; i < 96; i++) {
+                g_fc96x1_x_fp16[i] = (_Float16)x[i];
+            }
+
             const _Float16 *w0 = g_fc96x6_w_fp16 + 0 * 96;
             const _Float16 *w1 = g_fc96x6_w_fp16 + 1 * 96;
             const _Float16 *w2 = g_fc96x6_w_fp16 + 2 * 96;
@@ -1675,59 +1712,16 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
             const _Float16 *w4 = g_fc96x6_w_fp16 + 4 * 96;
             const _Float16 *w5 = g_fc96x6_w_fp16 + 5 * 96;
 
-            float s0 = 0.0f;
-            float s1 = 0.0f;
-            float s2 = 0.0f;
-            float s3 = 0.0f;
-            float s4 = 0.0f;
-            float s5 = 0.0f;
-
-            for (int32_t i = 0; i < 96; i += 4) {
-                const float x0 = x[i + 0];
-                const float x1 = x[i + 1];
-                const float x2 = x[i + 2];
-                const float x3 = x[i + 3];
-
-                s0 = fmaf(x0, (float)w0[i + 0], s0);
-                s0 = fmaf(x1, (float)w0[i + 1], s0);
-                s0 = fmaf(x2, (float)w0[i + 2], s0);
-                s0 = fmaf(x3, (float)w0[i + 3], s0);
-
-                s1 = fmaf(x0, (float)w1[i + 0], s1);
-                s1 = fmaf(x1, (float)w1[i + 1], s1);
-                s1 = fmaf(x2, (float)w1[i + 2], s1);
-                s1 = fmaf(x3, (float)w1[i + 3], s1);
-
-                s2 = fmaf(x0, (float)w2[i + 0], s2);
-                s2 = fmaf(x1, (float)w2[i + 1], s2);
-                s2 = fmaf(x2, (float)w2[i + 2], s2);
-                s2 = fmaf(x3, (float)w2[i + 3], s2);
-
-                s3 = fmaf(x0, (float)w3[i + 0], s3);
-                s3 = fmaf(x1, (float)w3[i + 1], s3);
-                s3 = fmaf(x2, (float)w3[i + 2], s3);
-                s3 = fmaf(x3, (float)w3[i + 3], s3);
-
-                s4 = fmaf(x0, (float)w4[i + 0], s4);
-                s4 = fmaf(x1, (float)w4[i + 1], s4);
-                s4 = fmaf(x2, (float)w4[i + 2], s4);
-                s4 = fmaf(x3, (float)w4[i + 3], s4);
-
-                s5 = fmaf(x0, (float)w5[i + 0], s5);
-                s5 = fmaf(x1, (float)w5[i + 1], s5);
-                s5 = fmaf(x2, (float)w5[i + 2], s5);
-                s5 = fmaf(x3, (float)w5[i + 3], s5);
-            }
-
             float *out = output.f_data + n * 6;
-            out[0] = s0;
-            out[1] = s1;
-            out[2] = s2;
-            out[3] = s3;
-            out[4] = s4;
-            out[5] = s5;
+            out[0] = dot96_f16_rvv(g_fc96x1_x_fp16, w0);
+            out[1] = dot96_f16_rvv(g_fc96x1_x_fp16, w1);
+            out[2] = dot96_f16_rvv(g_fc96x1_x_fp16, w2);
+            out[3] = dot96_f16_rvv(g_fc96x1_x_fp16, w3);
+            out[4] = dot96_f16_rvv(g_fc96x1_x_fp16, w4);
+            out[5] = dot96_f16_rvv(g_fc96x1_x_fp16, w5);
         }
         return output;
+#endif
 #endif
 
         for (int32_t n = 0; n < batch_size; n++) {

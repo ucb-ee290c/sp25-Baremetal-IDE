@@ -1,0 +1,61 @@
+#ifndef TINYSPEECH_MC_BENCH_CONFIG_H
+#define TINYSPEECH_MC_BENCH_CONFIG_H
+
+#include <stdint.h>
+
+#ifndef TINYSPEECH_MC_TARGET_FREQUENCY_HZ
+#define TINYSPEECH_MC_TARGET_FREQUENCY_HZ 500000000ULL
+#endif
+
+// 0: single-frequency mode
+// 1: iterate over TINYSPEECH_MC_PLL_FREQ_LIST
+#ifndef TINYSPEECH_MC_ENABLE_PLL_SWEEP
+#define TINYSPEECH_MC_ENABLE_PLL_SWEEP 0
+#endif
+
+#ifndef TINYSPEECH_MC_PLL_SWEEP_SLEEP_MS
+#define TINYSPEECH_MC_PLL_SWEEP_SLEEP_MS 10000u
+#endif
+
+// Comma-separated list used when TINYSPEECH_MC_ENABLE_PLL_SWEEP=1
+// #define TINYSPEECH_MC_PLL_FREQ_LIST 50000000ULL, 150000000ULL, 250000000ULL
+#ifndef TINYSPEECH_MC_PLL_FREQ_LIST
+#define TINYSPEECH_MC_PLL_FREQ_LIST \
+  50000000ULL, \
+  150000000ULL, \
+  250000000ULL, \
+  350000000ULL
+#endif
+
+#ifndef TINYSPEECH_MC_ENABLE_MULTICORE
+#define TINYSPEECH_MC_ENABLE_MULTICORE 1
+#endif
+
+// Output-channel split points for 2-core fixed-shape INT8 kernels.
+#ifndef TINYSPEECH_MC_CONV2_OC_SPLIT
+#define TINYSPEECH_MC_CONV2_OC_SPLIT 24
+#endif
+
+#ifndef TINYSPEECH_MC_CONV3_OC_SPLIT
+#define TINYSPEECH_MC_CONV3_OC_SPLIT 48
+#endif
+
+// Optional memory placement hooks (disabled by default for portability).
+// When enabled, tiny hot buffers can be staged in scratchpad/TCM.
+#ifndef TINYSPEECH_MC_USE_SCRATCHPAD_FC
+#define TINYSPEECH_MC_USE_SCRATCHPAD_FC 0
+#endif
+
+#ifndef TINYSPEECH_MC_SCRATCHPAD_BASE
+#define TINYSPEECH_MC_SCRATCHPAD_BASE 0x08000000UL
+#endif
+
+#ifndef TINYSPEECH_MC_CORE0_TCM_BASE
+#define TINYSPEECH_MC_CORE0_TCM_BASE 0x08010000UL
+#endif
+
+#ifndef TINYSPEECH_MC_CORE1_TCM_BASE
+#define TINYSPEECH_MC_CORE1_TCM_BASE 0x08012000UL
+#endif
+
+#endif

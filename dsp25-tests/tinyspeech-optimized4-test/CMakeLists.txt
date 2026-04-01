@@ -3,6 +3,7 @@
 include(CheckCSourceCompiles)
 option(TINYSPEECH_OPT4_ENABLE_INT8 "Enable fixed-shape INT8 inference pipeline" ON)
 option(TINYSPEECH_OPT4_INT8_RVV_UKERNELS "Enable RVV int8 fixed-shape microkernels" ON)
+option(TINYSPEECH_OPT4_INT8_ASM_PACK "Enable asm RVV int8 pack/store helper" ON)
 
 set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
@@ -64,6 +65,19 @@ add_executable(tinyspeech-optimized4-test
   src/modules.c
 )
 
+set(TINYSPEECH_INT8_ASM_PACK_VALUE 0)
+if (ARCH MATCHES ".*v.*")
+  if (TINYSPEECH_OPT4_INT8_ASM_PACK)
+    target_sources(tinyspeech-optimized4-test PRIVATE src/int8_pack_store_rvv.S)
+    set(TINYSPEECH_INT8_ASM_PACK_VALUE 1)
+    message(STATUS "tinyspeech-optimized4-test: asm RVV int8 pack/store helper enabled")
+  else()
+    message(STATUS "tinyspeech-optimized4-test: asm RVV int8 pack/store helper disabled")
+  endif()
+else()
+  message(STATUS "tinyspeech-optimized4-test: asm RVV int8 pack/store helper unavailable (non-RVV arch)")
+endif()
+
 target_include_directories(tinyspeech-optimized4-test PUBLIC include)
 target_include_directories(tinyspeech-optimized4-test PUBLIC ${CMAKE_SOURCE_DIR}/platform/dsp25/include)
 
@@ -81,6 +95,7 @@ target_compile_definitions(tinyspeech-optimized4-test PRIVATE
   TINYSPEECH_FP16_FC_ACCEL=0
   TINYSPEECH_INT8_PIPELINE=$<IF:$<BOOL:${TINYSPEECH_OPT4_ENABLE_INT8}>,1,0>
   TINYSPEECH_INT8_USE_VSSE8_STORE=${TINYSPEECH_INT8_USE_VSSE8_STORE_VALUE}
+  TINYSPEECH_INT8_ASM_PACK_STORE=${TINYSPEECH_INT8_ASM_PACK_VALUE}
   TINYSPEECH_INT8_RVV_UKERNELS=$<IF:$<BOOL:${TINYSPEECH_OPT4_INT8_RVV_UKERNELS}>,1,0>
 )
 

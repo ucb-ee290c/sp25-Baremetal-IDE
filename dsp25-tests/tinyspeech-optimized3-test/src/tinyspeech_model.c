@@ -131,9 +131,17 @@ const tinyspeech_cycle_profile_t *tinyspeech_last_cycle_profile(void) {
 
 void tinyspeech_prepare_runtime(void) {
 #if defined(__riscv_vector)
+    printf("    prep: conv weights prepack begin\n");
+    fflush(stdout);
     tinyspeech_prepack_conv_weights(W(0), W(3), W(6));
+    printf("    prep: conv weights prepack done\n");
+    fflush(stdout);
 #endif
+    printf("    prep: fc weights prepack begin\n");
+    fflush(stdout);
     tinyspeech_prepack_fc96x6_weights(W(9));
+    printf("    prep: fc weights prepack done\n");
+    fflush(stdout);
 }
 
 Tensor tinyspeech_run_inference(Tensor *input) {

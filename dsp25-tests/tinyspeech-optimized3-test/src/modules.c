@@ -1369,14 +1369,21 @@ Tensor adaptive_avg_pool2d(Tensor *input) {
             for (int32_t c = 0; c < channels; c++) {
                 const float *src = in_n + c * hw;
                 int32_t i = 0;
+                float tail = 0.0f;
                 vfloat32m1_t acc = __riscv_vfmv_v_f_f32m1(0.0f, 1);
                 while (i < hw) {
-                    size_t vl = __riscv_vsetvl_e32m8((size_t)(hw - i));
-                    vfloat32m8_t vx = __riscv_vle32_v_f32m8(src + i, vl);
-                    acc = __riscv_vfredusum_vs_f32m8_f32m1(vx, acc, vl);
+                    size_t vl = __riscv_vsetvl_e32m4((size_t)(hw - i));
+                    if (vl == 0) {
+                        break;
+                    }
+                    vfloat32m4_t vx = __riscv_vle32_v_f32m4(src + i, vl);
+                    acc = __riscv_vfredusum_vs_f32m4_f32m1(vx, acc, vl);
                     i += (int32_t)vl;
                 }
-                float sum = __riscv_vfmv_f_s_f32m1_f32(acc);
+                for (; i < hw; i++) {
+                    tail += src[i];
+                }
+                float sum = __riscv_vfmv_f_s_f32m1_f32(acc) + tail;
                 int32_t out_index = n * channels + c;
                 output.f_data[out_index] = sum / (float)hw;
             }
@@ -1797,16 +1804,23 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
             for (int32_t o = 0; o < output_features; o++) {
                 const float *w_ptr = weights->f_data + o * input_features;
                 int32_t i = 0;
+                float tail = 0.0f;
                 vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, 1);
                 while (i < input_features) {
-                    size_t vl = __riscv_vsetvl_e32m8((size_t)(input_features - i));
-                    vfloat32m8_t va = __riscv_vle32_v_f32m8(in_ptr + i, vl);
-                    vfloat32m8_t vb = __riscv_vle32_v_f32m8(w_ptr + i, vl);
-                    vfloat32m8_t vm = __riscv_vfmul_vv_f32m8(va, vb, vl);
-                    vsum = __riscv_vfredusum_vs_f32m8_f32m1(vm, vsum, vl);
+                    size_t vl = __riscv_vsetvl_e32m4((size_t)(input_features - i));
+                    if (vl == 0) {
+                        break;
+                    }
+                    vfloat32m4_t va = __riscv_vle32_v_f32m4(in_ptr + i, vl);
+                    vfloat32m4_t vb = __riscv_vle32_v_f32m4(w_ptr + i, vl);
+                    vfloat32m4_t vm = __riscv_vfmul_vv_f32m4(va, vb, vl);
+                    vsum = __riscv_vfredusum_vs_f32m4_f32m1(vm, vsum, vl);
                     i += (int32_t)vl;
                 }
-                output.f_data[n * output_features + o] = __riscv_vfmv_f_s_f32m1_f32(vsum);
+                for (; i < input_features; i++) {
+                    tail += in_ptr[i] * w_ptr[i];
+                }
+                output.f_data[n * output_features + o] = __riscv_vfmv_f_s_f32m1_f32(vsum) + tail;
             }
         }
         return output;

@@ -300,7 +300,11 @@ int app_main(void) {
     printf("  note     : layer trace capture disabled (perf mode)\n");
 #endif
 
+    printf("  runtime prep: begin\n");
+    fflush(stdout);
     tinyspeech_prepare_runtime();
+    printf("  runtime prep: done\n");
+    fflush(stdout);
 
     uint32_t pass = 0;
     uint32_t fail = 0;

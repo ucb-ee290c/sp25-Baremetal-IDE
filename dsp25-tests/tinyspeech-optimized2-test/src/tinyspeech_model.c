@@ -200,20 +200,31 @@ Tensor tinyspeech_run_inference(Tensor *input) {
 #endif
 
     t0 = rdcycle64_model();
-    Tensor pooled = conv2d_relu_gap(&x, W(6), W(7), W(8), 1, 1);
+    u_int8_t logits_shape[2] = {x.shape[0], W(9)->shape[0]};
+    Tensor probs = f_create_tensor(logits_shape, 2);
+    int fused_ok = conv2d_relu_gap_fc_fused(&x, W(6), W(7), W(8), W(9), &probs);
     t1 = rdcycle64_model();
-    g_last_cycle_profile.conv3_gap = t1 - t0;
-    TRACE_ADD("conv3", &pooled);
-    TRACE_ADD("relu3", &pooled);
-    TRACE_ADD("gap", &pooled);
+    if (fused_ok) {
+        g_last_cycle_profile.conv3_gap = t1 - t0;
+        g_last_cycle_profile.fc_logits = 0;
+        free_tensor(&x);
+    } else {
+        free_tensor(&probs);
+        Tensor pooled = conv2d_relu_gap(&x, W(6), W(7), W(8), 1, 1);
+        t1 = rdcycle64_model();
+        g_last_cycle_profile.conv3_gap = t1 - t0;
+        TRACE_ADD("conv3", &pooled);
+        TRACE_ADD("relu3", &pooled);
+        TRACE_ADD("gap", &pooled);
 
-    t0 = rdcycle64_model();
-    Tensor probs = fc_layer(&pooled, W(9));
-    t1 = rdcycle64_model();
-    g_last_cycle_profile.fc_logits = t1 - t0;
+        t0 = rdcycle64_model();
+        probs = fc_layer(&pooled, W(9));
+        t1 = rdcycle64_model();
+        g_last_cycle_profile.fc_logits = t1 - t0;
+        free_tensor(&pooled);
+    }
     trace_store_logits(&probs);
     TRACE_ADD("fc_logits", &probs);
-    free_tensor(&pooled);
 
 #if TINYSPEECH_OUTPUT_SOFTMAX
     t0 = rdcycle64_model();

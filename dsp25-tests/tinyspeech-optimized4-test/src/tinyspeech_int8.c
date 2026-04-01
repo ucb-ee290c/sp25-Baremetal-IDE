@@ -426,15 +426,8 @@ static void conv3x3_acc_c(const int8_t *pad,
 #ifndef TINYSPEECH_INT8_USE_VSSE8_STORE
 #define TINYSPEECH_INT8_USE_VSSE8_STORE 0
 #endif
-#ifndef TINYSPEECH_INT8_ASM_PACK_STORE
-#define TINYSPEECH_INT8_ASM_PACK_STORE 0
-#endif
 #ifndef TINYSPEECH_INT8_RVV_UKERNELS
 #define TINYSPEECH_INT8_RVV_UKERNELS 1
-#endif
-
-#if TINYSPEECH_INT8_ASM_PACK_STORE
-extern void tinyspeech_int8_pack_store_u7_rvv(const int32_t *src, int8_t *dst, size_t n);
 #endif
 
 static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
@@ -697,13 +690,9 @@ static void conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(const int8_
                 __riscv_vse32_v_i32m4(lane_buf, vq, vl);
 
                 int8_t *dst = dst_pad_hwc + (((ph + 1) * dst_w + (pw + 1)) * dst_ic + oc0);
-#if TINYSPEECH_INT8_ASM_PACK_STORE
-                tinyspeech_int8_pack_store_u7_rvv(lane_buf, dst, vl);
-#else
                 for (size_t lane = 0; lane < vl; lane++) {
                     dst[lane] = (int8_t)lane_buf[lane];
                 }
-#endif
                 oc0 += (int32_t)vl;
             }
         }

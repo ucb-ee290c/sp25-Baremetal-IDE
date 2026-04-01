@@ -1197,67 +1197,45 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
             return 0;
         }
         float *out_n = output->f_data + n * (out_channels * pool_out_hw);
-        if (use_l2_pool_spec && (pool_out_h == 3) && (pool_out_w == 23)) {
-            const ptrdiff_t out_stride_bytes = (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float));
-            int32_t oc0 = 0;
-            while (oc0 < out_channels) {
-                size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
-                vfloat32m4_t vbias = __riscv_vle32_v_f32m4(bias->f_data + oc0, vl);
-                float *dst_base = out_n + oc0 * pool_out_hw;
 
-                for (int32_t row = 0; row < 3; row++) {
-                    int32_t oh0 = row * 2;
-                    int32_t ow0 = 0;
-                    int32_t m = row * 23;
-                    for (int32_t col = 0; col < 23; col++, ow0 += 2, m++) {
-                        vfloat32m4_t vmax = conv_pool2x2_block_rvv_interior_24ic(in_n, wpack, vbias,
-                                                                                  out_channels, pad_h, pad_w,
-                                                                                  oh0, ow0, oc0, vl, inv_scale);
-                        __riscv_vsse32_v_f32m4(dst_base + m, out_stride_bytes, vmax, vl);
+        for (int32_t oph = 0; oph < pool_out_h; oph++) {
+            const int32_t oh0 = oph * pool_stride;
+            const int32_t oh1 = oh0 + 1;
+            for (int32_t opw = 0; opw < pool_out_w; opw++) {
+                const int32_t ow0 = opw * pool_stride;
+                const int32_t ow1 = ow0 + 1;
+                const int32_t m = oph * pool_out_w + opw;
+
+                int32_t oc0 = 0;
+                while (oc0 < out_channels) {
+                    size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
+                    vfloat32m4_t vbias = __riscv_vle32_v_f32m4(bias->f_data + oc0, vl);
+                    vfloat32m4_t vmax;
+                    if (use_l2_pool_spec) {
+                        vmax = conv_pool2x2_block_rvv_interior_24ic(in_n, wpack, vbias,
+                                                                     out_channels, pad_h, pad_w,
+                                                                     oh0, ow0, oc0, vl, inv_scale);
+                    } else {
+                        vfloat32m4_t v00 =
+                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                    pad_h, pad_w, oh0, ow0, 0, oc0, vl, inv_scale);
+                        vfloat32m4_t v01 =
+                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                    pad_h, pad_w, oh0, ow1, 0, oc0, vl, inv_scale);
+                        vfloat32m4_t v10 =
+                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                    pad_h, pad_w, oh1, ow0, 0, oc0, vl, inv_scale);
+                        vfloat32m4_t v11 =
+                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                    pad_h, pad_w, oh1, ow1, 0, oc0, vl, inv_scale);
+                        vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
+                        vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
+                        vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
                     }
-                }
-                oc0 += (int32_t)vl;
-            }
-        } else {
-            for (int32_t oph = 0; oph < pool_out_h; oph++) {
-                const int32_t oh0 = oph * pool_stride;
-                const int32_t oh1 = oh0 + 1;
-                for (int32_t opw = 0; opw < pool_out_w; opw++) {
-                    const int32_t ow0 = opw * pool_stride;
-                    const int32_t ow1 = ow0 + 1;
-                    const int32_t m = oph * pool_out_w + opw;
 
-                    int32_t oc0 = 0;
-                    while (oc0 < out_channels) {
-                        size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
-                        vfloat32m4_t vbias = __riscv_vle32_v_f32m4(bias->f_data + oc0, vl);
-                        vfloat32m4_t vmax;
-                        if (use_l2_pool_spec) {
-                            vmax = conv_pool2x2_block_rvv_interior_24ic(in_n, wpack, vbias,
-                                                                         out_channels, pad_h, pad_w,
-                                                                         oh0, ow0, oc0, vl, inv_scale);
-                        } else {
-                            vfloat32m4_t v00 =
-                                conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                        pad_h, pad_w, oh0, ow0, 0, oc0, vl, inv_scale);
-                            vfloat32m4_t v01 =
-                                conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                        pad_h, pad_w, oh0, ow1, 0, oc0, vl, inv_scale);
-                            vfloat32m4_t v10 =
-                                conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                        pad_h, pad_w, oh1, ow0, 0, oc0, vl, inv_scale);
-                            vfloat32m4_t v11 =
-                                conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                        pad_h, pad_w, oh1, ow1, 0, oc0, vl, inv_scale);
-                            vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
-                            vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
-                            vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
-                        }
-
-                        float *dst = out_n + oc0 * pool_out_hw + m;
-                        __riscv_vsse32_v_f32m4(dst, (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float)), vmax, vl);
-                        oc0 += (int32_t)vl;
-                    }
+                    float *dst = out_n + oc0 * pool_out_hw + m;
+                    __riscv_vsse32_v_f32m4(dst, (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float)), vmax, vl);
+                    oc0 += (int32_t)vl;
                 }
             }
         }

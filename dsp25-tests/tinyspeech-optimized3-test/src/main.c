@@ -20,6 +20,10 @@
 #define TINYSPEECH_REF_CHECK_STAGE_SUM 1
 #endif
 
+#ifndef TINYSPEECH_PROGRESS_EVERY
+#define TINYSPEECH_PROGRESS_EVERY 10
+#endif
+
 static const char *k_labels[TINYSPEECH_NUM_CLASSES] = {
     "yes", "no", "on", "off", "stop", "go"
 };
@@ -323,6 +327,17 @@ int app_main(void) {
 
     for (uint32_t tc = 0; tc < TINYSPEECH_TEST_NUM_CASES; tc++) {
         const tinyspeech_test_input_case_t *c = &g_tinyspeech_test_inputs[tc];
+
+#if !TINYSPEECH_VERBOSE_CASE_LOGS
+#if (TINYSPEECH_PROGRESS_EVERY > 0)
+        if ((tc % TINYSPEECH_PROGRESS_EVERY) == 0) {
+            printf("  progress: case %lu/%d\n",
+                   (unsigned long)(tc + 1),
+                   TINYSPEECH_TEST_NUM_CASES);
+            fflush(stdout);
+        }
+#endif
+#endif
 
         Tensor input = make_input_tensor(c->data);
         if (TINYSPEECH_VERBOSE_CASE_LOGS) {

@@ -1655,14 +1655,20 @@ static inline float dot96_f16_rvv(const _Float16 *x, const _Float16 *w) {
     int32_t i = 0;
     float acc = 0.0f;
     while (i < 96) {
-        size_t vl = __riscv_vsetvl_e16m8((size_t)(96 - i));
-        vfloat16m8_t vx = __riscv_vle16_v_f16m8(x + i, vl);
-        vfloat16m8_t vw = __riscv_vle16_v_f16m8(w + i, vl);
-        vfloat16m8_t vp = __riscv_vfmul_vv_f16m8(vx, vw, vl);
+        size_t vl = __riscv_vsetvl_e16m1((size_t)(96 - i));
+        if (vl == 0) {
+            break;
+        }
+        vfloat16m1_t vx = __riscv_vle16_v_f16m1(x + i, vl);
+        vfloat16m1_t vw = __riscv_vle16_v_f16m1(w + i, vl);
+        vfloat16m1_t vp = __riscv_vfmul_vv_f16m1(vx, vw, vl);
         vfloat16m1_t v0 = __riscv_vfmv_v_f_f16m1((_Float16)0.0f, 1);
-        vfloat16m1_t vs = __riscv_vfredusum_vs_f16m8_f16m1(vp, v0, vl);
+        vfloat16m1_t vs = __riscv_vfredusum_vs_f16m1_f16m1(vp, v0, vl);
         acc += (float)__riscv_vfmv_f_s_f16m1_f16(vs);
         i += (int32_t)vl;
+    }
+    for (; i < 96; i++) {
+        acc += (float)x[i] * (float)w[i];
     }
     return acc;
 }

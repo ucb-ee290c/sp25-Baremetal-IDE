@@ -426,6 +426,9 @@ static void conv3x3_acc_c(const int8_t *pad,
 #ifndef TINYSPEECH_INT8_USE_VSSE8_STORE
 #define TINYSPEECH_INT8_USE_VSSE8_STORE 0
 #endif
+#ifndef TINYSPEECH_INT8_RVV_UKERNELS
+#define TINYSPEECH_INT8_RVV_UKERNELS 1
+#endif
 
 static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
                                                         uint32_t mul_q31,
@@ -439,6 +442,326 @@ static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
     q = __riscv_vmin_vv_i32m4(q, v127, vl);
     return q;
 }
+
+#if TINYSPEECH_INT8_RVV_UKERNELS
+static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv_uk48x24(const int8_t *pad,
+                                                                  const int16_t *w16,
+                                                                  const int32_t *bq,
+                                                                  uint32_t mul_q31,
+                                                                  int8_t *dst_pad) {
+    const int32_t pad_w = TS_L2_OW + 2;
+    const int32_t pad_hw = (TS_L2_OH + 2) * (TS_L2_OW + 2);
+    const int32_t dst_hw = (TS_L3_OH + 2) * (TS_L3_OW + 2);
+    memset(dst_pad, 0, (size_t)(TS_L2_OC * (TS_L3_OH + 2) * (TS_L3_OW + 2)) * sizeof(int8_t));
+#if !TINYSPEECH_INT8_USE_VSSE8_STORE
+    int32_t lane_buf[TS_L2_OC] __attribute__((aligned(64)));
+#endif
+
+    for (int32_t ph = 0; ph < TS_L2_PH; ph++) {
+        const int32_t h0 = ph << 1;
+        for (int32_t pw = 0; pw < TS_L2_PW; pw++) {
+            const int32_t w0 = pw << 1;
+            for (int32_t oc0 = 0; oc0 < TS_L2_OC; ) {
+                size_t vl = __riscv_vsetvl_e32m4((size_t)(TS_L2_OC - oc0));
+                vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
+                vint32m4_t vacc00 = vbias;
+                vint32m4_t vacc01 = vbias;
+                vint32m4_t vacc10 = vbias;
+                vint32m4_t vacc11 = vbias;
+
+                const int16_t *wk = w16 + oc0;
+                for (int32_t ic = 0; ic < TS_L2_IC; ic++) {
+                    const int8_t *pin = pad + ic * pad_hw + h0 * pad_w + w0;
+                    const int8_t *p00 = pin;
+                    const int8_t *p01 = pin + 1;
+                    const int8_t *p10 = pin + pad_w;
+                    const int8_t *p11 = p10 + 1;
+                    vint16m2_t vw;
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[0], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[0], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[0], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[0], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[1], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[1], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[1], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[1], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[2], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[2], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[2], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[2], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[pad_w + 0], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[pad_w + 0], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[pad_w + 0], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[pad_w + 0], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[pad_w + 1], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[pad_w + 1], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[pad_w + 1], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[pad_w + 1], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[pad_w + 2], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[pad_w + 2], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[pad_w + 2], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[pad_w + 2], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[(2 * pad_w) + 0], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[(2 * pad_w) + 0], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[(2 * pad_w) + 0], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[(2 * pad_w) + 0], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[(2 * pad_w) + 1], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[(2 * pad_w) + 1], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[(2 * pad_w) + 1], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[(2 * pad_w) + 1], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L2_OC;
+                    vacc00 = __riscv_vwmacc_vx_i32m4(vacc00, p00[(2 * pad_w) + 2], vw, vl);
+                    vacc01 = __riscv_vwmacc_vx_i32m4(vacc01, p01[(2 * pad_w) + 2], vw, vl);
+                    vacc10 = __riscv_vwmacc_vx_i32m4(vacc10, p10[(2 * pad_w) + 2], vw, vl);
+                    vacc11 = __riscv_vwmacc_vx_i32m4(vacc11, p11[(2 * pad_w) + 2], vw, vl);
+                }
+
+                vint32m4_t vmax = __riscv_vmax_vv_i32m4(vacc00, vacc01, vl);
+                vint32m4_t vmax2 = __riscv_vmax_vv_i32m4(vacc10, vacc11, vl);
+                vmax = __riscv_vmax_vv_i32m4(vmax, vmax2, vl);
+                vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vmax, mul_q31, vl);
+#if TINYSPEECH_INT8_USE_VSSE8_STORE
+#ifdef __RISCV_VXRM_RNU
+                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, __RISCV_VXRM_RNU, vl);
+                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, __RISCV_VXRM_RNU, vl);
+#else
+                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, vl);
+                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, vl);
+#endif
+                int8_t *dst = dst_pad + oc0 * dst_hw + (ph + 1) * (TS_L3_OW + 2) + (pw + 1);
+                __riscv_vsse8_v_i8m1(dst, (ptrdiff_t)dst_hw, vq8, vl);
+#else
+                __riscv_vse32_v_i32m4(lane_buf, vq, vl);
+                for (size_t lane = 0; lane < vl; lane++) {
+                    const int32_t oc = oc0 + (int32_t)lane;
+                    dst_pad[oc * dst_hw + (ph + 1) * (TS_L3_OW + 2) + (pw + 1)] =
+                        (int8_t)lane_buf[lane];
+                }
+#endif
+                oc0 += (int32_t)vl;
+            }
+        }
+    }
+}
+
+static void conv3x3_relu_gap_acc_c_rvv_uk96x48(const int8_t *pad,
+                                               const int16_t *w16,
+                                               const int32_t *bq,
+                                               int32_t *gap_sum) {
+    const int32_t pad_w = TS_L3_OW + 2;
+    const int32_t pad_hw = (TS_L3_OH + 2) * (TS_L3_OW + 2);
+    for (int32_t oc0 = 0; oc0 < TS_L3_OC; ) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(TS_L3_OC - oc0));
+        vint32m4_t vsum = __riscv_vmv_v_x_i32m4(0, vl);
+        const vint32m4_t vzero = __riscv_vmv_v_x_i32m4(0, vl);
+        const vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
+
+        for (int32_t oh = 0; oh < TS_L3_OH; oh++) {
+            int32_t ow = 0;
+            for (; ow + 3 < TS_L3_OW; ow += 4) {
+                vint32m4_t vacc0 = vbias;
+                vint32m4_t vacc1 = vbias;
+                vint32m4_t vacc2 = vbias;
+                vint32m4_t vacc3 = vbias;
+
+                const int16_t *wk = w16 + oc0;
+                for (int32_t ic = 0; ic < TS_L3_IC; ic++) {
+                    const int8_t *p0 = pad + ic * pad_hw + oh * pad_w + ow;
+                    const int8_t *p1 = p0 + 1;
+                    const int8_t *p2 = p0 + 2;
+                    const int8_t *p3 = p0 + 3;
+                    vint16m2_t vw;
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[2], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[pad_w + 0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[pad_w + 1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[pad_w + 2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[pad_w + 2], vw, vl);
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[(2 * pad_w) + 0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[(2 * pad_w) + 1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[(2 * pad_w) + 2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[(2 * pad_w) + 2], vw, vl);
+                }
+
+                vacc0 = __riscv_vmax_vv_i32m4(vacc0, vzero, vl);
+                vacc1 = __riscv_vmax_vv_i32m4(vacc1, vzero, vl);
+                vacc2 = __riscv_vmax_vv_i32m4(vacc2, vzero, vl);
+                vacc3 = __riscv_vmax_vv_i32m4(vacc3, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc0, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc1, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc2, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc3, vl);
+            }
+
+            for (; ow + 1 < TS_L3_OW; ow += 2) {
+                vint32m4_t vacc0 = vbias;
+                vint32m4_t vacc1 = vbias;
+                const int16_t *wk = w16 + oc0;
+                for (int32_t ic = 0; ic < TS_L3_IC; ic++) {
+                    const int8_t *p0 = pad + ic * pad_hw + oh * pad_w + ow;
+                    const int8_t *p1 = p0 + 1;
+                    vint16m2_t vw;
+
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 2], vw, vl);
+                }
+                vacc0 = __riscv_vmax_vv_i32m4(vacc0, vzero, vl);
+                vacc1 = __riscv_vmax_vv_i32m4(vacc1, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc0, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc1, vl);
+            }
+
+            if (ow < TS_L3_OW) {
+                vint32m4_t vacc = vbias;
+                const int16_t *wk = w16 + oc0;
+                for (int32_t ic = 0; ic < TS_L3_IC; ic++) {
+                    const int8_t *p = pad + ic * pad_hw + oh * pad_w + ow;
+                    vint16m2_t vw;
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(wk, vl);
+                    wk += TS_L3_OC;
+                    vacc = __riscv_vwmacc_vx_i32m4(vacc, p[(2 * pad_w) + 2], vw, vl);
+                }
+                vacc = __riscv_vmax_vv_i32m4(vacc, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc, vl);
+            }
+        }
+
+        __riscv_vse32_v_i32m4(gap_sum + oc0, vsum, vl);
+        oc0 += (int32_t)vl;
+    }
+}
+#endif
 
 static void conv3x3_pool2x2_acc_1c_rvv(const int8_t *pad,
                                        int32_t pad_w,
@@ -630,6 +953,19 @@ static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
                                                           int8_t *dst_pad,
                                                           int32_t dst_pad_h,
                                                           int32_t dst_pad_w) {
+#if TINYSPEECH_INT8_RVV_UKERNELS
+    if (in_c == TS_L2_IC &&
+        pad_h == (TS_L2_OH + 2) &&
+        pad_w == (TS_L2_OW + 2) &&
+        out_c == TS_L2_OC &&
+        pool_h == TS_L2_PH &&
+        pool_w == TS_L2_PW &&
+        dst_pad_h == (TS_L3_OH + 2) &&
+        dst_pad_w == (TS_L3_OW + 2)) {
+        conv3x3_pool2x2_requant_relu_to_padded_c_rvv_uk48x24(pad, w16, bq, mul_q31, dst_pad);
+        return;
+    }
+#endif
     memset(dst_pad, 0, (size_t)(out_c * dst_pad_h * dst_pad_w) * sizeof(int8_t));
     const int32_t pad_hw = pad_h * pad_w;
     const int32_t dst_hw = dst_pad_h * dst_pad_w;
@@ -744,6 +1080,17 @@ static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
                                        int32_t out_h,
                                        int32_t out_w,
                                        int32_t *gap_sum) {
+#if TINYSPEECH_INT8_RVV_UKERNELS
+    if (in_c == TS_L3_IC &&
+        pad_h == (TS_L3_OH + 2) &&
+        pad_w == (TS_L3_OW + 2) &&
+        out_c == TS_L3_OC &&
+        out_h == TS_L3_OH &&
+        out_w == TS_L3_OW) {
+        conv3x3_relu_gap_acc_c_rvv_uk96x48(pad, w16, bq, gap_sum);
+        return;
+    }
+#endif
     const int32_t pad_hw = pad_h * pad_w;
     for (int32_t oc0 = 0; oc0 < out_c; ) {
         size_t vl = __riscv_vsetvl_e32m4((size_t)(out_c - oc0));
@@ -1211,16 +1558,34 @@ int tinyspeech_int8_fixed_qparams_ready(void) {
     return g_fixed_qparams_valid;
 }
 
-Tensor tinyspeech_run_inference_int8(const Tensor *input,
-                                     const Tensor *conv1_bias,
-                                     const Tensor *conv2_bias,
-                                     const Tensor *conv3_bias,
-                                     tinyspeech_cycle_profile_t *profile) {
-    u_int8_t out_shape[2] = {1, TS_FC_OUT};
+static void fc_logits_i8(const int8_t *act, float out_scale, float *dst) {
+    for (int32_t oc = 0; oc < TS_FC_OUT; oc++) {
+        const int8_t *wrow = g_wfc_q + oc * TS_FC_IN;
+        int32_t acc = 0;
+        for (int32_t i = 0; i < TS_FC_IN; i += 8) {
+            acc += (int32_t)act[i + 0] * (int32_t)wrow[i + 0];
+            acc += (int32_t)act[i + 1] * (int32_t)wrow[i + 1];
+            acc += (int32_t)act[i + 2] * (int32_t)wrow[i + 2];
+            acc += (int32_t)act[i + 3] * (int32_t)wrow[i + 3];
+            acc += (int32_t)act[i + 4] * (int32_t)wrow[i + 4];
+            acc += (int32_t)act[i + 5] * (int32_t)wrow[i + 5];
+            acc += (int32_t)act[i + 6] * (int32_t)wrow[i + 6];
+            acc += (int32_t)act[i + 7] * (int32_t)wrow[i + 7];
+        }
+        dst[oc] = (float)acc * out_scale;
+    }
+}
+
+static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
+                                                    const Tensor *conv1_bias,
+                                                    const Tensor *conv2_bias,
+                                                    const Tensor *conv3_bias,
+                                                    tinyspeech_cycle_profile_t *profile) {
+    uint8_t out_shape[2] = {1, TS_FC_OUT};
     Tensor logits = f_create_tensor(out_shape, 2);
+    memset(logits.f_data, 0, (size_t)TS_FC_OUT * sizeof(float));
 
     if (!g_prepared || input == NULL || profile == NULL || input->dims < 4) {
-        memset(logits.f_data, 0, (size_t)TS_FC_OUT * sizeof(float));
         return logits;
     }
     if ((int32_t)input->shape[0] != 1 ||
@@ -1228,7 +1593,6 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
         (int32_t)input->shape[2] != TS_IN_H ||
         (int32_t)input->shape[3] != TS_IN_W ||
         input->size < (TS_IN_H * TS_IN_W)) {
-        memset(logits.f_data, 0, (size_t)TS_FC_OUT * sizeof(float));
         return logits;
     }
 
@@ -1246,7 +1610,6 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
     profile->input_cast = t1 - t0;
 
     const float s0 = 1.0f;
-    const int use_fixed = g_fixed_qparams_valid;
 #if defined(__riscv_vector)
     const int16_t *w1_conv16 = g_w1_pack16;
     const int16_t *w2_conv16 = g_w2_pack16;
@@ -1261,155 +1624,205 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
 #endif
 
     t0 = rdcycle64_int8();
-    if (!use_fixed) {
-        make_bias_q(conv1_bias, s0, g_w1_scale, g_bias1_q, TS_L1_OC);
-    }
+    make_bias_q(conv1_bias, s0, g_w1_scale, g_bias1_q, TS_L1_OC);
     pad_input_1ch(g_in0, TS_IN_H, TS_IN_W, g_pad1, TS_IN_H + 2, TS_IN_W + 2);
     float s1 = 1.0f;
 #if defined(__riscv_vector)
     conv3x3_pool2x2_acc_1c_rvv(g_pad1, TS_IN_W + 2, w1_conv16, g_bias1_q,
                                TS_L1_OC, TS_L1_PH, TS_L1_PW, g_pool1_acc);
-    if (use_fixed) {
-        requant_relu_from_acc_to_padded_fixed(g_pool1_acc, TS_L1_OC, TS_L1_PH, TS_L1_PW,
-                                              g_mul1_q31, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
-        s1 = g_s1_fixed;
-    } else {
-        int32_t max1 = 0;
-        s1 = requant_relu_from_acc_to_padded(g_pool1_acc, TS_L1_OC, TS_L1_PH, TS_L1_PW,
-                                             s0, g_w1_scale, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2, &max1);
-        calib_track_max(1, max1);
-    }
+    int32_t max1 = 0;
+    s1 = requant_relu_from_acc_to_padded(g_pool1_acc, TS_L1_OC, TS_L1_PH, TS_L1_PW,
+                                         s0, g_w1_scale, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2, &max1);
+    calib_track_max(1, max1);
 #else
     conv3x3_acc_1c(g_pad1, TS_IN_W + 2, w1_conv8, w1_conv16, g_bias1_q, TS_L1_OC, TS_L1_OH, TS_L1_OW, g_conv1_acc);
-    if (use_fixed) {
-        requant_pool_relu_fixed(g_conv1_acc, TS_L1_OC, TS_L1_OH, TS_L1_OW,
-                                TS_L1_PH, TS_L1_PW, g_mul1_q31, g_act1);
-        s1 = g_s1_fixed;
-    } else {
-        int32_t max1 = 0;
-        s1 = requant_pool_relu(g_conv1_acc, TS_L1_OC, TS_L1_OH, TS_L1_OW,
-                               TS_L1_PH, TS_L1_PW, s0, g_w1_scale, g_act1, &max1);
-        calib_track_max(1, max1);
-    }
+    int32_t max1 = 0;
+    s1 = requant_pool_relu(g_conv1_acc, TS_L1_OC, TS_L1_OH, TS_L1_OW,
+                           TS_L1_PH, TS_L1_PW, s0, g_w1_scale, g_act1, &max1);
+    calib_track_max(1, max1);
 #endif
     t1 = rdcycle64_int8();
     profile->conv1_pool1 = t1 - t0;
 
     t0 = rdcycle64_int8();
-    if (!use_fixed) {
-        make_bias_q(conv2_bias, s1, g_w2_scale, g_bias2_q, TS_L2_OC);
-    }
+    make_bias_q(conv2_bias, s1, g_w2_scale, g_bias2_q, TS_L2_OC);
 #if !defined(__riscv_vector)
     pad_input_c(g_act1, TS_L2_IC, TS_L2_OH, TS_L2_OW, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
 #endif
     float s2 = 1.0f;
 #if defined(__riscv_vector)
-    if (use_fixed) {
-        conv3x3_pool2x2_requant_relu_to_padded_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
-                                                     w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW,
-                                                     g_mul2_q31, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
-        s2 = g_s2_fixed;
-    } else {
-        int32_t max2 = 0;
-        conv3x3_pool2x2_acc_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
-                                  w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW, g_pool2_acc);
-        s2 = requant_relu_from_acc_to_padded(g_pool2_acc, TS_L2_OC, TS_L2_PH, TS_L2_PW,
-                                             s1, g_w2_scale, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2, &max2);
-        calib_track_max(2, max2);
-    }
+    int32_t max2 = 0;
+    conv3x3_pool2x2_acc_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
+                              w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW, g_pool2_acc);
+    s2 = requant_relu_from_acc_to_padded(g_pool2_acc, TS_L2_OC, TS_L2_PH, TS_L2_PW,
+                                         s1, g_w2_scale, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2, &max2);
+    calib_track_max(2, max2);
 #else
     conv3x3_acc_c(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2, w2_conv8, w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_OH, TS_L2_OW, g_conv2_acc);
-    if (use_fixed) {
-        requant_pool_relu_fixed(g_conv2_acc, TS_L2_OC, TS_L2_OH, TS_L2_OW,
-                                TS_L2_PH, TS_L2_PW, g_mul2_q31, g_act2);
-        s2 = g_s2_fixed;
-    } else {
-        int32_t max2 = 0;
-        s2 = requant_pool_relu(g_conv2_acc, TS_L2_OC, TS_L2_OH, TS_L2_OW,
-                               TS_L2_PH, TS_L2_PW, s1, g_w2_scale, g_act2, &max2);
-        calib_track_max(2, max2);
-    }
+    int32_t max2 = 0;
+    s2 = requant_pool_relu(g_conv2_acc, TS_L2_OC, TS_L2_OH, TS_L2_OW,
+                           TS_L2_PH, TS_L2_PW, s1, g_w2_scale, g_act2, &max2);
+    calib_track_max(2, max2);
 #endif
     t1 = rdcycle64_int8();
     profile->conv2_pool2 = t1 - t0;
 
     t0 = rdcycle64_int8();
-    if (!use_fixed) {
-        make_bias_q(conv3_bias, s2, g_w3_scale, g_bias3_q, TS_L3_OC);
-    }
+    make_bias_q(conv3_bias, s2, g_w3_scale, g_bias3_q, TS_L3_OC);
     float s3 = 1.0f;
 #if defined(__riscv_vector)
     conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
                                w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc);
-    if (use_fixed) {
-        for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
-            int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
-            g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
+    int32_t max_avg = 0;
+    for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
+        int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
+        g_gap3_acc[oc] = avg_acc;
+        if (avg_acc > max_avg) {
+            max_avg = avg_acc;
         }
-        s3 = g_s3_fixed;
+    }
+    s3 = out_scale_from_max(s2, g_w3_scale, max_avg);
+    uint32_t mul3_q31 = requant_mul_q31_from_max(max_avg);
+    for (int32_t i = 0; i < TS_L3_OC; i++) {
+        g_act3[i] = requant_u7_from_acc(g_gap3_acc[i], mul3_q31);
+    }
+    calib_track_max(3, max_avg);
+#else
+    int32_t max3 = 0;
+    s3 = conv_relu_gap_to_i8(g_act2, s2, w3_conv8, w3_conv16, g_w3_scale, g_bias3_q, g_act3, &max3);
+    calib_track_max(3, max3);
+#endif
+    t1 = rdcycle64_int8();
+    profile->conv3_gap = t1 - t0;
+
+    t0 = rdcycle64_int8();
+    fc_logits_i8(g_act3, s3 * g_wfc_scale, logits.f_data);
+    t1 = rdcycle64_int8();
+    profile->fc_logits = t1 - t0;
+    profile->softmax = 0;
+
+    return logits;
+}
+
+static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
+                                                  tinyspeech_cycle_profile_t *profile) {
+    uint8_t out_shape[2] = {1, TS_FC_OUT};
+    Tensor logits = f_create_tensor(out_shape, 2);
+    memset(logits.f_data, 0, (size_t)TS_FC_OUT * sizeof(float));
+
+    if (!g_prepared || input == NULL || profile == NULL || input->dims < 4) {
+        return logits;
+    }
+    if ((int32_t)input->shape[0] != 1 ||
+        (int32_t)input->shape[1] != 1 ||
+        (int32_t)input->shape[2] != TS_IN_H ||
+        (int32_t)input->shape[3] != TS_IN_W ||
+        input->size < (TS_IN_H * TS_IN_W)) {
+        return logits;
+    }
+
+    uint64_t t0 = rdcycle64_int8();
+    if (input->data != NULL) {
+        memcpy(g_in0, input->data, (size_t)TS_IN_H * TS_IN_W * sizeof(int8_t));
+    } else if (input->f_data != NULL) {
+        for (int32_t i = 0; i < TS_IN_H * TS_IN_W; i++) {
+            g_in0[i] = clamp_i8(round_to_i32(input->f_data[i]));
+        }
     } else {
-        int32_t max_avg = 0;
-        for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
-            int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
-            g_gap3_acc[oc] = avg_acc;
-            if (avg_acc > max_avg) {
-                max_avg = avg_acc;
-            }
-        }
-        s3 = out_scale_from_max(s2, g_w3_scale, max_avg);
-        uint32_t mul3_q31 = requant_mul_q31_from_max(max_avg);
-        for (int32_t i = 0; i < TS_L3_OC; i++) {
-            g_act3[i] = requant_u7_from_acc(g_gap3_acc[i], mul3_q31);
-        }
-        calib_track_max(3, max_avg);
+        memset(g_in0, 0, (size_t)TS_IN_H * TS_IN_W * sizeof(int8_t));
+    }
+    uint64_t t1 = rdcycle64_int8();
+    profile->input_cast = t1 - t0;
+
+#if defined(__riscv_vector)
+    const int16_t *w1_conv16 = g_w1_pack16;
+    const int16_t *w2_conv16 = g_w2_pack16;
+    const int16_t *w3_conv16 = g_w3_pack16;
+#else
+    const int8_t *w1_conv8 = g_w1_q;
+    const int8_t *w2_conv8 = g_w2_q;
+    const int8_t *w3_conv8 = g_w3_q;
+    const int16_t *w1_conv16 = NULL;
+    const int16_t *w2_conv16 = NULL;
+    const int16_t *w3_conv16 = NULL;
+#endif
+
+    t0 = rdcycle64_int8();
+    pad_input_1ch(g_in0, TS_IN_H, TS_IN_W, g_pad1, TS_IN_H + 2, TS_IN_W + 2);
+#if defined(__riscv_vector)
+    conv3x3_pool2x2_acc_1c_rvv(g_pad1, TS_IN_W + 2, w1_conv16, g_bias1_q,
+                               TS_L1_OC, TS_L1_PH, TS_L1_PW, g_pool1_acc);
+    requant_relu_from_acc_to_padded_fixed(g_pool1_acc, TS_L1_OC, TS_L1_PH, TS_L1_PW,
+                                          g_mul1_q31, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
+#else
+    conv3x3_acc_1c(g_pad1, TS_IN_W + 2, w1_conv8, w1_conv16, g_bias1_q, TS_L1_OC, TS_L1_OH, TS_L1_OW, g_conv1_acc);
+    requant_pool_relu_fixed(g_conv1_acc, TS_L1_OC, TS_L1_OH, TS_L1_OW,
+                            TS_L1_PH, TS_L1_PW, g_mul1_q31, g_act1);
+    pad_input_c(g_act1, TS_L2_IC, TS_L2_OH, TS_L2_OW, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
+#endif
+    t1 = rdcycle64_int8();
+    profile->conv1_pool1 = t1 - t0;
+
+    t0 = rdcycle64_int8();
+#if defined(__riscv_vector)
+    conv3x3_pool2x2_requant_relu_to_padded_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
+                                                 w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW,
+                                                 g_mul2_q31, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
+#else
+    conv3x3_acc_c(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2, w2_conv8, w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_OH, TS_L2_OW, g_conv2_acc);
+    requant_pool_relu_fixed(g_conv2_acc, TS_L2_OC, TS_L2_OH, TS_L2_OW,
+                            TS_L2_PH, TS_L2_PW, g_mul2_q31, g_act2);
+    pad_input_c(g_act2, TS_L3_IC, TS_L3_OH, TS_L3_OW, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
+#endif
+    t1 = rdcycle64_int8();
+    profile->conv2_pool2 = t1 - t0;
+
+    t0 = rdcycle64_int8();
+#if defined(__riscv_vector)
+    conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
+                               w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc);
+    for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
+        int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
+        g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
     }
 #else
-    if (use_fixed) {
-        pad_input_c(g_act2, TS_L3_IC, TS_L3_OH, TS_L3_OW, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
-        conv3x3_acc_c(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2, w3_conv8, w3_conv16, g_bias3_q,
-                      TS_L3_OC, TS_L3_OH, TS_L3_OW, g_conv3_acc);
-        for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
-            int64_t sum_pos = 0;
-            const int32_t *src = g_conv3_acc + oc * (TS_L3_OH * TS_L3_OW);
-            for (int32_t i = 0; i < TS_L3_OH * TS_L3_OW; i++) {
-                int32_t acc = src[i];
-                if (acc > 0) {
-                    sum_pos += acc;
-                }
+    conv3x3_acc_c(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2, w3_conv8, w3_conv16, g_bias3_q,
+                  TS_L3_OC, TS_L3_OH, TS_L3_OW, g_conv3_acc);
+    for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
+        int64_t sum_pos = 0;
+        const int32_t *src = g_conv3_acc + oc * (TS_L3_OH * TS_L3_OW);
+        for (int32_t i = 0; i < TS_L3_OH * TS_L3_OW; i++) {
+            int32_t acc = src[i];
+            if (acc > 0) {
+                sum_pos += acc;
             }
-            int32_t avg_acc = (int32_t)((sum_pos + (TS_GAP_AREA / 2)) / TS_GAP_AREA);
-            g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
         }
-        s3 = g_s3_fixed;
-    } else {
-        int32_t max3 = 0;
-        s3 = conv_relu_gap_to_i8(g_act2, s2, w3_conv8, w3_conv16, g_w3_scale, g_bias3_q, g_act3, &max3);
-        calib_track_max(3, max3);
+        int32_t avg_acc = (int32_t)((sum_pos + (TS_GAP_AREA / 2)) / TS_GAP_AREA);
+        g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
     }
 #endif
     t1 = rdcycle64_int8();
     profile->conv3_gap = t1 - t0;
 
     t0 = rdcycle64_int8();
-    float out_scale = s3 * g_wfc_scale;
-    for (int32_t oc = 0; oc < TS_FC_OUT; oc++) {
-        const int8_t *wrow = g_wfc_q + oc * TS_FC_IN;
-        int32_t acc = 0;
-        for (int32_t i = 0; i < TS_FC_IN; i += 8) {
-            acc += (int32_t)g_act3[i + 0] * (int32_t)wrow[i + 0];
-            acc += (int32_t)g_act3[i + 1] * (int32_t)wrow[i + 1];
-            acc += (int32_t)g_act3[i + 2] * (int32_t)wrow[i + 2];
-            acc += (int32_t)g_act3[i + 3] * (int32_t)wrow[i + 3];
-            acc += (int32_t)g_act3[i + 4] * (int32_t)wrow[i + 4];
-            acc += (int32_t)g_act3[i + 5] * (int32_t)wrow[i + 5];
-            acc += (int32_t)g_act3[i + 6] * (int32_t)wrow[i + 6];
-            acc += (int32_t)g_act3[i + 7] * (int32_t)wrow[i + 7];
-        }
-        logits.f_data[oc] = (float)acc * out_scale;
-    }
+    fc_logits_i8(g_act3, g_s3_fixed * g_wfc_scale, logits.f_data);
     t1 = rdcycle64_int8();
     profile->fc_logits = t1 - t0;
     profile->softmax = 0;
 
     return logits;
+}
+
+Tensor tinyspeech_run_inference_int8(const Tensor *input,
+                                     const Tensor *conv1_bias,
+                                     const Tensor *conv2_bias,
+                                     const Tensor *conv3_bias,
+                                     tinyspeech_cycle_profile_t *profile) {
+    if (g_fixed_qparams_valid) {
+        (void)conv1_bias;
+        (void)conv2_bias;
+        (void)conv3_bias;
+        return tinyspeech_run_inference_int8_fixed(input, profile);
+    }
+    return tinyspeech_run_inference_int8_dynamic(input, conv1_bias, conv2_bias, conv3_bias, profile);
 }

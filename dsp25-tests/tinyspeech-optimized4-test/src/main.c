@@ -290,6 +290,14 @@ int app_main(void) {
 #endif
 #if TINYSPEECH_INT8_PIPELINE
     printf("  int8 path: enabled (fixed-shape quantized conv/gap/fc)\n");
+#if defined(__riscv_vector) && TINYSPEECH_INT8_RVV_UKERNELS
+    printf("  int8 ukrn: enabled (conv2+pool2 and conv3+gap fixed-shape RVV)\n");
+#elif defined(__riscv_vector)
+    printf("  int8 ukrn: disabled (generic RVV kernels)\n");
+#else
+    printf("  int8 ukrn: scalar-only build (no RVV)\n");
+#endif
+    printf("  int8 mode: fixed-only fast path enabled after calibration\n");
 #else
     printf("  int8 path: disabled\n");
 #endif

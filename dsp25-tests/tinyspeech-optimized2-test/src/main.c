@@ -262,6 +262,7 @@ int app_main(void) {
     printf("=== DSP25 TinySpeech Optimized2 Test (Implicit GEMM RVV) ===\n");
 #if defined(__riscv_vector)
     printf("  kernel mode: RVV implicit-GEMM convolution/matmul\n");
+    printf("  weights  : prepacked K-major RVV layout\n");
 #else
     printf("  kernel mode: scalar fallback (no RVV)\n");
 #endif
@@ -285,6 +286,8 @@ int app_main(void) {
 #if !TINYSPEECH_ENABLE_TRACE
     printf("  note     : layer trace capture disabled (perf mode)\n");
 #endif
+
+    tinyspeech_prepare_runtime();
 
     uint32_t pass = 0;
     uint32_t fail = 0;

@@ -15,5 +15,8 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
                        u_int8_t stride, u_int8_t padding);
 Tensor batchnorm2d(Tensor* input, Tensor* gamma, Tensor* beta, Tensor* scale, Tensor* mean, Tensor* variance);
 Tensor adaptive_avg_pool2d(Tensor *input);
+void tinyspeech_prepack_conv_weights(const Tensor *conv1_w,
+                                     const Tensor *conv2_w,
+                                     const Tensor *conv3_w);
 
 #endif

@@ -37,5 +37,6 @@ Tensor tinyspeech_run_inference(Tensor *input);
 int32_t tinyspeech_argmax(const Tensor *probs, float *max_prob);
 const tinyspeech_debug_trace_t *tinyspeech_debug_last_trace(void);
 const tinyspeech_cycle_profile_t *tinyspeech_last_cycle_profile(void);
+void tinyspeech_prepare_runtime(void);
 
 #endif

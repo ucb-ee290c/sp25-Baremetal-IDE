@@ -14,6 +14,10 @@
 #define TINYSPEECH_CONV_FUSE_RELU 0
 #endif
 
+#ifndef TINYSPEECH_PREPACK_WEIGHTS
+#define TINYSPEECH_PREPACK_WEIGHTS 1
+#endif
+
 static inline float tensor_get_value(const Tensor *t, int32_t idx) {
     if (t->f_data != NULL) {
         return t->f_data[idx];
@@ -138,9 +142,9 @@ static void conv2d_scalar_impl(const Tensor *input,
 #define TINYSPEECH_PACK_CONV3_SIZE (96 * 48 * 9)
 #define TINYSPEECH_PADDED_IN_MAX_FLOATS (48 * 14 * 96)
 
-static float g_conv1_pack[TINYSPEECH_PACK_CONV1_SIZE];
-static float g_conv2_pack[TINYSPEECH_PACK_CONV2_SIZE];
-static float g_conv3_pack[TINYSPEECH_PACK_CONV3_SIZE];
+static float g_conv1_pack[TINYSPEECH_PACK_CONV1_SIZE] __attribute__((aligned(64)));
+static float g_conv2_pack[TINYSPEECH_PACK_CONV2_SIZE] __attribute__((aligned(64)));
+static float g_conv3_pack[TINYSPEECH_PACK_CONV3_SIZE] __attribute__((aligned(64)));
 static float g_padded_in_buf[TINYSPEECH_PADDED_IN_MAX_FLOATS];
 
 static const float *g_conv1_src = NULL;
@@ -193,12 +197,58 @@ static inline void pack_oc_major_to_k_major(const float *src,
     }
 }
 
+static inline int tensor_matches_conv_shape(const Tensor *weights, int32_t out_channels, int32_t K) {
+    if ((weights == NULL) || (weights->f_data == NULL) || (weights->dims < 4)) {
+        return 0;
+    }
+
+    if ((int32_t)weights->shape[0] != out_channels) {
+        return 0;
+    }
+
+    int32_t k = (int32_t)weights->shape[1] * (int32_t)weights->shape[2] * (int32_t)weights->shape[3];
+    return (k == K);
+}
+
+void tinyspeech_prepack_conv_weights(const Tensor *conv1_w,
+                                     const Tensor *conv2_w,
+                                     const Tensor *conv3_w) {
+#if TINYSPEECH_PREPACK_WEIGHTS
+    if (tensor_matches_conv_shape(conv1_w, 24, 9)) {
+        pack_oc_major_to_k_major(conv1_w->f_data, g_conv1_pack, 24, 9);
+        g_conv1_src = conv1_w->f_data;
+    }
+    if (tensor_matches_conv_shape(conv2_w, 48, 216)) {
+        pack_oc_major_to_k_major(conv2_w->f_data, g_conv2_pack, 48, 216);
+        g_conv2_src = conv2_w->f_data;
+    }
+    if (tensor_matches_conv_shape(conv3_w, 96, 432)) {
+        pack_oc_major_to_k_major(conv3_w->f_data, g_conv3_pack, 96, 432);
+        g_conv3_src = conv3_w->f_data;
+    }
+#else
+    (void)conv1_w;
+    (void)conv2_w;
+    (void)conv3_w;
+#endif
+}
+
 static const float *get_packed_conv_weights(const Tensor *weights,
                                             int32_t out_channels,
                                             int32_t K) {
     const float *src = weights->f_data;
     if (src == NULL) {
         return NULL;
+    }
+
+    if (src == g_conv1_src) {
+        return g_conv1_pack;
+    }
+    if (src == g_conv2_src) {
+        return g_conv2_pack;
+    }
+    if (src == g_conv3_src) {
+        return g_conv3_pack;
     }
 
     if ((out_channels == 24) && (K == 9)) {
@@ -1241,6 +1291,16 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
         }
     }
     return 1;
+}
+#endif
+
+#if !defined(__riscv_vector)
+void tinyspeech_prepack_conv_weights(const Tensor *conv1_w,
+                                     const Tensor *conv2_w,
+                                     const Tensor *conv3_w) {
+    (void)conv1_w;
+    (void)conv2_w;
+    (void)conv3_w;
 }
 #endif
 

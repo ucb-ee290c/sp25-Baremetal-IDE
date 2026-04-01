@@ -23,7 +23,11 @@
 #define TINYSPEECH_FP16_MIXED 0
 #endif
 
-#if TINYSPEECH_FP16_MIXED && defined(__riscv_vector) && defined(__riscv_zvfh) && (__riscv_zvfh > 0)
+#ifndef TINYSPEECH_FP16_FC_ACCEL
+#define TINYSPEECH_FP16_FC_ACCEL 0
+#endif
+
+#if TINYSPEECH_FP16_MIXED && TINYSPEECH_FP16_FC_ACCEL && defined(__riscv_vector) && defined(__riscv_zvfh) && (__riscv_zvfh > 0)
 #define TINYSPEECH_FP16_RVV_AVAILABLE 1
 #else
 #define TINYSPEECH_FP16_RVV_AVAILABLE 0

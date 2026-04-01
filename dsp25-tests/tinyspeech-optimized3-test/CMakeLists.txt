@@ -48,6 +48,7 @@ target_compile_definitions(tinyspeech-optimized3-test PRIVATE
   TINYSPEECH_USE_TENSOR_ARENA=1
   TINYSPEECH_TENSOR_ARENA_SIZE=524288
   TINYSPEECH_FP16_MIXED=${TINYSPEECH_FP16_MIXED_VALUE}
+  TINYSPEECH_FP16_FC_ACCEL=0
 )
 
 target_link_libraries(tinyspeech-optimized3-test PRIVATE

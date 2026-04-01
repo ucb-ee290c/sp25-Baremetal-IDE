@@ -112,6 +112,24 @@ static inline int32_t round_to_i32(float x) {
     return (int32_t)lrintf(x);
 }
 
+static inline uint32_t requant_mul_q31_from_max(int32_t max_acc) {
+    if (max_acc <= 0) {
+        return 0;
+    }
+    return (uint32_t)(((uint64_t)127u << 31) / (uint32_t)max_acc);
+}
+
+static inline int8_t requant_u7_from_acc(int32_t v, uint32_t mul_q31) {
+    if (v <= 0 || mul_q31 == 0) {
+        return 0;
+    }
+    int32_t q = (int32_t)(((int64_t)v * (int64_t)mul_q31 + (1ll << 30)) >> 31);
+    if (q > 127) {
+        q = 127;
+    }
+    return (int8_t)q;
+}
+
 static float quantize_weights_symmetric(const float *src, int32_t n, int8_t *dst) {
     float max_abs = 0.0f;
     for (int32_t i = 0; i < n; i++) {
@@ -543,11 +561,83 @@ static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
         size_t vl = __riscv_vsetvl_e32m4((size_t)(out_c - oc0));
         vint32m4_t vsum = __riscv_vmv_v_x_i32m4(0, vl);
         const vint32m4_t vzero = __riscv_vmv_v_x_i32m4(0, vl);
+        const vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
 
         for (int32_t oh = 0; oh < out_h; oh++) {
             int32_t ow = 0;
+            for (; ow + 3 < out_w; ow += 4) {
+                vint32m4_t vacc0 = vbias;
+                vint32m4_t vacc1 = vbias;
+                vint32m4_t vacc2 = vbias;
+                vint32m4_t vacc3 = vbias;
+
+                int32_t k = 0;
+                for (int32_t ic = 0; ic < in_c; ic++) {
+                    const int8_t *p0 = pad + ic * pad_hw + oh * pad_w + ow;
+                    const int8_t *p1 = p0 + 1;
+                    const int8_t *p2 = p0 + 2;
+                    const int8_t *p3 = p0 + 3;
+                    vint16m2_t vw;
+
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 0) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 1) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 2) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 3) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[pad_w + 0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[pad_w + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 4) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[pad_w + 1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[pad_w + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 5) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[pad_w + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[pad_w + 2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[pad_w + 2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[pad_w + 2], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 6) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 0], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 0], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[(2 * pad_w) + 0], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[(2 * pad_w) + 0], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 7) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 1], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 1], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[(2 * pad_w) + 1], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[(2 * pad_w) + 1], vw, vl);
+                    vw = __riscv_vle16_v_i16m2(w16 + (k + 8) * out_c + oc0, vl);
+                    vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, p0[(2 * pad_w) + 2], vw, vl);
+                    vacc1 = __riscv_vwmacc_vx_i32m4(vacc1, p1[(2 * pad_w) + 2], vw, vl);
+                    vacc2 = __riscv_vwmacc_vx_i32m4(vacc2, p2[(2 * pad_w) + 2], vw, vl);
+                    vacc3 = __riscv_vwmacc_vx_i32m4(vacc3, p3[(2 * pad_w) + 2], vw, vl);
+                    k += TS_K;
+                }
+
+                vacc0 = __riscv_vmax_vv_i32m4(vacc0, vzero, vl);
+                vacc1 = __riscv_vmax_vv_i32m4(vacc1, vzero, vl);
+                vacc2 = __riscv_vmax_vv_i32m4(vacc2, vzero, vl);
+                vacc3 = __riscv_vmax_vv_i32m4(vacc3, vzero, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc0, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc1, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc2, vl);
+                vsum = __riscv_vadd_vv_i32m4(vsum, vacc3, vl);
+            }
+
             for (; ow + 1 < out_w; ow += 2) {
-                vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
                 vint32m4_t vacc0 = vbias;
                 vint32m4_t vacc1 = vbias;
 
@@ -594,7 +684,6 @@ static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
             }
 
             if (ow < out_w) {
-                vint32m4_t vbias = __riscv_vle32_v_i32m4(bq + oc0, vl);
                 vint32m4_t vacc = vbias;
                 int32_t k = 0;
                 for (int32_t ic = 0; ic < in_c; ic++) {
@@ -655,7 +744,7 @@ static float requant_pool_relu(const int32_t *conv_acc,
             out_scale = 1.0f;
         }
     }
-    float rq = (in_scale * w_scale) / out_scale;
+    uint32_t mul_q31 = requant_mul_q31_from_max(max_acc);
 
     for (int32_t oc = 0; oc < out_c; oc++) {
         const int32_t *src_c = conv_acc + oc * conv_h * conv_w;
@@ -679,10 +768,7 @@ static float requant_pool_relu(const int32_t *conv_acc,
                 if (v > m) {
                     m = v;
                 }
-                if (m < 0) {
-                    m = 0;
-                }
-                dst_c[ph * pool_w + pw] = clamp_u7(round_to_i32((float)m * rq));
+                dst_c[ph * pool_w + pw] = requant_u7_from_acc(m, mul_q31);
             }
         }
     }
@@ -690,12 +776,17 @@ static float requant_pool_relu(const int32_t *conv_acc,
     return out_scale;
 }
 
-static float requant_relu_from_acc(const int32_t *acc,
-                                   int32_t count,
-                                   float in_scale,
-                                   float w_scale,
-                                   int8_t *dst) {
+static float requant_relu_from_acc_to_padded(const int32_t *acc,
+                                             int32_t c,
+                                             int32_t h,
+                                             int32_t w,
+                                             float in_scale,
+                                             float w_scale,
+                                             int8_t *dst_pad,
+                                             int32_t pad_h,
+                                             int32_t pad_w) {
     int32_t max_acc = 0;
+    const int32_t count = c * h * w;
     for (int32_t i = 0; i < count; i++) {
         int32_t v = acc[i];
         if (v > max_acc) {
@@ -710,14 +801,21 @@ static float requant_relu_from_acc(const int32_t *acc,
             out_scale = 1.0f;
         }
     }
-    float rq = (in_scale * w_scale) / out_scale;
+    uint32_t mul_q31 = requant_mul_q31_from_max(max_acc);
 
-    for (int32_t i = 0; i < count; i++) {
-        int32_t v = acc[i];
-        if (v < 0) {
-            v = 0;
+    memset(dst_pad, 0, (size_t)(c * pad_h * pad_w) * sizeof(int8_t));
+    const int32_t src_hw = h * w;
+    const int32_t dst_hw = pad_h * pad_w;
+    for (int32_t ch = 0; ch < c; ch++) {
+        const int32_t *src_c = acc + ch * src_hw;
+        int8_t *dst_c = dst_pad + ch * dst_hw;
+        for (int32_t i = 0; i < h; i++) {
+            int8_t *drow = dst_c + (i + 1) * pad_w + 1;
+            const int32_t *srow = src_c + i * w;
+            for (int32_t j = 0; j < w; j++) {
+                drow[j] = requant_u7_from_acc(srow[j], mul_q31);
+            }
         }
-        dst[i] = clamp_u7(round_to_i32((float)v * rq));
     }
 
     return out_scale;
@@ -758,11 +856,10 @@ static float conv_relu_gap_to_i8(const int8_t *input,
             out_scale = 1.0f;
         }
     }
-    float rq = (in_scale * w_scale) / out_scale;
+    uint32_t mul_q31 = requant_mul_q31_from_max(max_avg);
 
     for (int32_t i = 0; i < TS_L3_OC; i++) {
-        int32_t q = round_to_i32((float)g_gap3_acc[i] * rq);
-        out_i8[i] = clamp_u7(q);
+        out_i8[i] = requant_u7_from_acc(g_gap3_acc[i], mul_q31);
     }
 
     return out_scale;
@@ -861,8 +958,8 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
 #if defined(__riscv_vector)
     conv3x3_pool2x2_acc_1c_rvv(g_pad1, TS_IN_W + 2, w1_conv16, g_bias1_q,
                                TS_L1_OC, TS_L1_PH, TS_L1_PW, g_pool1_acc);
-    float s1 = requant_relu_from_acc(g_pool1_acc, TS_L1_OC * TS_L1_PH * TS_L1_PW,
-                                     s0, g_w1_scale, g_act1);
+    float s1 = requant_relu_from_acc_to_padded(g_pool1_acc, TS_L1_OC, TS_L1_PH, TS_L1_PW,
+                                               s0, g_w1_scale, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
 #else
     conv3x3_acc_1c(g_pad1, TS_IN_W + 2, w1_conv8, w1_conv16, g_bias1_q, TS_L1_OC, TS_L1_OH, TS_L1_OW, g_conv1_acc);
     float s1 = requant_pool_relu(g_conv1_acc, TS_L1_OC, TS_L1_OH, TS_L1_OW, TS_L1_PH, TS_L1_PW, s0, g_w1_scale, g_act1);
@@ -872,12 +969,14 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
 
     t0 = rdcycle64_int8();
     make_bias_q(conv2_bias, s1, g_w2_scale, g_bias2_q, TS_L2_OC);
+#if !defined(__riscv_vector)
     pad_input_c(g_act1, TS_L2_IC, TS_L2_OH, TS_L2_OW, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
+#endif
 #if defined(__riscv_vector)
     conv3x3_pool2x2_acc_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
                               w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW, g_pool2_acc);
-    float s2 = requant_relu_from_acc(g_pool2_acc, TS_L2_OC * TS_L2_PH * TS_L2_PW,
-                                     s1, g_w2_scale, g_act2);
+    float s2 = requant_relu_from_acc_to_padded(g_pool2_acc, TS_L2_OC, TS_L2_PH, TS_L2_PW,
+                                               s1, g_w2_scale, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
 #else
     conv3x3_acc_c(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2, w2_conv8, w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_OH, TS_L2_OW, g_conv2_acc);
     float s2 = requant_pool_relu(g_conv2_acc, TS_L2_OC, TS_L2_OH, TS_L2_OW, TS_L2_PH, TS_L2_PW, s1, g_w2_scale, g_act2);
@@ -888,7 +987,6 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
     t0 = rdcycle64_int8();
     make_bias_q(conv3_bias, s2, g_w3_scale, g_bias3_q, TS_L3_OC);
 #if defined(__riscv_vector)
-    pad_input_c(g_act2, TS_L3_IC, TS_L3_OH, TS_L3_OW, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
     conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
                                w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc);
     int32_t max_avg = 0;
@@ -906,9 +1004,9 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
             s3 = 1.0f;
         }
     }
-    float rq3 = (s2 * g_w3_scale) / s3;
+    uint32_t mul3_q31 = requant_mul_q31_from_max(max_avg);
     for (int32_t i = 0; i < TS_L3_OC; i++) {
-        g_act3[i] = clamp_u7(round_to_i32((float)g_gap3_acc[i] * rq3));
+        g_act3[i] = requant_u7_from_acc(g_gap3_acc[i], mul3_q31);
     }
 #else
     float s3 = conv_relu_gap_to_i8(g_act2, s2, w3_conv8, w3_conv16, g_w3_scale, g_bias3_q, g_act3);

@@ -1210,6 +1210,177 @@ static inline vfloat32m4_t conv_pool2x2_block_rvv_interior_24ic(const float *in_
     return vmax;
 }
 
+static inline void conv_pool2x2_block2_rvv_interior_24ic(const float *in_n,
+                                                          const float *wpack,
+                                                          vfloat32m4_t vbias,
+                                                          int32_t out_channels,
+                                                          int32_t in_height,
+                                                          int32_t in_width,
+                                                          int32_t oh0,
+                                                          int32_t ow0,
+                                                          int32_t oc0,
+                                                          size_t vl,
+                                                          float inv_scale,
+                                                          vfloat32m4_t *out_left,
+                                                          vfloat32m4_t *out_right) {
+    const int32_t in_hw = in_height * in_width;
+
+    vfloat32m4_t l00 = __riscv_vfmv_v_f_f32m4(0.0f, vl);
+    vfloat32m4_t l01 = l00;
+    vfloat32m4_t l10 = l00;
+    vfloat32m4_t l11 = l00;
+    vfloat32m4_t r00 = l00;
+    vfloat32m4_t r01 = l00;
+    vfloat32m4_t r10 = l00;
+    vfloat32m4_t r11 = l00;
+
+    int32_t kbase = 0;
+    for (int32_t ic = 0; ic < 24; ic++, kbase += 9) {
+        const float *p = in_n + ic * in_hw + oh0 * in_width + ow0;
+
+        const float x00 = p[0];
+        const float x01 = p[1];
+        const float x02 = p[2];
+        const float x03 = p[3];
+        const float x04 = p[4];
+        const float x05 = p[5];
+        const float x10 = p[in_width + 0];
+        const float x11 = p[in_width + 1];
+        const float x12 = p[in_width + 2];
+        const float x13 = p[in_width + 3];
+        const float x14 = p[in_width + 4];
+        const float x15 = p[in_width + 5];
+        const float x20 = p[(2 * in_width) + 0];
+        const float x21 = p[(2 * in_width) + 1];
+        const float x22 = p[(2 * in_width) + 2];
+        const float x23 = p[(2 * in_width) + 3];
+        const float x24 = p[(2 * in_width) + 4];
+        const float x25 = p[(2 * in_width) + 5];
+        const float x30 = p[(3 * in_width) + 0];
+        const float x31 = p[(3 * in_width) + 1];
+        const float x32 = p[(3 * in_width) + 2];
+        const float x33 = p[(3 * in_width) + 3];
+        const float x34 = p[(3 * in_width) + 4];
+        const float x35 = p[(3 * in_width) + 5];
+
+        vfloat32m4_t vw;
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 0) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x00, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x01, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x10, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x11, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x02, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x03, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x12, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x13, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 1) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x01, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x02, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x11, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x12, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x03, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x04, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x13, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x14, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 2) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x02, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x03, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x12, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x13, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x04, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x05, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x14, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x15, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 3) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x10, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x11, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x20, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x21, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x12, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x13, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x22, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x23, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 4) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x11, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x12, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x21, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x22, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x13, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x14, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x23, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x24, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 5) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x12, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x13, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x22, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x23, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x14, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x15, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x24, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x25, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 6) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x20, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x21, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x30, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x31, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x22, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x23, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x32, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x33, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 7) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x21, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x22, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x31, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x32, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x23, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x24, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x33, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x34, vw, vl);
+
+        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 8) * out_channels + oc0, vl);
+        l00 = __riscv_vfmacc_vf_f32m4(l00, x22, vw, vl);
+        l01 = __riscv_vfmacc_vf_f32m4(l01, x23, vw, vl);
+        l10 = __riscv_vfmacc_vf_f32m4(l10, x32, vw, vl);
+        l11 = __riscv_vfmacc_vf_f32m4(l11, x33, vw, vl);
+        r00 = __riscv_vfmacc_vf_f32m4(r00, x24, vw, vl);
+        r01 = __riscv_vfmacc_vf_f32m4(r01, x25, vw, vl);
+        r10 = __riscv_vfmacc_vf_f32m4(r10, x34, vw, vl);
+        r11 = __riscv_vfmacc_vf_f32m4(r11, x35, vw, vl);
+    }
+
+    vfloat32m4_t vmax_l = __riscv_vfmax_vv_f32m4(l00, l01, vl);
+    vmax_l = __riscv_vfmax_vv_f32m4(vmax_l, l10, vl);
+    vmax_l = __riscv_vfmax_vv_f32m4(vmax_l, l11, vl);
+    vmax_l = __riscv_vfadd_vv_f32m4(vmax_l, vbias, vl);
+    if (inv_scale != 1.0f) {
+        vmax_l = __riscv_vfmul_vf_f32m4(vmax_l, inv_scale, vl);
+    }
+#if TINYSPEECH_CONV_FUSE_RELU
+    vmax_l = __riscv_vfmax_vf_f32m4(vmax_l, 0.0f, vl);
+#endif
+
+    vfloat32m4_t vmax_r = __riscv_vfmax_vv_f32m4(r00, r01, vl);
+    vmax_r = __riscv_vfmax_vv_f32m4(vmax_r, r10, vl);
+    vmax_r = __riscv_vfmax_vv_f32m4(vmax_r, r11, vl);
+    vmax_r = __riscv_vfadd_vv_f32m4(vmax_r, vbias, vl);
+    if (inv_scale != 1.0f) {
+        vmax_r = __riscv_vfmul_vf_f32m4(vmax_r, inv_scale, vl);
+    }
+#if TINYSPEECH_CONV_FUSE_RELU
+    vmax_r = __riscv_vfmax_vf_f32m4(vmax_r, 0.0f, vl);
+#endif
+
+    *out_left = vmax_l;
+    *out_right = vmax_r;
+}
+
 static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
                                           const Tensor *weights,
                                           const Tensor *bias,
@@ -1251,7 +1422,34 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
         for (int32_t oph = 0; oph < pool_out_h; oph++) {
             const int32_t oh0 = oph * pool_stride;
             const int32_t oh1 = oh0 + 1;
-            for (int32_t opw = 0; opw < pool_out_w; opw++) {
+            int32_t opw = 0;
+            if (use_l2_pool_spec) {
+                for (; (opw + 1) < pool_out_w; opw += 2) {
+                    const int32_t ow0 = opw * pool_stride;
+                    const int32_t m0 = oph * pool_out_w + opw;
+                    const int32_t m1 = m0 + 1;
+
+                    int32_t oc0 = 0;
+                    while (oc0 < out_channels) {
+                        size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
+                        vfloat32m4_t vbias = __riscv_vle32_v_f32m4(bias->f_data + oc0, vl);
+                        vfloat32m4_t vmax0;
+                        vfloat32m4_t vmax1;
+                        conv_pool2x2_block2_rvv_interior_24ic(in_n, wpack, vbias,
+                                                               out_channels, pad_h, pad_w,
+                                                               oh0, ow0, oc0, vl, inv_scale,
+                                                               &vmax0, &vmax1);
+
+                        float *dst0 = out_n + oc0 * pool_out_hw + m0;
+                        float *dst1 = out_n + oc0 * pool_out_hw + m1;
+                        __riscv_vsse32_v_f32m4(dst0, (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float)), vmax0, vl);
+                        __riscv_vsse32_v_f32m4(dst1, (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float)), vmax1, vl);
+                        oc0 += (int32_t)vl;
+                    }
+                }
+            }
+
+            for (; opw < pool_out_w; opw++) {
                 const int32_t ow0 = opw * pool_stride;
                 const int32_t ow1 = ow0 + 1;
                 const int32_t m = oph * pool_out_w + opw;

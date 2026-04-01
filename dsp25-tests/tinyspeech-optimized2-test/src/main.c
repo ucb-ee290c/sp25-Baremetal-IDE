@@ -286,7 +286,6 @@ int app_main(void) {
 #if !TINYSPEECH_ENABLE_TRACE
     printf("  note     : layer trace capture disabled (perf mode)\n");
 #endif
-    printf("  note     : conv3+gap+fc fused path may attribute FC work under conv3+gap cycles\n");
 
     tinyspeech_prepare_runtime();
 

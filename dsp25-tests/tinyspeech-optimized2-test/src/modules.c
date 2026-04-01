@@ -1104,65 +1104,6 @@ static inline vfloat32m4_t conv_gap_block2_rvv_interior_48ic(const float *in_n,
     return __riscv_vfadd_vv_f32m4(vacc0, vacc1, vl);
 }
 
-static inline vfloat32m4_t conv_gap_block1_rvv_interior_48ic(const float *in_n,
-                                                              const float *wpack,
-                                                              vfloat32m4_t vbias,
-                                                              int32_t out_channels,
-                                                              int32_t in_height,
-                                                              int32_t in_width,
-                                                              int32_t oh,
-                                                              int32_t ow,
-                                                              int32_t oc0,
-                                                              size_t vl,
-                                                              float inv_scale) {
-    const int32_t in_hw = in_height * in_width;
-    const int32_t ih0 = oh;
-    const int32_t iw0 = ow;
-    vfloat32m4_t vacc = vbias;
-
-    int32_t kbase = 0;
-    for (int32_t ic = 0; ic < 48; ic++, kbase += 9) {
-        const float *p = in_n + ic * in_hw + ih0 * in_width + iw0;
-        const float x00 = p[0];
-        const float x01 = p[1];
-        const float x02 = p[2];
-        const float x10 = p[in_width + 0];
-        const float x11 = p[in_width + 1];
-        const float x12 = p[in_width + 2];
-        const float x20 = p[(2 * in_width) + 0];
-        const float x21 = p[(2 * in_width) + 1];
-        const float x22 = p[(2 * in_width) + 2];
-
-        vfloat32m4_t vw;
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 0) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x00, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 1) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x01, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 2) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x02, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 3) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x10, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 4) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x11, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 5) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x12, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 6) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x20, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 7) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x21, vw, vl);
-        vw = __riscv_vle32_v_f32m4(wpack + (kbase + 8) * out_channels + oc0, vl);
-        vacc = __riscv_vfmacc_vf_f32m4(vacc, x22, vw, vl);
-    }
-
-    if (inv_scale != 1.0f) {
-        vacc = __riscv_vfmul_vf_f32m4(vacc, inv_scale, vl);
-    }
-#if TINYSPEECH_CONV_FUSE_RELU
-    vacc = __riscv_vfmax_vf_f32m4(vacc, 0.0f, vl);
-#endif
-    return vacc;
-}
-
 static inline vfloat32m4_t conv_pool2x2_block_rvv_interior_24ic(const float *in_n,
                                                                  const float *wpack,
                                                                  vfloat32m4_t vbias,
@@ -1287,18 +1228,6 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
     const int32_t pool_out_hw = pool_out_h * pool_out_w;
     const int32_t K = in_channels * 9;
     const float inv_scale = 1.0f / out_scale;
-    const float point_inv_scale =
-#if TINYSPEECH_CONV_FUSE_RELU
-        (out_scale > 0.0f) ? 1.0f : inv_scale;
-#else
-        inv_scale;
-#endif
-    const int post_scale_after_pool =
-#if TINYSPEECH_CONV_FUSE_RELU
-        (point_inv_scale == 1.0f) && (inv_scale != 1.0f);
-#else
-        0;
-#endif
     const float *wpack = get_packed_conv_weights(weights, out_channels, K);
     if (wpack == NULL) {
         return 0;
@@ -1339,22 +1268,19 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
                     } else {
                         vfloat32m4_t v00 =
                             conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh0, ow0, 0, oc0, vl, point_inv_scale);
+                                                    pad_h, pad_w, oh0, ow0, 0, oc0, vl, inv_scale);
                         vfloat32m4_t v01 =
                             conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh0, ow1, 0, oc0, vl, point_inv_scale);
+                                                    pad_h, pad_w, oh0, ow1, 0, oc0, vl, inv_scale);
                         vfloat32m4_t v10 =
                             conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh1, ow0, 0, oc0, vl, point_inv_scale);
+                                                    pad_h, pad_w, oh1, ow0, 0, oc0, vl, inv_scale);
                         vfloat32m4_t v11 =
                             conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh1, ow1, 0, oc0, vl, point_inv_scale);
+                                                    pad_h, pad_w, oh1, ow1, 0, oc0, vl, inv_scale);
                         vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
                         vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
                         vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
-                        if (post_scale_after_pool) {
-                            vmax = __riscv_vfmul_vf_f32m4(vmax, inv_scale, vl);
-                        }
                     }
 
                     float *dst = out_n + oc0 * pool_out_hw + m;
@@ -1596,19 +1522,7 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
         const float *wpack = get_packed_conv_weights(weights, out_channels, K);
         if (wpack != NULL) {
             const float inv_scale = 1.0f / out_scale;
-            const float point_inv_scale =
-#if TINYSPEECH_CONV_FUSE_RELU
-                (out_scale > 0.0f) ? 1.0f : inv_scale;
-#else
-                inv_scale;
-#endif
             const float inv_hw = 1.0f / (float)out_hw;
-            const float final_scale =
-#if TINYSPEECH_CONV_FUSE_RELU
-                (point_inv_scale == 1.0f) ? (inv_hw * inv_scale) : inv_hw;
-#else
-                inv_hw;
-#endif
             int ok = 1;
             for (int32_t n = 0; n < batch_size; n++) {
                 const float *in_src_n = input->f_data + n * (in_channels * in_height * in_width);
@@ -1630,31 +1544,33 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
                             vfloat32m4_t v4;
                             v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
                                                                     out_channels, pad_h, pad_w,
-                                                                    oh, 0, oc0, vl, point_inv_scale);
+                                                                    oh, 0, oc0, vl, inv_scale);
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                             v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
                                                                     out_channels, pad_h, pad_w,
-                                                                    oh, 4, oc0, vl, point_inv_scale);
+                                                                    oh, 4, oc0, vl, inv_scale);
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                             v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
                                                                     out_channels, pad_h, pad_w,
-                                                                    oh, 8, oc0, vl, point_inv_scale);
+                                                                    oh, 8, oc0, vl, inv_scale);
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                             v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
                                                                     out_channels, pad_h, pad_w,
-                                                                    oh, 12, oc0, vl, point_inv_scale);
+                                                                    oh, 12, oc0, vl, inv_scale);
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                             v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
                                                                     out_channels, pad_h, pad_w,
-                                                                    oh, 16, oc0, vl, point_inv_scale);
+                                                                    oh, 16, oc0, vl, inv_scale);
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                             v4 = conv_gap_block2_rvv_interior_48ic(in_n, wpack, vbias,
                                                                     out_channels, pad_h, pad_w,
-                                                                    oh, 20, oc0, vl, point_inv_scale);
+                                                                    oh, 20, oc0, vl, inv_scale);
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                            v4 = conv_gap_block1_rvv_interior_48ic(in_n, wpack, vbias,
-                                                                    out_channels, pad_h, pad_w,
-                                                                    oh, 22, oc0, vl, point_inv_scale);
+                            v4 = conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                         pad_h, pad_w, oh, 22, 0, oc0, vl, inv_scale);
+#if !TINYSPEECH_CONV_FUSE_RELU
+                            v4 = __riscv_vfmax_vf_f32m4(v4, 0.0f, vl);
+#endif
                             vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                         }
                     } else {
@@ -1665,14 +1581,14 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
                                     vfloat32m4_t v4 =
                                         conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
                                                                            out_channels, pad_h, pad_w,
-                                                                           oh, ow, oc0, vl, point_inv_scale);
+                                                                           oh, ow, oc0, vl, inv_scale);
                                     vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
                                 }
                             }
                             for (; ow < out_width; ow++) {
                                 vfloat32m4_t v =
                                     conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                            pad_h, pad_w, oh, ow, 0, oc0, vl, point_inv_scale);
+                                                            pad_h, pad_w, oh, ow, 0, oc0, vl, inv_scale);
 #if !TINYSPEECH_CONV_FUSE_RELU
                                 v = __riscv_vfmax_vf_f32m4(v, 0.0f, vl);
 #endif
@@ -1680,7 +1596,7 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
                             }
                         }
                     }
-                    vsum = __riscv_vfmul_vf_f32m4(vsum, final_scale, vl);
+                    vsum = __riscv_vfmul_vf_f32m4(vsum, inv_hw, vl);
                     __riscv_vse32_v_f32m4(out_n + oc0, vsum, vl);
                     oc0 += (int32_t)vl;
                 }
@@ -1711,149 +1627,6 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
 
     free_tensor(input);
     return output;
-}
-
-int conv2d_relu_gap_fc_fused(Tensor *input,
-                             Tensor *conv_weights,
-                             Tensor *conv_bias,
-                             Tensor *conv_scale,
-                             Tensor *fc_weights,
-                             Tensor *logits_out) {
-#if defined(__riscv_vector)
-    if ((input == NULL) || (conv_weights == NULL) || (conv_bias == NULL) || (conv_scale == NULL) ||
-        (fc_weights == NULL) || (logits_out == NULL)) {
-        return 0;
-    }
-    if ((input->f_data == NULL) || (conv_weights->f_data == NULL) || (conv_bias->f_data == NULL) ||
-        (fc_weights->f_data == NULL) || (logits_out->f_data == NULL)) {
-        return 0;
-    }
-
-    const int32_t batch_size = input->shape[0];
-    const int32_t in_channels = input->shape[1];
-    const int32_t in_height = input->shape[2];
-    const int32_t in_width = input->shape[3];
-    const int32_t out_channels = conv_weights->shape[0];
-    const int32_t out_height = in_height;
-    const int32_t out_width = in_width;
-    const int32_t out_hw = out_height * out_width;
-    const int32_t num_classes = fc_weights->shape[0];
-    const int32_t fc_features = fc_weights->shape[1];
-
-    if ((conv_weights->shape[2] != 3) || (conv_weights->shape[3] != 3)) {
-        return 0;
-    }
-    if ((in_channels != 48) || (out_channels != 96) || (out_height != 3) || (out_width != 23)) {
-        return 0;
-    }
-    if ((num_classes != 6) || (fc_features != out_channels)) {
-        return 0;
-    }
-    if ((logits_out->shape[0] != batch_size) || (logits_out->shape[1] != num_classes)) {
-        return 0;
-    }
-
-    const int32_t K = in_channels * 9;
-    const float *wpack = get_packed_conv_weights(conv_weights, out_channels, K);
-    if (wpack == NULL) {
-        return 0;
-    }
-
-    float out_scale = decode_packed_float(tensor_get_value(conv_scale, 0));
-    if (fabsf(out_scale) < 1e-12f) {
-        out_scale = 1.0f;
-    }
-    const float inv_scale = 1.0f / out_scale;
-    const float point_inv_scale =
-#if TINYSPEECH_CONV_FUSE_RELU
-        (out_scale > 0.0f) ? 1.0f : inv_scale;
-#else
-        inv_scale;
-#endif
-    const float inv_hw = 1.0f / (float)out_hw;
-    const float final_scale =
-#if TINYSPEECH_CONV_FUSE_RELU
-        (point_inv_scale == 1.0f) ? (inv_hw * inv_scale) : inv_hw;
-#else
-        inv_hw;
-#endif
-
-    for (int32_t n = 0; n < batch_size; n++) {
-        const float *in_src_n = input->f_data + n * (in_channels * in_height * in_width);
-        float *in_n = NULL;
-        int32_t pad_h = 0;
-        int32_t pad_w = 0;
-        if (!build_padded_input_f32(in_src_n, in_channels, in_height, in_width, 1, &in_n, &pad_h, &pad_w)) {
-            return 0;
-        }
-
-        float acc[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        for (int32_t oc0 = 0; oc0 < out_channels; ) {
-            size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
-            vfloat32m4_t vbias = __riscv_vle32_v_f32m4(conv_bias->f_data + oc0, vl);
-            vfloat32m4_t vsum = __riscv_vfmv_v_f_f32m4(0.0f, vl);
-
-            for (int32_t oh = 0; oh < 3; oh++) {
-                vfloat32m4_t v4;
-                v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 0, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 4, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 8, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 12, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                v4 = conv_gap_block4_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 16, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                v4 = conv_gap_block2_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 20, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-                v4 = conv_gap_block1_rvv_interior_48ic(in_n, wpack, vbias,
-                                                        out_channels, pad_h, pad_w,
-                                                        oh, 22, oc0, vl, point_inv_scale);
-                vsum = __riscv_vfadd_vv_f32m4(vsum, v4, vl);
-            }
-
-            vfloat32m4_t vgap = __riscv_vfmul_vf_f32m4(vsum, final_scale, vl);
-
-            for (int32_t cls = 0; cls < 6; cls++) {
-                const float *w_cls = fc_weights->f_data + cls * out_channels + oc0;
-                vfloat32m4_t vw = __riscv_vle32_v_f32m4(w_cls, vl);
-                vfloat32m4_t vm = __riscv_vfmul_vv_f32m4(vgap, vw, vl);
-                vfloat32m1_t vred = __riscv_vfmv_v_f_f32m1(0.0f, 1);
-                vred = __riscv_vfredusum_vs_f32m4_f32m1(vm, vred, vl);
-                acc[cls] += __riscv_vfmv_f_s_f32m1_f32(vred);
-            }
-
-            oc0 += (int32_t)vl;
-        }
-
-        float *out_n = logits_out->f_data + n * num_classes;
-        for (int32_t cls = 0; cls < num_classes; cls++) {
-            out_n[cls] = acc[cls];
-        }
-    }
-    return 1;
-#else
-    (void)input;
-    (void)conv_weights;
-    (void)conv_bias;
-    (void)conv_scale;
-    (void)fc_weights;
-    (void)logits_out;
-    return 0;
-#endif
 }
 
 Tensor fc_layer(Tensor *input, Tensor *weights) {

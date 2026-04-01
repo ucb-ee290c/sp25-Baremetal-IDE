@@ -13,12 +13,6 @@ Tensor conv2d_relu_maxpool2d(Tensor *input, Tensor *weights, Tensor *bias, Tenso
                              int pool_kernel_size, int pool_stride);
 Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *scale,
                        u_int8_t stride, u_int8_t padding);
-int conv2d_relu_gap_fc_fused(Tensor *input,
-                             Tensor *conv_weights,
-                             Tensor *conv_bias,
-                             Tensor *conv_scale,
-                             Tensor *fc_weights,
-                             Tensor *logits_out);
 Tensor batchnorm2d(Tensor* input, Tensor* gamma, Tensor* beta, Tensor* scale, Tensor* mean, Tensor* variance);
 Tensor adaptive_avg_pool2d(Tensor *input);
 void tinyspeech_prepack_conv_weights(const Tensor *conv1_w,

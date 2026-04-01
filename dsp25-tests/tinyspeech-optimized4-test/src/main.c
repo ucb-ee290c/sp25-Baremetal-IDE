@@ -292,6 +292,11 @@ int app_main(void) {
     printf("  int8 path: enabled (fixed-shape quantized conv/gap/fc)\n");
 #if defined(__riscv_vector) && TINYSPEECH_INT8_RVV_UKERNELS
     printf("  int8 ukrn: enabled (conv2+pool2 and conv3+gap fixed-shape RVV)\n");
+#if TINYSPEECH_INT8_USE_VSE8_PACK
+    printf("  int8 pack: vnclip+vse8 enabled (contiguous)\n");
+#else
+    printf("  int8 pack: scalar lane store fallback\n");
+#endif
 #elif defined(__riscv_vector)
     printf("  int8 ukrn: disabled (generic RVV kernels)\n");
 #else

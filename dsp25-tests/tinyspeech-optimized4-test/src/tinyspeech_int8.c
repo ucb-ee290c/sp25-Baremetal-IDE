@@ -426,9 +426,6 @@ static void conv3x3_acc_c(const int8_t *pad,
 #ifndef TINYSPEECH_INT8_USE_VSSE8_STORE
 #define TINYSPEECH_INT8_USE_VSSE8_STORE 0
 #endif
-#ifndef TINYSPEECH_INT8_USE_VSE8_PACK
-#define TINYSPEECH_INT8_USE_VSE8_PACK 0
-#endif
 #ifndef TINYSPEECH_INT8_RVV_UKERNELS
 #define TINYSPEECH_INT8_RVV_UKERNELS 1
 #endif
@@ -599,9 +596,7 @@ static void conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(const int8_
     const int32_t dst_w = TS_L3_OW + 2;
     const int32_t dst_ic = TS_L3_IC;
     clear_l3_hwc_padded_border(dst_pad_hwc);
-#if !TINYSPEECH_INT8_USE_VSE8_PACK
     int32_t lane_buf[TS_L2_OC] __attribute__((aligned(64)));
-#endif
 
     for (int32_t ph = 0; ph < TS_L2_PH; ph++) {
         const int32_t h0 = ph << 1;
@@ -692,22 +687,12 @@ static void conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(const int8_
                 vint32m4_t vmax2 = __riscv_vmax_vv_i32m4(vacc10, vacc11, vl);
                 vmax = __riscv_vmax_vv_i32m4(vmax, vmax2, vl);
                 vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vmax, mul_q31, vl);
-                int8_t *dst = dst_pad_hwc + (((ph + 1) * dst_w + (pw + 1)) * dst_ic + oc0);
-#if TINYSPEECH_INT8_USE_VSE8_PACK
-#ifdef __RISCV_VXRM_RNU
-                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, __RISCV_VXRM_RNU, vl);
-                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, __RISCV_VXRM_RNU, vl);
-#else
-                vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, vl);
-                vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, vl);
-#endif
-                __riscv_vse8_v_i8m1(dst, vq8, vl);
-#else
                 __riscv_vse32_v_i32m4(lane_buf, vq, vl);
+
+                int8_t *dst = dst_pad_hwc + (((ph + 1) * dst_w + (pw + 1)) * dst_ic + oc0);
                 for (size_t lane = 0; lane < vl; lane++) {
                     dst[lane] = (int8_t)lane_buf[lane];
                 }
-#endif
                 oc0 += (int32_t)vl;
             }
         }

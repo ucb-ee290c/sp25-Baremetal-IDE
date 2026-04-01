@@ -12,11 +12,13 @@ tinyspeech_int8_pack_store_u7_rvv:
     vle32.v v8, (a0)
 
     vsetvli zero, t0, e16, m2, ta, ma
-    vnclip.wi v10, v8, 0
+    # For narrowing ops, keep destination on the low part of the source
+    # register group to avoid reserved/illegal overlap encodings.
+    vnclip.wi v8, v8, 0
 
     vsetvli zero, t0, e8, m1, ta, ma
-    vnclip.wi v12, v10, 0
-    vse8.v v12, (a1)
+    vnclip.wi v8, v8, 0
+    vse8.v v8, (a1)
 
     slli t1, t0, 2
     add a0, a0, t1

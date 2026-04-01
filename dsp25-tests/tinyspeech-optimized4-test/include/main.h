@@ -50,10 +50,6 @@ extern "C" {
 #define TINYSPEECH_INT8_RVV_UKERNELS 0
 #endif
 
-#ifndef TINYSPEECH_INT8_RVV_M8
-#define TINYSPEECH_INT8_RVV_M8 0
-#endif
-
 #ifndef TINYSPEECH_INT8_PRED_TIE_TOL
 #define TINYSPEECH_INT8_PRED_TIE_TOL 0.30f
 #endif

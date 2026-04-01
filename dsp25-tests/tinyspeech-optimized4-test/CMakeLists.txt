@@ -25,7 +25,6 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS}")
 check_c_source_compiles("
   #include <stddef.h>
-  #include <stdint.h>
   #include <riscv_vector.h>
   int main(void) {
     size_t vl = __riscv_vsetvl_e32m4(8);
@@ -36,27 +35,6 @@ check_c_source_compiles("
     __riscv_vsse8_v_i8m1(out, (ptrdiff_t)2, c, vl);
     return out[0];
   }" TINYSPEECH_HAS_RVV_I8_STRIDED_STORE)
-set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
-unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
-unset(CMAKE_REQUIRED_FLAGS)
-
-set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
-set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS}")
-check_c_source_compiles("
-  #include <stddef.h>
-  #include <stdint.h>
-  #include <riscv_vector.h>
-  int main(void) {
-    size_t vl = __riscv_vsetvl_e32m8(16);
-    vint32m8_t acc = __riscv_vmv_v_x_i32m8(0, vl);
-    vint16m4_t w = __riscv_vmv_v_x_i16m4(1, vl);
-    acc = __riscv_vwmacc_vx_i32m8(acc, 1, w, vl);
-    acc = __riscv_vmax_vv_i32m8(acc, acc, vl);
-    int32_t out[32];
-    __riscv_vse32_v_i32m8(out, acc, vl);
-    return out[0];
-  }" TINYSPEECH_HAS_RVV_I32M8_WIDEN)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
 unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
 unset(CMAKE_REQUIRED_FLAGS)
@@ -75,14 +53,6 @@ if (TINYSPEECH_HAS_RVV_I8_STRIDED_STORE)
 else()
   set(TINYSPEECH_INT8_USE_VSSE8_STORE_VALUE 0)
   message(STATUS "tinyspeech-optimized4-test: RVV int8 strided-store intrinsics unavailable (scalar scatter fallback)")
-endif()
-
-if (TINYSPEECH_HAS_RVV_I32M8_WIDEN)
-  set(TINYSPEECH_INT8_RVV_M8_VALUE 1)
-  message(STATUS "tinyspeech-optimized4-test: RVV i32m8 widening intrinsics available")
-else()
-  set(TINYSPEECH_INT8_RVV_M8_VALUE 0)
-  message(STATUS "tinyspeech-optimized4-test: RVV i32m8 widening intrinsics unavailable (m4 kernels)")
 endif()
 
 add_executable(tinyspeech-optimized4-test
@@ -112,7 +82,6 @@ target_compile_definitions(tinyspeech-optimized4-test PRIVATE
   TINYSPEECH_INT8_PIPELINE=$<IF:$<BOOL:${TINYSPEECH_OPT4_ENABLE_INT8}>,1,0>
   TINYSPEECH_INT8_USE_VSSE8_STORE=${TINYSPEECH_INT8_USE_VSSE8_STORE_VALUE}
   TINYSPEECH_INT8_RVV_UKERNELS=$<IF:$<BOOL:${TINYSPEECH_OPT4_INT8_RVV_UKERNELS}>,1,0>
-  TINYSPEECH_INT8_RVV_M8=${TINYSPEECH_INT8_RVV_M8_VALUE}
 )
 
 target_link_libraries(tinyspeech-optimized4-test PRIVATE

@@ -1160,14 +1160,14 @@ static inline vfloat32m4_t conv_pool2x2_block_rvv_interior_24ic(const float *in_
     return vmax;
 }
 
-static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
-                                          const Tensor *weights,
-                                          const Tensor *bias,
-                                          float out_scale,
-                                          int32_t padding,
-                                          int32_t pool_kernel_size,
-                                          int32_t pool_stride,
-                                          Tensor *output) {
+static int conv2d_relu_maxpool2d_rvv_l2_impl(const Tensor *input,
+                                             const Tensor *weights,
+                                             const Tensor *bias,
+                                             float out_scale,
+                                             int32_t padding,
+                                             int32_t pool_kernel_size,
+                                             int32_t pool_stride,
+                                             Tensor *output) {
     const int32_t batch_size = input->shape[0];
     const int32_t in_channels = input->shape[1];
     const int32_t in_height = input->shape[2];
@@ -1185,7 +1185,9 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
     if ((pool_kernel_size != 2) || (pool_stride != 2)) {
         return 0;
     }
-    const int use_l2_pool_spec = (in_channels == 24) && (out_channels == 48) && (padding == 1);
+    if (!((in_channels == 24) && (out_channels == 48) && (padding == 1))) {
+        return 0;
+    }
 
     for (int32_t n = 0; n < batch_size; n++) {
         const float *in_src_n = input->f_data + n * (in_channels * in_height * in_width);
@@ -1210,28 +1212,84 @@ static int conv2d_relu_maxpool2d_rvv_impl(const Tensor *input,
                 while (oc0 < out_channels) {
                     size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
                     vfloat32m4_t vbias = __riscv_vle32_v_f32m4(bias->f_data + oc0, vl);
-                    vfloat32m4_t vmax;
-                    if (use_l2_pool_spec) {
-                        vmax = conv_pool2x2_block_rvv_interior_24ic(in_n, wpack, vbias,
-                                                                     out_channels, pad_h, pad_w,
-                                                                     oh0, ow0, oc0, vl, inv_scale);
-                    } else {
-                        vfloat32m4_t v00 =
-                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh0, ow0, 0, oc0, vl, inv_scale);
-                        vfloat32m4_t v01 =
-                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh0, ow1, 0, oc0, vl, inv_scale);
-                        vfloat32m4_t v10 =
-                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh1, ow0, 0, oc0, vl, inv_scale);
-                        vfloat32m4_t v11 =
-                            conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
-                                                    pad_h, pad_w, oh1, ow1, 0, oc0, vl, inv_scale);
-                        vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
-                        vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
-                        vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
-                    }
+                    vfloat32m4_t vmax = conv_pool2x2_block_rvv_interior_24ic(in_n, wpack, vbias,
+                                                                              out_channels, pad_h, pad_w,
+                                                                              oh0, ow0, oc0, vl, inv_scale);
+
+                    float *dst = out_n + oc0 * pool_out_hw + m;
+                    __riscv_vsse32_v_f32m4(dst, (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float)), vmax, vl);
+                    oc0 += (int32_t)vl;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+static int conv2d_relu_maxpool2d_rvv_generic_impl(const Tensor *input,
+                                                   const Tensor *weights,
+                                                   const Tensor *bias,
+                                                   float out_scale,
+                                                   int32_t padding,
+                                                   int32_t pool_kernel_size,
+                                                   int32_t pool_stride,
+                                                   Tensor *output) {
+    const int32_t batch_size = input->shape[0];
+    const int32_t in_channels = input->shape[1];
+    const int32_t in_height = input->shape[2];
+    const int32_t in_width = input->shape[3];
+    const int32_t out_channels = weights->shape[0];
+    const int32_t pool_out_h = output->shape[2];
+    const int32_t pool_out_w = output->shape[3];
+    const int32_t pool_out_hw = pool_out_h * pool_out_w;
+    const int32_t K = in_channels * 9;
+    const float inv_scale = 1.0f / out_scale;
+    const float *wpack = get_packed_conv_weights(weights, out_channels, K);
+    if (wpack == NULL) {
+        return 0;
+    }
+    if ((pool_kernel_size != 2) || (pool_stride != 2)) {
+        return 0;
+    }
+
+    for (int32_t n = 0; n < batch_size; n++) {
+        const float *in_src_n = input->f_data + n * (in_channels * in_height * in_width);
+        float *in_n = NULL;
+        int32_t pad_h = 0;
+        int32_t pad_w = 0;
+        if (!build_padded_input_f32(in_src_n, in_channels, in_height, in_width, padding,
+                                    &in_n, &pad_h, &pad_w)) {
+            return 0;
+        }
+        float *out_n = output->f_data + n * (out_channels * pool_out_hw);
+
+        for (int32_t oph = 0; oph < pool_out_h; oph++) {
+            const int32_t oh0 = oph * pool_stride;
+            const int32_t oh1 = oh0 + 1;
+            for (int32_t opw = 0; opw < pool_out_w; opw++) {
+                const int32_t ow0 = opw * pool_stride;
+                const int32_t ow1 = ow0 + 1;
+                const int32_t m = oph * pool_out_w + opw;
+
+                int32_t oc0 = 0;
+                while (oc0 < out_channels) {
+                    size_t vl = __riscv_vsetvl_e32m4((size_t)(out_channels - oc0));
+                    vfloat32m4_t vbias = __riscv_vle32_v_f32m4(bias->f_data + oc0, vl);
+                    vfloat32m4_t v00 =
+                        conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                pad_h, pad_w, oh0, ow0, 0, oc0, vl, inv_scale);
+                    vfloat32m4_t v01 =
+                        conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                pad_h, pad_w, oh0, ow1, 0, oc0, vl, inv_scale);
+                    vfloat32m4_t v10 =
+                        conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                pad_h, pad_w, oh1, ow0, 0, oc0, vl, inv_scale);
+                    vfloat32m4_t v11 =
+                        conv_block_rvv_interior(in_n, wpack, vbias, out_channels, in_channels,
+                                                pad_h, pad_w, oh1, ow1, 0, oc0, vl, inv_scale);
+                    vfloat32m4_t vmax = __riscv_vfmax_vv_f32m4(v00, v01, vl);
+                    vmax = __riscv_vfmax_vv_f32m4(vmax, v10, vl);
+                    vmax = __riscv_vfmax_vv_f32m4(vmax, v11, vl);
 
                     float *dst = out_n + oc0 * pool_out_hw + m;
                     __riscv_vsse32_v_f32m4(dst, (ptrdiff_t)(pool_out_hw * (int32_t)sizeof(float)), vmax, vl);
@@ -1405,8 +1463,14 @@ Tensor conv2d_relu_maxpool2d(Tensor *input, Tensor *weights, Tensor *bias, Tenso
     int handled = 0;
     if ((input->f_data != NULL) && (weights->f_data != NULL) && (bias->f_data != NULL) &&
         (stride == 1) && (padding == 1) && (kernel_height == 3) && (kernel_width == 3)) {
-        handled = conv2d_relu_maxpool2d_rvv_impl(input, weights, bias, out_scale,
-                                                 (int32_t)padding, pool_kernel_size, pool_stride, &output);
+        if ((input->shape[1] == 24) && (weights->shape[0] == 48) &&
+            (output.shape[2] == 3) && (output.shape[3] == 23)) {
+            handled = conv2d_relu_maxpool2d_rvv_l2_impl(input, weights, bias, out_scale,
+                                                        (int32_t)padding, pool_kernel_size, pool_stride, &output);
+        } else {
+            handled = conv2d_relu_maxpool2d_rvv_generic_impl(input, weights, bias, out_scale,
+                                                             (int32_t)padding, pool_kernel_size, pool_stride, &output);
+        }
     }
     if (!handled) {
         free_tensor(&output);

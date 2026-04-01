@@ -269,10 +269,8 @@ int app_main(void) {
 #if TINYSPEECH_FP16_MIXED
 #if defined(__riscv_zvfh) && (__riscv_zvfh > 0)
     printf("  fp16 mix : enabled (RVV Zvfh path active)\n");
-#elif defined(__riscv_zfh) && (__riscv_zfh > 0)
-    printf("  fp16 mix : enabled (Zfh scalar/vector-compatible path)\n");
 #else
-    printf("  fp16 mix : requested, but Zfh/Zvfh unavailable -> fallback path\n");
+    printf("  fp16 mix : requested, but Zvfh unavailable -> f32 fallback path\n");
 #endif
 #else
     printf("  fp16 mix : disabled\n");

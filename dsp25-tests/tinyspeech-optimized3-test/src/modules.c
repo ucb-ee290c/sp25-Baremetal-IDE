@@ -22,10 +22,10 @@
 #define TINYSPEECH_FP16_MIXED 0
 #endif
 
-#if TINYSPEECH_FP16_MIXED && (defined(__riscv_zfh) || defined(__riscv_zvfh))
-#define TINYSPEECH_FP16_AVAILABLE 1
+#if TINYSPEECH_FP16_MIXED && defined(__riscv_vector) && defined(__riscv_zvfh) && (__riscv_zvfh > 0)
+#define TINYSPEECH_FP16_RVV_AVAILABLE 1
 #else
-#define TINYSPEECH_FP16_AVAILABLE 0
+#define TINYSPEECH_FP16_RVV_AVAILABLE 0
 #endif
 
 static inline float tensor_get_value(const Tensor *t, int32_t idx) {
@@ -1639,7 +1639,7 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
     return output;
 }
 
-#if TINYSPEECH_FP16_AVAILABLE
+#if TINYSPEECH_FP16_RVV_AVAILABLE
 static _Float16 g_fc96x6_w_fp16[6 * 96] __attribute__((aligned(64)));
 static const float *g_fc96x6_w_src = NULL;
 static _Float16 g_fc96x1_x_fp16[96] __attribute__((aligned(64)));
@@ -1651,7 +1651,6 @@ static inline void pack_fc96x6_weights_fp16(const float *w_src) {
     g_fc96x6_w_src = w_src;
 }
 
-#if defined(__riscv_vector)
 static inline float dot96_f16_rvv(const _Float16 *x, const _Float16 *w) {
     int32_t i = 0;
     float acc = 0.0f;
@@ -1668,10 +1667,9 @@ static inline float dot96_f16_rvv(const _Float16 *x, const _Float16 *w) {
     return acc;
 }
 #endif
-#endif
 
 void tinyspeech_prepack_fc96x6_weights(const Tensor *fc_w) {
-#if TINYSPEECH_FP16_AVAILABLE
+#if TINYSPEECH_FP16_RVV_AVAILABLE
     if ((fc_w != NULL) && (fc_w->f_data != NULL) &&
         (fc_w->dims >= 2) && ((int32_t)fc_w->shape[0] == 6) && ((int32_t)fc_w->shape[1] == 96)) {
         if (g_fc96x6_w_src != fc_w->f_data) {
@@ -1693,8 +1691,7 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
 
     if ((input->f_data != NULL) && (weights->f_data != NULL) &&
         (input_features == 96) && (output_features == 6)) {
-#if TINYSPEECH_FP16_AVAILABLE
-#if defined(__riscv_vector)
+#if TINYSPEECH_FP16_RVV_AVAILABLE
         if (g_fc96x6_w_src != weights->f_data) {
             pack_fc96x6_weights_fp16(weights->f_data);
         }
@@ -1721,7 +1718,6 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
             out[5] = dot96_f16_rvv(g_fc96x1_x_fp16, w5);
         }
         return output;
-#endif
 #endif
 
         for (int32_t n = 0; n < batch_size; n++) {

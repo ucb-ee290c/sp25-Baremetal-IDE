@@ -1,5 +1,31 @@
 # CMakeLists definitions for target `tinyspeech-optimized3-test`.
 
+include(CheckCSourceCompiles)
+
+set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_REQUIRED_FLAGS "${ARCH_FLAGS}")
+check_c_source_compiles("
+  #include <stddef.h>
+  #include <riscv_vector.h>
+  int main(void) {
+    size_t vl = __riscv_vsetvl_e16m8(8);
+    vfloat16m8_t v = __riscv_vfmv_v_f_f16m8((_Float16)1.0f, vl);
+    (void)v;
+    return 0;
+  }" TINYSPEECH_HAS_ZVFH_INTRINSICS)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE}")
+unset(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE)
+unset(CMAKE_REQUIRED_FLAGS)
+
+if (TINYSPEECH_HAS_ZVFH_INTRINSICS)
+  set(TINYSPEECH_FP16_MIXED_VALUE 1)
+  message(STATUS "tinyspeech-optimized3-test: fp16 RVV intrinsics available (enabling mixed fp16 path)")
+else()
+  set(TINYSPEECH_FP16_MIXED_VALUE 0)
+  message(STATUS "tinyspeech-optimized3-test: fp16 RVV intrinsics unavailable (using f32 fallback)")
+endif()
+
 add_executable(tinyspeech-optimized3-test
   src/main.c
   src/tinyspeech_model.c
@@ -21,7 +47,7 @@ target_compile_definitions(tinyspeech-optimized3-test PRIVATE
   TINYSPEECH_REF_CHECK_STAGE_SUM=0
   TINYSPEECH_USE_TENSOR_ARENA=1
   TINYSPEECH_TENSOR_ARENA_SIZE=524288
-  TINYSPEECH_FP16_MIXED=1
+  TINYSPEECH_FP16_MIXED=${TINYSPEECH_FP16_MIXED_VALUE}
 )
 
 target_link_libraries(tinyspeech-optimized3-test PRIVATE

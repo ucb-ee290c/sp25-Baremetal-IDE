@@ -1537,14 +1537,10 @@ static void gap_sum_to_u7_rvv(const int32_t *gap_sum, uint32_t mul_q31, int8_t *
         }
         vint32m4_t vavg = __riscv_vle32_v_i32m4(lane_buf, vl);
         vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vavg, mul_q31, vl);
-#ifdef __RISCV_VXRM_RNU
-        vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, __RISCV_VXRM_RNU, vl);
-        vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, __RISCV_VXRM_RNU, vl);
-#else
-        vint16m2_t vq16 = __riscv_vnclip_wx_i16m2(vq, 0, vl);
-        vint8m1_t vq8 = __riscv_vnclip_wx_i8m1(vq16, 0, vl);
-#endif
-        __riscv_vse8_v_i8m1(dst + oc0, vq8, vl);
+        __riscv_vse32_v_i32m4(lane_buf, vq, vl);
+        for (size_t lane = 0; lane < vl; lane++) {
+            dst[oc0 + (int32_t)lane] = (int8_t)lane_buf[lane];
+        }
         oc0 += (int32_t)vl;
     }
 }

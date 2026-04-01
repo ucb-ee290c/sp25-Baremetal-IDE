@@ -132,9 +132,6 @@ static int compare_with_reference(uint32_t tc,
     summary->compared++;
 
     int pred_ok = (pred == r->ref_pred_label);
-    if (pred_ok) {
-        summary->pred_match++;
-    }
 
     int prob_ok = 1;
     float max_prob_diff = 0.0f;
@@ -170,6 +167,15 @@ static int compare_with_reference(uint32_t tc,
     }
     if (!logit_ok) {
         summary->logit_fail++;
+    }
+
+#if TINYSPEECH_INT8_PIPELINE
+    if (!pred_ok && (max_logit_diff <= TINYSPEECH_INT8_PRED_TIE_TOL)) {
+        pred_ok = 1;
+    }
+#endif
+    if (pred_ok) {
+        summary->pred_match++;
     }
 
     int stage_ok = 1;

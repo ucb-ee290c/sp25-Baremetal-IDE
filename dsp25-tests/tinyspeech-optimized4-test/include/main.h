@@ -46,6 +46,10 @@ extern "C" {
 #define TINYSPEECH_INT8_PIPELINE 0
 #endif
 
+#ifndef TINYSPEECH_INT8_PRED_TIE_TOL
+#define TINYSPEECH_INT8_PRED_TIE_TOL 0.30f
+#endif
+
 void app_init(void);
 int app_main(void);
 

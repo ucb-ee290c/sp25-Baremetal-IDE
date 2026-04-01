@@ -743,11 +743,8 @@ static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
                                        int32_t out_c,
                                        int32_t out_h,
                                        int32_t out_w,
-                                       int32_t *gap_sum,
-                                       uint32_t mul_q31,
-                                       int8_t *out_i8) {
+                                       int32_t *gap_sum) {
     const int32_t pad_hw = pad_h * pad_w;
-    int32_t lane_buf[TS_L3_OC] __attribute__((aligned(64)));
     for (int32_t oc0 = 0; oc0 < out_c; ) {
         size_t vl = __riscv_vsetvl_e32m4((size_t)(out_c - oc0));
         vint32m4_t vsum = __riscv_vmv_v_x_i32m4(0, vl);
@@ -905,15 +902,7 @@ static void conv3x3_relu_gap_acc_c_rvv(const int8_t *pad,
             }
         }
 
-        if (out_i8 != NULL) {
-            __riscv_vse32_v_i32m4(lane_buf, vsum, vl);
-            for (size_t lane = 0; lane < vl; lane++) {
-                int32_t avg_acc = (lane_buf[lane] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
-                out_i8[oc0 + (int32_t)lane] = requant_u7_from_acc(avg_acc, mul_q31);
-            }
-        } else {
-            __riscv_vse32_v_i32m4(gap_sum + oc0, vsum, vl);
-        }
+        __riscv_vse32_v_i32m4(gap_sum + oc0, vsum, vl);
         oc0 += (int32_t)vl;
     }
 }
@@ -1350,15 +1339,15 @@ Tensor tinyspeech_run_inference_int8(const Tensor *input,
     }
     float s3 = 1.0f;
 #if defined(__riscv_vector)
+    conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
+                               w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc);
     if (use_fixed) {
-        conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
-                                   w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW,
-                                   NULL, g_mul3_q31, g_act3);
+        for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
+            int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
+            g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
+        }
         s3 = g_s3_fixed;
     } else {
-        conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
-                                   w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW,
-                                   g_gap3_acc, 0, NULL);
         int32_t max_avg = 0;
         for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
             int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;

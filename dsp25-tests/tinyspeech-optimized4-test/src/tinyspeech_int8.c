@@ -423,6 +423,19 @@ static void conv3x3_acc_c(const int8_t *pad,
 }
 
 #if defined(__riscv_vector)
+static inline vint32m4_t requant_u7_from_acc_vec_i32m4(vint32m4_t vacc,
+                                                        uint32_t mul_q31,
+                                                        size_t vl) {
+    const vint32m4_t vzero = __riscv_vmv_v_x_i32m4(0, vl);
+    const vint32m4_t v127 = __riscv_vmv_v_x_i32m4(127, vl);
+    vacc = __riscv_vmax_vv_i32m4(vacc, vzero, vl);
+    vint64m8_t prod = __riscv_vwmul_vx_i64m8(vacc, (int32_t)mul_q31, vl);
+    prod = __riscv_vadd_vx_i64m8(prod, (int64_t)(1ll << 30), vl);
+    vint32m4_t q = __riscv_vnsra_wx_i32m4(prod, 31, vl);
+    q = __riscv_vmin_vv_i32m4(q, v127, vl);
+    return q;
+}
+
 static void conv3x3_pool2x2_acc_1c_rvv(const int8_t *pad,
                                        int32_t pad_w,
                                        const int16_t *w16,
@@ -690,11 +703,12 @@ static void conv3x3_pool2x2_requant_relu_to_padded_c_rvv(const int8_t *pad,
                 vint32m4_t vmax = __riscv_vmax_vv_i32m4(vacc00, vacc01, vl);
                 vint32m4_t vmax2 = __riscv_vmax_vv_i32m4(vacc10, vacc11, vl);
                 vmax = __riscv_vmax_vv_i32m4(vmax, vmax2, vl);
-                __riscv_vse32_v_i32m4(lane_buf, vmax, vl);
+                vint32m4_t vq = requant_u7_from_acc_vec_i32m4(vmax, mul_q31, vl);
+                __riscv_vse32_v_i32m4(lane_buf, vq, vl);
                 for (size_t lane = 0; lane < vl; lane++) {
                     int32_t oc = oc0 + (int32_t)lane;
                     dst_pad[oc * dst_hw + (ph + 1) * dst_pad_w + (pw + 1)] =
-                        requant_u7_from_acc(lane_buf[lane], mul_q31);
+                        (int8_t)lane_buf[lane];
                 }
                 oc0 += (int32_t)vl;
             }

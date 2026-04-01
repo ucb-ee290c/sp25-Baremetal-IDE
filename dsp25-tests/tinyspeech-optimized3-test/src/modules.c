@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <math.h>
+#include <string.h>
 
 #if defined(__riscv_vector)
 #include <riscv_vector.h>
@@ -1647,18 +1648,90 @@ Tensor conv2d_relu_gap(Tensor *input, Tensor *weights, Tensor *bias, Tensor *sca
 }
 
 #if TINYSPEECH_FP16_RVV_AVAILABLE
-static _Float16 g_fc96x6_w_fp16[6 * 96] __attribute__((aligned(64)));
+static uint16_t g_fc96x6_w_f16_bits[6 * 96] __attribute__((aligned(64)));
 static const float *g_fc96x6_w_src = NULL;
-static _Float16 g_fc96x1_x_fp16[96] __attribute__((aligned(64)));
+static uint16_t g_fc96x1_x_f16_bits[96] __attribute__((aligned(64)));
+
+static inline uint16_t f32_to_f16_bits(float x) {
+    uint32_t bits;
+    memcpy(&bits, &x, sizeof(bits));
+
+    uint32_t sign = (bits >> 16) & 0x8000u;
+    uint32_t mant = bits & 0x007fffffu;
+    int32_t exp = (int32_t)((bits >> 23) & 0xffu) - 127 + 15;
+
+    if (exp <= 0) {
+        if (exp < -10) {
+            return (uint16_t)sign;
+        }
+        mant = (mant | 0x00800000u) >> (uint32_t)(1 - exp);
+        if (mant & 0x00001000u) {
+            mant += 0x00002000u;
+        }
+        return (uint16_t)(sign | (mant >> 13));
+    }
+
+    if (exp >= 31) {
+        if (mant == 0) {
+            return (uint16_t)(sign | 0x7c00u);
+        }
+        mant >>= 13;
+        return (uint16_t)(sign | 0x7c00u | mant | (mant == 0));
+    }
+
+    if (mant & 0x00001000u) {
+        mant += 0x00002000u;
+        if (mant & 0x00800000u) {
+            mant = 0;
+            exp += 1;
+            if (exp >= 31) {
+                return (uint16_t)(sign | 0x7c00u);
+            }
+        }
+    }
+
+    return (uint16_t)(sign | ((uint32_t)exp << 10) | (mant >> 13));
+}
+
+static inline float f16_bits_to_f32(uint16_t h) {
+    uint32_t sign = ((uint32_t)h & 0x8000u) << 16;
+    uint32_t exp = ((uint32_t)h >> 10) & 0x1fu;
+    uint32_t mant = (uint32_t)h & 0x03ffu;
+    uint32_t bits;
+
+    if (exp == 0) {
+        if (mant == 0) {
+            bits = sign;
+        } else {
+            exp = 1;
+            while ((mant & 0x0400u) == 0) {
+                mant <<= 1;
+                exp--;
+            }
+            mant &= 0x03ffu;
+            bits = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+        }
+    } else if (exp == 31) {
+        bits = sign | 0x7f800000u | (mant << 13);
+    } else {
+        bits = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+
+    float out;
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
 
 static inline void pack_fc96x6_weights_fp16(const float *w_src) {
     for (int32_t i = 0; i < (6 * 96); i++) {
-        g_fc96x6_w_fp16[i] = (_Float16)w_src[i];
+        g_fc96x6_w_f16_bits[i] = f32_to_f16_bits(w_src[i]);
     }
     g_fc96x6_w_src = w_src;
 }
 
-static inline float dot96_f16_rvv(const _Float16 *x, const _Float16 *w) {
+static inline float dot96_f16_rvv(const uint16_t *x_bits, const uint16_t *w_bits) {
+    const _Float16 *x = (const _Float16 *)x_bits;
+    const _Float16 *w = (const _Float16 *)w_bits;
     int32_t i = 0;
     float acc = 0.0f;
     while (i < 96) {
@@ -1675,7 +1748,7 @@ static inline float dot96_f16_rvv(const _Float16 *x, const _Float16 *w) {
         i += (int32_t)vl;
     }
     for (; i < 96; i++) {
-        acc += (float)x[i] * (float)w[i];
+        acc += f16_bits_to_f32(x_bits[i]) * f16_bits_to_f32(w_bits[i]);
     }
     return acc;
 }
@@ -1712,23 +1785,23 @@ Tensor fc_layer(Tensor *input, Tensor *weights) {
         for (int32_t n = 0; n < batch_size; n++) {
             const float *x = input->f_data + n * 96;
             for (int32_t i = 0; i < 96; i++) {
-                g_fc96x1_x_fp16[i] = (_Float16)x[i];
+                g_fc96x1_x_f16_bits[i] = f32_to_f16_bits(x[i]);
             }
 
-            const _Float16 *w0 = g_fc96x6_w_fp16 + 0 * 96;
-            const _Float16 *w1 = g_fc96x6_w_fp16 + 1 * 96;
-            const _Float16 *w2 = g_fc96x6_w_fp16 + 2 * 96;
-            const _Float16 *w3 = g_fc96x6_w_fp16 + 3 * 96;
-            const _Float16 *w4 = g_fc96x6_w_fp16 + 4 * 96;
-            const _Float16 *w5 = g_fc96x6_w_fp16 + 5 * 96;
+            const uint16_t *w0 = g_fc96x6_w_f16_bits + 0 * 96;
+            const uint16_t *w1 = g_fc96x6_w_f16_bits + 1 * 96;
+            const uint16_t *w2 = g_fc96x6_w_f16_bits + 2 * 96;
+            const uint16_t *w3 = g_fc96x6_w_f16_bits + 3 * 96;
+            const uint16_t *w4 = g_fc96x6_w_f16_bits + 4 * 96;
+            const uint16_t *w5 = g_fc96x6_w_f16_bits + 5 * 96;
 
             float *out = output.f_data + n * 6;
-            out[0] = dot96_f16_rvv(g_fc96x1_x_fp16, w0);
-            out[1] = dot96_f16_rvv(g_fc96x1_x_fp16, w1);
-            out[2] = dot96_f16_rvv(g_fc96x1_x_fp16, w2);
-            out[3] = dot96_f16_rvv(g_fc96x1_x_fp16, w3);
-            out[4] = dot96_f16_rvv(g_fc96x1_x_fp16, w4);
-            out[5] = dot96_f16_rvv(g_fc96x1_x_fp16, w5);
+            out[0] = dot96_f16_rvv(g_fc96x1_x_f16_bits, w0);
+            out[1] = dot96_f16_rvv(g_fc96x1_x_f16_bits, w1);
+            out[2] = dot96_f16_rvv(g_fc96x1_x_f16_bits, w2);
+            out[3] = dot96_f16_rvv(g_fc96x1_x_f16_bits, w3);
+            out[4] = dot96_f16_rvv(g_fc96x1_x_f16_bits, w4);
+            out[5] = dot96_f16_rvv(g_fc96x1_x_f16_bits, w5);
         }
         return output;
 #endif

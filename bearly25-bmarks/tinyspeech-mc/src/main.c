@@ -313,6 +313,16 @@ static int run_suite_for_frequency(uint64_t frequency_hz) {
 #endif
 #if TINYSPEECH_INT8_PIPELINE
     printf("  int8 path: enabled (fixed-shape quantized conv/gap/fc)\n");
+#if TINYSPEECH_MC_USE_SCRATCHPAD_SHARED
+    printf("  mem map  : scratchpad shared hot-buffers enabled (pad2/pad3/gap3/w2pack16)\n");
+#else
+    printf("  mem map  : scratchpad shared hot-buffers disabled\n");
+#endif
+#if TINYSPEECH_MC_USE_TCM_PRIVATE
+    printf("  mem map  : TCM private buffers enabled (core0 fc/core1 gap3)\n");
+#else
+    printf("  mem map  : TCM private buffers disabled\n");
+#endif
 #if defined(__riscv_vector) && TINYSPEECH_INT8_RVV_UKERNELS
     printf("  int8 ukrn: enabled (conv2+pool2 and conv3+gap fixed-shape RVV)\n");
 #if TINYSPEECH_INT8_USE_VSE8_PACK_STORE

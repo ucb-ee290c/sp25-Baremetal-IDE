@@ -47,6 +47,35 @@
 #define TS_K 9
 #define TS_POOL_AREA 4
 #define TS_GAP_AREA (TS_L3_OH * TS_L3_OW)
+#define TS_PAD2_BYTES ((uint32_t)(TS_L2_IC * (TS_L2_OH + 2) * (TS_L2_OW + 2)))
+#define TS_PAD3_BYTES ((uint32_t)(TS_L3_IC * (TS_L3_OH + 2) * (TS_L3_OW + 2)))
+#define TS_GAP3_BYTES ((uint32_t)(TS_L3_OC * sizeof(int32_t)))
+#define TS_W2PACK16_BYTES ((uint32_t)(TS_L2_OC * TS_L2_IC * TS_K * sizeof(int16_t)))
+#define TS_FC_BYTES ((uint32_t)(TS_FC_OUT * TS_FC_IN))
+
+#if TINYSPEECH_MC_USE_SCRATCHPAD_SHARED
+#if ((TINYSPEECH_MC_SCRATCH_OFFSET_PAD2 + TS_PAD2_BYTES) > TINYSPEECH_MC_SCRATCHPAD_BYTES)
+#error "scratchpad layout overflow: PAD2"
+#endif
+#if ((TINYSPEECH_MC_SCRATCH_OFFSET_PAD3 + TS_PAD3_BYTES) > TINYSPEECH_MC_SCRATCHPAD_BYTES)
+#error "scratchpad layout overflow: PAD3"
+#endif
+#if ((TINYSPEECH_MC_SCRATCH_OFFSET_GAP3 + TS_GAP3_BYTES) > TINYSPEECH_MC_SCRATCHPAD_BYTES)
+#error "scratchpad layout overflow: GAP3"
+#endif
+#if ((TINYSPEECH_MC_SCRATCH_OFFSET_W2PACK16 + TS_W2PACK16_BYTES) > TINYSPEECH_MC_SCRATCHPAD_BYTES)
+#error "scratchpad layout overflow: W2PACK16"
+#endif
+#endif
+
+#if TINYSPEECH_MC_USE_TCM_PRIVATE
+#if ((TINYSPEECH_MC_CORE1_TCM_OFFSET_GAP3_PRIV + TS_GAP3_BYTES) > TINYSPEECH_MC_TCM_BYTES)
+#error "core1 TCM layout overflow: GAP3 private"
+#endif
+#if ((TINYSPEECH_MC_CORE0_TCM_OFFSET_FC + TS_FC_BYTES) > TINYSPEECH_MC_TCM_BYTES)
+#error "core0 TCM layout overflow: FC"
+#endif
+#endif
 
 static int8_t g_w1_q[TS_L1_OC * TS_L1_IC * TS_K] __attribute__((aligned(64)));
 static int8_t g_w2_q[TS_L2_OC * TS_L2_IC * TS_K] __attribute__((aligned(64)));
@@ -62,6 +91,7 @@ static int8_t g_w3_pack[TS_L3_OC * TS_L3_IC * TS_K] __attribute__((aligned(64)))
 static int16_t g_w1_pack16[TS_L1_OC * TS_L1_IC * TS_K] __attribute__((aligned(64)));
 static int16_t g_w2_pack16[TS_L2_OC * TS_L2_IC * TS_K] __attribute__((aligned(64)));
 static int16_t g_w3_pack16[TS_L3_OC * TS_L3_IC * TS_K] __attribute__((aligned(64)));
+static const int16_t *g_w2_pack16_active = g_w2_pack16;
 
 static float g_w1_scale = 1.0f;
 static float g_w2_scale = 1.0f;
@@ -93,6 +123,10 @@ static int8_t g_act2[TS_L2_OC * TS_L2_PH * TS_L2_PW] __attribute__((aligned(64))
 
 static int8_t g_pad3[TS_L3_IC * (TS_L3_OH + 2) * (TS_L3_OW + 2)] __attribute__((aligned(64)));
 static int32_t g_gap3_acc[TS_L3_OC] __attribute__((aligned(64)));
+static int8_t *g_pad2_active = g_pad2;
+static int8_t *g_pad3_active = g_pad3;
+static int32_t *g_gap3_acc_shared = g_gap3_acc;
+static int32_t *g_gap3_acc_h1_private = g_gap3_acc;
 static int8_t g_act3[TS_FC_IN] __attribute__((aligned(64)));
 static int32_t g_conv3_acc[TS_L3_OC * TS_L3_OH * TS_L3_OW] __attribute__((aligned(64)));
 
@@ -104,6 +138,31 @@ static inline uint64_t rdcycle64_int8(void) {
     uint64_t x;
     __asm__ volatile("rdcycle %0" : "=r"(x));
     return x;
+}
+
+static inline void tinyspeech_int8_bind_hot_buffers(void) {
+    g_w2_pack16_active = g_w2_pack16;
+    g_pad2_active = g_pad2;
+    g_pad3_active = g_pad3;
+    g_gap3_acc_shared = g_gap3_acc;
+    g_gap3_acc_h1_private = g_gap3_acc;
+
+#if TINYSPEECH_MC_USE_SCRATCHPAD_SHARED
+    {
+        uintptr_t sb = (uintptr_t)TINYSPEECH_MC_SCRATCHPAD_BASE;
+        g_pad2_active = (int8_t *)(sb + (uintptr_t)TINYSPEECH_MC_SCRATCH_OFFSET_PAD2);
+        g_pad3_active = (int8_t *)(sb + (uintptr_t)TINYSPEECH_MC_SCRATCH_OFFSET_PAD3);
+        g_gap3_acc_shared = (int32_t *)(sb + (uintptr_t)TINYSPEECH_MC_SCRATCH_OFFSET_GAP3);
+        g_w2_pack16_active = (const int16_t *)(sb + (uintptr_t)TINYSPEECH_MC_SCRATCH_OFFSET_W2PACK16);
+    }
+#endif
+
+#if TINYSPEECH_MC_USE_TCM_PRIVATE
+    {
+        uintptr_t c1 = (uintptr_t)TINYSPEECH_MC_CORE1_TCM_BASE;
+        g_gap3_acc_h1_private = (int32_t *)(c1 + (uintptr_t)TINYSPEECH_MC_CORE1_TCM_OFFSET_GAP3_PRIV);
+    }
+#endif
 }
 
 static inline int8_t clamp_i8(int32_t x) {
@@ -2018,11 +2077,18 @@ int tinyspeech_int8_prepare(const Tensor *conv1_w,
         return 0;
     }
 
+    tinyspeech_int8_bind_hot_buffers();
     g_w1_scale = quantize_weights_symmetric(conv1_w->f_data, conv1_w->size, g_w1_q);
     g_w2_scale = quantize_weights_symmetric(conv2_w->f_data, conv2_w->size, g_w2_q);
     g_w3_scale = quantize_weights_symmetric(conv3_w->f_data, conv3_w->size, g_w3_q);
     g_wfc_scale = quantize_weights_symmetric(fc_w->f_data, fc_w->size, g_wfc_q);
-#if TINYSPEECH_MC_USE_SCRATCHPAD_FC
+#if TINYSPEECH_MC_USE_TCM_PRIVATE
+    {
+        int8_t *fc_tcm = (int8_t *)(uintptr_t)(TINYSPEECH_MC_CORE0_TCM_BASE + TINYSPEECH_MC_CORE0_TCM_OFFSET_FC);
+        memcpy(fc_tcm, g_wfc_q, sizeof(g_wfc_q));
+        g_wfc_active = fc_tcm;
+    }
+#elif TINYSPEECH_MC_USE_SCRATCHPAD_FC
     memcpy(g_wfc_scratch, g_wfc_q, sizeof(g_wfc_q));
     g_wfc_active = g_wfc_scratch;
 #else
@@ -2034,6 +2100,9 @@ int tinyspeech_int8_prepare(const Tensor *conv1_w,
     pack_w_oc_to_k_major_i16(g_w1_q, g_w1_pack16, TS_L1_OC, TS_L1_IC);
     pack_w_oc_to_k_major_i16(g_w2_q, g_w2_pack16, TS_L2_OC, TS_L2_IC);
     pack_w_oc_to_k_major_i16(g_w3_q, g_w3_pack16, TS_L3_OC, TS_L3_IC);
+    if (g_w2_pack16_active != g_w2_pack16) {
+        memcpy((void *)g_w2_pack16_active, g_w2_pack16, sizeof(g_w2_pack16));
+    }
 
     g_collect_calib = 0;
     g_fixed_qparams_valid = 0;
@@ -2217,7 +2286,7 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
     const float s0 = 1.0f;
 #if defined(__riscv_vector)
     const int16_t *w1_conv16 = g_w1_pack16;
-    const int16_t *w2_conv16 = g_w2_pack16;
+    const int16_t *w2_conv16 = g_w2_pack16_active;
     const int16_t *w3_conv16 = g_w3_pack16;
 #else
     const int8_t *w1_conv8 = g_w1_q;
@@ -2237,7 +2306,7 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
                                TS_L1_OC, TS_L1_PH, TS_L1_PW, g_pool1_acc);
     int32_t max1 = 0;
     s1 = requant_relu_from_acc_to_padded(g_pool1_acc, TS_L1_OC, TS_L1_PH, TS_L1_PW,
-                                         s0, g_w1_scale, g_pad2, TS_L2_OH + 2, TS_L2_OW + 2, &max1);
+                                         s0, g_w1_scale, g_pad2_active, TS_L2_OH + 2, TS_L2_OW + 2, &max1);
     calib_track_max(1, max1);
 #else
     conv3x3_acc_1c(g_pad1, TS_IN_W + 2, w1_conv8, w1_conv16, g_bias1_q, TS_L1_OC, TS_L1_OH, TS_L1_OW, g_conv1_acc);
@@ -2257,10 +2326,10 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
     float s2 = 1.0f;
 #if defined(__riscv_vector)
     int32_t max2 = 0;
-    conv3x3_pool2x2_acc_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
+    conv3x3_pool2x2_acc_c_rvv(g_pad2_active, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
                               w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW, g_pool2_acc);
     s2 = requant_relu_from_acc_to_padded(g_pool2_acc, TS_L2_OC, TS_L2_PH, TS_L2_PW,
-                                         s1, g_w2_scale, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2, &max2);
+                                         s1, g_w2_scale, g_pad3_active, TS_L3_OH + 2, TS_L3_OW + 2, &max2);
     calib_track_max(2, max2);
 #else
     conv3x3_acc_c(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2, w2_conv8, w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_OH, TS_L2_OW, g_conv2_acc);
@@ -2276,12 +2345,12 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
     make_bias_q(conv3_bias, s2, g_w3_scale, g_bias3_q, TS_L3_OC);
     float s3 = 1.0f;
 #if defined(__riscv_vector)
-    conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
-                               w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc);
+    conv3x3_relu_gap_acc_c_rvv(g_pad3_active, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
+                               w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc_shared);
     int32_t max_avg = 0;
     for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
-        int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
-        g_gap3_acc[oc] = avg_acc;
+        int32_t avg_acc = (g_gap3_acc_shared[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
+        g_gap3_acc_shared[oc] = avg_acc;
         if (avg_acc > max_avg) {
             max_avg = avg_acc;
         }
@@ -2289,7 +2358,7 @@ static Tensor tinyspeech_run_inference_int8_dynamic(const Tensor *input,
     s3 = out_scale_from_max(s2, g_w3_scale, max_avg);
     uint32_t mul3_q31 = requant_mul_q31_from_max(max_avg);
     for (int32_t i = 0; i < TS_L3_OC; i++) {
-        g_act3[i] = requant_u7_from_acc(g_gap3_acc[i], mul3_q31);
+        g_act3[i] = requant_u7_from_acc(g_gap3_acc_shared[i], mul3_q31);
     }
     calib_track_max(3, max_avg);
 #else
@@ -2341,7 +2410,7 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
 
 #if defined(__riscv_vector)
     const int16_t *w1_conv16 = g_w1_pack16;
-    const int16_t *w2_conv16 = g_w2_pack16;
+    const int16_t *w2_conv16 = g_w2_pack16_active;
     const int16_t *w3_conv16 = g_w3_pack16;
 #else
     const int8_t *w1_conv8 = g_w1_q;
@@ -2357,7 +2426,7 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
 #if defined(__riscv_vector)
     conv3x3_pool2x2_requant_relu_to_padded_1c_rvv(g_pad1, TS_IN_W + 2, w1_conv16, g_bias1_q,
                                                    TS_L1_OC, TS_L1_PH, TS_L1_PW, g_mul1_q31,
-                                                   g_pad2, TS_L2_OH + 2, TS_L2_OW + 2);
+                                                   g_pad2_active, TS_L2_OH + 2, TS_L2_OW + 2);
 #else
     conv3x3_acc_1c(g_pad1, TS_IN_W + 2, w1_conv8, w1_conv16, g_bias1_q, TS_L1_OC, TS_L1_OH, TS_L1_OW, g_conv1_acc);
     requant_pool_relu_fixed(g_conv1_acc, TS_L1_OC, TS_L1_OH, TS_L1_OW,
@@ -2375,28 +2444,28 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
     if (conv2_split <= 0 || conv2_split >= TS_L2_OC) {
         conv2_split = TS_L2_OC / 2;
     }
-    clear_l3_hwc_padded_border(g_pad3);
+    clear_l3_hwc_padded_border(g_pad3_active);
     ts_conv2_mc_job_t conv2_job_h1 = {
-        .pad = g_pad2,
+        .pad = g_pad2_active,
         .w16 = w2_conv16,
         .bq = g_bias2_q,
         .mul_q31 = g_mul2_q31,
-        .dst_pad_hwc = g_pad3,
+        .dst_pad_hwc = g_pad3_active,
         .oc_begin = conv2_split,
         .oc_end = TS_L2_OC,
     };
     hthread_issue(1, ts_mc_worker_conv2, &conv2_job_h1);
     conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(
-        g_pad2, w2_conv16, g_bias2_q, g_mul2_q31, g_pad3, 0, conv2_split, 0);
+        g_pad2_active, w2_conv16, g_bias2_q, g_mul2_q31, g_pad3_active, 0, conv2_split, 0);
     hthread_join(1);
 #else
     conv3x3_pool2x2_requant_relu_to_padded_hwc_c_rvv_uk48x24(
-        g_pad2, w2_conv16, g_bias2_q, g_mul2_q31, g_pad3, 0, TS_L2_OC, 1);
+        g_pad2_active, w2_conv16, g_bias2_q, g_mul2_q31, g_pad3_active, 0, TS_L2_OC, 1);
 #endif
 #else
-    conv3x3_pool2x2_requant_relu_to_padded_c_rvv(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
+    conv3x3_pool2x2_requant_relu_to_padded_c_rvv(g_pad2_active, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2,
                                                  w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_PH, TS_L2_PW,
-                                                 g_mul2_q31, g_pad3, TS_L3_OH + 2, TS_L3_OW + 2);
+                                                 g_mul2_q31, g_pad3_active, TS_L3_OH + 2, TS_L3_OW + 2);
 #endif
 #else
     conv3x3_acc_c(g_pad2, TS_L2_IC, TS_L2_OH + 2, TS_L2_OW + 2, w2_conv8, w2_conv16, g_bias2_q, TS_L2_OC, TS_L2_OH, TS_L2_OW, g_conv2_acc);
@@ -2416,39 +2485,39 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
     }
 #if TINYSPEECH_INT8_MULTICORE
     ts_conv3_mc_job_t conv3_job_h1 = {
-        .pad_hwc = g_pad3,
+        .pad_hwc = g_pad3_active,
         .w16 = w3_conv16,
         .bq = g_bias3_q,
-        .gap_sum = g_gap3_acc,
+        .gap_sum = g_gap3_acc_h1_private,
         .oc_begin = conv3_split,
         .oc_end = TS_L3_OC,
     };
     hthread_issue(1, ts_mc_worker_conv3, &conv3_job_h1);
     conv3x3_relu_gap_acc_hwc_padded_c_rvv_uk96x48(
-        g_pad3, w3_conv16, g_bias3_q, g_gap3_acc, 0, conv3_split);
+        g_pad3_active, w3_conv16, g_bias3_q, g_gap3_acc_shared, 0, conv3_split);
     hthread_join(1);
 #else
     conv3x3_relu_gap_acc_hwc_padded_c_rvv_uk96x48(
-        g_pad3, w3_conv16, g_bias3_q, g_gap3_acc, 0, TS_L3_OC);
+        g_pad3_active, w3_conv16, g_bias3_q, g_gap3_acc_shared, 0, TS_L3_OC);
 #endif
 #else
-    conv3x3_relu_gap_acc_c_rvv(g_pad3, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
-                               w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc);
+    conv3x3_relu_gap_acc_c_rvv(g_pad3_active, TS_L3_IC, TS_L3_OH + 2, TS_L3_OW + 2,
+                               w3_conv16, g_bias3_q, TS_L3_OC, TS_L3_OH, TS_L3_OW, g_gap3_acc_shared);
 #endif
 #if TINYSPEECH_INT8_MULTICORE && TINYSPEECH_INT8_RVV_UKERNELS
     ts_requant_mc_job_t rq_job_h1 = {
-        .gap_sum = g_gap3_acc,
+        .gap_sum = g_gap3_acc_h1_private,
         .act_out = g_act3,
         .mul_q31 = g_mul3_q31,
         .oc_begin = conv3_split,
         .oc_end = TS_L3_OC,
     };
     hthread_issue(1, ts_mc_worker_requant, &rq_job_h1);
-    ts_requant_gap_range(g_gap3_acc, g_act3, g_mul3_q31, 0, conv3_split);
+    ts_requant_gap_range(g_gap3_acc_shared, g_act3, g_mul3_q31, 0, conv3_split);
     hthread_join(1);
 #else
     for (int32_t oc = 0; oc < TS_L3_OC; oc++) {
-        int32_t avg_acc = (g_gap3_acc[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
+        int32_t avg_acc = (g_gap3_acc_shared[oc] + (TS_GAP_AREA / 2)) / TS_GAP_AREA;
         g_act3[oc] = requant_u7_from_acc(avg_acc, g_mul3_q31);
     }
 #endif

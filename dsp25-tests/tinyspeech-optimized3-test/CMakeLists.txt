@@ -1,6 +1,18 @@
 # CMakeLists definitions for target `tinyspeech-optimized3-test`.
 
 include(CheckCSourceCompiles)
+option(TINYSPEECH_CMAKE_VERBOSE "Enable verbose tinyspeech feature probe messages during CMake configure" OFF)
+
+set(_TINYSPEECH_OLD_REQUIRED_QUIET "${CMAKE_REQUIRED_QUIET}")
+if (NOT TINYSPEECH_CMAKE_VERBOSE)
+  set(CMAKE_REQUIRED_QUIET TRUE)
+endif()
+
+function(_tinyspeech_msg_opt3 msg)
+  if (TINYSPEECH_CMAKE_VERBOSE)
+    message(STATUS "${msg}")
+  endif()
+endfunction()
 
 set(_TINYSPEECH_OLD_TRY_COMPILE_TARGET_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
@@ -20,11 +32,14 @@ unset(CMAKE_REQUIRED_FLAGS)
 
 if (TINYSPEECH_HAS_ZVFH_INTRINSICS)
   set(TINYSPEECH_FP16_MIXED_VALUE 1)
-  message(STATUS "tinyspeech-optimized3-test: fp16 RVV intrinsics available (enabling mixed fp16 path)")
+  _tinyspeech_msg_opt3("tinyspeech-optimized3-test: fp16 RVV intrinsics available (enabling mixed fp16 path)")
 else()
   set(TINYSPEECH_FP16_MIXED_VALUE 0)
-  message(STATUS "tinyspeech-optimized3-test: fp16 RVV intrinsics unavailable (using f32 fallback)")
+  _tinyspeech_msg_opt3("tinyspeech-optimized3-test: fp16 RVV intrinsics unavailable (using f32 fallback)")
 endif()
+
+set(CMAKE_REQUIRED_QUIET "${_TINYSPEECH_OLD_REQUIRED_QUIET}")
+unset(_TINYSPEECH_OLD_REQUIRED_QUIET)
 
 add_executable(tinyspeech-optimized3-test
   src/main.c

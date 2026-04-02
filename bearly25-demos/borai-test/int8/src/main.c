@@ -626,8 +626,6 @@ typedef struct {
     int pos;
 } mc_forward_job_t;
 
-static volatile mc_forward_job_t _mc_job = {0};
-
 static float* forward_mc(Transformer* transformer, int token, int pos, int hartid);
 
 /* 2-hart sense-reversing barrier.
@@ -641,10 +639,14 @@ static void barrier2(int hartid) {
     if (hartid == 0) {
         while (!_bar_h1_arrived) {}
         _bar_h1_arrived = 0;
+        __sync_synchronize();
         _bar_sense = !s;
+        __sync_synchronize();
     } else {
         _bar_h1_arrived = 1;
+        __sync_synchronize();
         while (_bar_sense == s) {}
+        __sync_synchronize();
     }
 }
 
@@ -668,8 +670,8 @@ static void mc_nop_worker(void *arg) {
 }
 
 static void mc_forward_worker(void *arg) {
-    (void)arg;
-    forward_mc(_mc_job.transformer, _mc_job.token, _mc_job.pos, 1);
+    mc_forward_job_t *job = (mc_forward_job_t *)arg;
+    forward_mc(job->transformer, job->token, job->pos, 1);
 }
 
 /* forward_mc — parallel forward pass for two harts.
@@ -889,12 +891,15 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
     int next;
     int token = prompt_tokens[0];
     int pos   = 0;
+    _bar_h1_arrived = 0;
+    _bar_sense = 0;
     while (pos < steps) {
-        _mc_job.transformer = transformer;
-        _mc_job.token = token;
-        _mc_job.pos = pos;
-        __sync_synchronize();
-        hthread_issue(1, mc_forward_worker, NULL);
+        mc_forward_job_t job = {
+            .transformer = transformer,
+            .token = token,
+            .pos = pos
+        };
+        hthread_issue(1, mc_forward_worker, &job);
         float* logits = forward_mc(transformer, token, pos, 0);
         hthread_join(1);
 
@@ -902,6 +907,11 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
             next = prompt_tokens[pos + 1];
         } else {
             next = sample(sampler, logits);
+        }
+        if (next < 0 || next >= transformer->config.vocab_size) {
+            printf("STDERR: sampled token out of range (%d), vocab=%d at pos=%d\r\n",
+                   next, transformer->config.vocab_size, pos);
+            next = 1;
         }
         pos++;
 
@@ -1166,6 +1176,12 @@ void free_tokenizer(Tokenizer* t) {
 }
 
 char* decode(Tokenizer* t, int prev_token, int token) {
+    if (token < 0 || token >= t->vocab_size) {
+        return "";
+    }
+    if (prev_token < 0 || prev_token >= t->vocab_size) {
+        prev_token = 0;
+    }
     char *piece = t->vocab[token];
     // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
     if (prev_token == 1 && piece[0] == ' ') { piece++; }

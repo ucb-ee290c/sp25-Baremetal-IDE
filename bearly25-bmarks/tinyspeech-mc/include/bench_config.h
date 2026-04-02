@@ -49,13 +49,13 @@
 // 1: map hot shared fixed-path int8 buffers into scratchpad (64KB region)
 //    pad2, pad3, gap3(hart0/shared), and w2_pack16.
 #ifndef TINYSPEECH_MC_USE_SCRATCHPAD_SHARED
-#define TINYSPEECH_MC_USE_SCRATCHPAD_SHARED 1
+#define TINYSPEECH_MC_USE_SCRATCHPAD_SHARED 0
 #endif
 
 // 1: use core-private TCM for tiny private buffers.
 //    current use: hart1 private gap3 accumulator + optional FC weights in core0 TCM.
 #ifndef TINYSPEECH_MC_USE_TCM_PRIVATE
-#define TINYSPEECH_MC_USE_TCM_PRIVATE 1
+#define TINYSPEECH_MC_USE_TCM_PRIVATE 0
 #endif
 
 #ifndef TINYSPEECH_MC_SCRATCHPAD_BYTES

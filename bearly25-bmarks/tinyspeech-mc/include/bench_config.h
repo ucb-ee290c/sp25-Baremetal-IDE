@@ -32,6 +32,7 @@
 #endif
 
 // Output-channel split points for 2-core fixed-shape INT8 kernels.
+// These are defaults; runtime autotune may override.
 #ifndef TINYSPEECH_MC_CONV2_OC_SPLIT
 #define TINYSPEECH_MC_CONV2_OC_SPLIT 24
 #endif
@@ -40,10 +41,47 @@
 #define TINYSPEECH_MC_CONV3_OC_SPLIT 48
 #endif
 
+// Optional startup autotune for multicore split points.
+// Uses first N inference cases to pick best (conv2,conv3) split pair.
+#ifndef TINYSPEECH_MC_AUTOTUNE_SPLITS
+#define TINYSPEECH_MC_AUTOTUNE_SPLITS 0
+#endif
+
+#ifndef TINYSPEECH_MC_AUTOTUNE_CASES
+#define TINYSPEECH_MC_AUTOTUNE_CASES 8
+#endif
+
+#ifndef TINYSPEECH_MC_CONV2_OC_SPLIT_CANDIDATES
+#define TINYSPEECH_MC_CONV2_OC_SPLIT_CANDIDATES 16, 20, 24, 28, 32
+#endif
+
+#ifndef TINYSPEECH_MC_CONV3_OC_SPLIT_CANDIDATES
+#define TINYSPEECH_MC_CONV3_OC_SPLIT_CANDIDATES 32, 40, 48, 56, 64
+#endif
+
 // Optional memory placement hooks (disabled by default for portability).
-// When enabled, tiny hot buffers can be staged in scratchpad/TCM.
-#ifndef TINYSPEECH_MC_USE_SCRATCHPAD_FC
-#define TINYSPEECH_MC_USE_SCRATCHPAD_FC 0
+// FC weight storage mode:
+//   0 = local DRAM (.bss), no mapped staging
+//   1 = mapped scratchpad (TINYSPEECH_MC_SCRATCHPAD_BASE + FC offset)
+//   2 = mapped core0 TCM (TINYSPEECH_MC_CORE0_TCM_BASE + FC offset)
+#ifndef TINYSPEECH_MC_FC_STORAGE_MODE
+#define TINYSPEECH_MC_FC_STORAGE_MODE 0
+#endif
+
+#ifndef TINYSPEECH_MC_SCRATCHPAD_BYTES
+#define TINYSPEECH_MC_SCRATCHPAD_BYTES (64u * 1024u)
+#endif
+
+#ifndef TINYSPEECH_MC_TCM_BYTES
+#define TINYSPEECH_MC_TCM_BYTES (8u * 1024u)
+#endif
+
+#ifndef TINYSPEECH_MC_SCRATCHPAD_FC_OFFSET
+#define TINYSPEECH_MC_SCRATCHPAD_FC_OFFSET 0u
+#endif
+
+#ifndef TINYSPEECH_MC_CORE0_TCM_FC_OFFSET
+#define TINYSPEECH_MC_CORE0_TCM_FC_OFFSET 0u
 #endif
 
 #ifndef TINYSPEECH_MC_SCRATCHPAD_BASE

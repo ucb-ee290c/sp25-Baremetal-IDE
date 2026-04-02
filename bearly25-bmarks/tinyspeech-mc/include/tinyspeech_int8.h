@@ -13,6 +13,8 @@ int tinyspeech_int8_calib_finalize(const Tensor *conv1_bias,
                                    const Tensor *conv2_bias,
                                    const Tensor *conv3_bias);
 int tinyspeech_int8_fixed_qparams_ready(void);
+void tinyspeech_int8_set_mc_splits(int32_t conv2_split, int32_t conv3_split);
+void tinyspeech_int8_get_mc_splits(int32_t *conv2_split, int32_t *conv3_split);
 
 Tensor tinyspeech_run_inference_int8(const Tensor *input,
                                      const Tensor *conv1_bias,

@@ -47,11 +47,11 @@
 #define TS_K 9
 #define TS_POOL_AREA 4
 #define TS_GAP_AREA (TS_L3_OH * TS_L3_OW)
-#define TS_PAD2_BYTES ((uint32_t)(TS_L2_IC * (TS_L2_OH + 2) * (TS_L2_OW + 2)))
-#define TS_PAD3_BYTES ((uint32_t)(TS_L3_IC * (TS_L3_OH + 2) * (TS_L3_OW + 2)))
-#define TS_GAP3_BYTES ((uint32_t)(TS_L3_OC * sizeof(int32_t)))
-#define TS_W2PACK16_BYTES ((uint32_t)(TS_L2_OC * TS_L2_IC * TS_K * sizeof(int16_t)))
-#define TS_FC_BYTES ((uint32_t)(TS_FC_OUT * TS_FC_IN))
+#define TS_PAD2_BYTES (TS_L2_IC * (TS_L2_OH + 2) * (TS_L2_OW + 2))
+#define TS_PAD3_BYTES (TS_L3_IC * (TS_L3_OH + 2) * (TS_L3_OW + 2))
+#define TS_GAP3_BYTES (TS_L3_OC * 4)
+#define TS_W2PACK16_BYTES (TS_L2_OC * TS_L2_IC * TS_K * 2)
+#define TS_FC_BYTES (TS_FC_OUT * TS_FC_IN)
 
 #if TINYSPEECH_MC_USE_SCRATCHPAD_SHARED
 #if ((TINYSPEECH_MC_SCRATCH_OFFSET_PAD2 + TS_PAD2_BYTES) > TINYSPEECH_MC_SCRATCHPAD_BYTES)

@@ -52,6 +52,9 @@ static int8_t g_w1_q[TS_L1_OC * TS_L1_IC * TS_K] __attribute__((aligned(64)));
 static int8_t g_w2_q[TS_L2_OC * TS_L2_IC * TS_K] __attribute__((aligned(64)));
 static int8_t g_w3_q[TS_L3_OC * TS_L3_IC * TS_K] __attribute__((aligned(64)));
 static int8_t g_wfc_q[TS_FC_OUT * TS_FC_IN] __attribute__((aligned(64)));
+#if TINYSPEECH_MC_USE_SCRATCHPAD_FC
+static int8_t g_wfc_scratch[TS_FC_OUT * TS_FC_IN] __attribute__((aligned(64)));
+#endif
 static const int8_t *g_wfc_active = g_wfc_q;
 static int8_t g_w1_pack[TS_L1_OC * TS_L1_IC * TS_K] __attribute__((aligned(64)));
 static int8_t g_w2_pack[TS_L2_OC * TS_L2_IC * TS_K] __attribute__((aligned(64)));
@@ -96,56 +99,11 @@ static int32_t g_conv3_acc[TS_L3_OC * TS_L3_OH * TS_L3_OW] __attribute__((aligne
 static int32_t g_bias1_q[TS_L1_OC] __attribute__((aligned(64)));
 static int32_t g_bias2_q[TS_L2_OC] __attribute__((aligned(64)));
 static int32_t g_bias3_q[TS_L3_OC] __attribute__((aligned(64)));
-static int32_t g_conv2_split_runtime = TINYSPEECH_MC_CONV2_OC_SPLIT;
-static int32_t g_conv3_split_runtime = TINYSPEECH_MC_CONV3_OC_SPLIT;
-
-#if (TINYSPEECH_MC_FC_STORAGE_MODE == 1)
-#if ((TINYSPEECH_MC_SCRATCHPAD_FC_OFFSET + (TS_FC_OUT * TS_FC_IN)) > TINYSPEECH_MC_SCRATCHPAD_BYTES)
-#error "TINYSPEECH_MC_SCRATCHPAD_FC_OFFSET too large for scratchpad FC buffer"
-#endif
-#endif
-
-#if (TINYSPEECH_MC_FC_STORAGE_MODE == 2)
-#if ((TINYSPEECH_MC_CORE0_TCM_FC_OFFSET + (TS_FC_OUT * TS_FC_IN)) > TINYSPEECH_MC_TCM_BYTES)
-#error "TINYSPEECH_MC_CORE0_TCM_FC_OFFSET too large for core0 TCM FC buffer"
-#endif
-#endif
 
 static inline uint64_t rdcycle64_int8(void) {
     uint64_t x;
     __asm__ volatile("rdcycle %0" : "=r"(x));
     return x;
-}
-
-static inline int32_t sanitize_split(int32_t split, int32_t oc_total) {
-    if (split <= 0 || split >= oc_total) {
-        return oc_total / 2;
-    }
-    return split;
-}
-
-void tinyspeech_int8_set_mc_splits(int32_t conv2_split, int32_t conv3_split) {
-    g_conv2_split_runtime = sanitize_split(conv2_split, TS_L2_OC);
-    g_conv3_split_runtime = sanitize_split(conv3_split, TS_L3_OC);
-}
-
-void tinyspeech_int8_get_mc_splits(int32_t *conv2_split, int32_t *conv3_split) {
-    if (conv2_split != NULL) {
-        *conv2_split = g_conv2_split_runtime;
-    }
-    if (conv3_split != NULL) {
-        *conv3_split = g_conv3_split_runtime;
-    }
-}
-
-static int8_t *resolve_fc_storage_ptr(void) {
-#if (TINYSPEECH_MC_FC_STORAGE_MODE == 1)
-    return (int8_t *)(uintptr_t)(TINYSPEECH_MC_SCRATCHPAD_BASE + TINYSPEECH_MC_SCRATCHPAD_FC_OFFSET);
-#elif (TINYSPEECH_MC_FC_STORAGE_MODE == 2)
-    return (int8_t *)(uintptr_t)(TINYSPEECH_MC_CORE0_TCM_BASE + TINYSPEECH_MC_CORE0_TCM_FC_OFFSET);
-#else
-    return g_wfc_q;
-#endif
 }
 
 static inline int8_t clamp_i8(int32_t x) {
@@ -2064,13 +2022,12 @@ int tinyspeech_int8_prepare(const Tensor *conv1_w,
     g_w2_scale = quantize_weights_symmetric(conv2_w->f_data, conv2_w->size, g_w2_q);
     g_w3_scale = quantize_weights_symmetric(conv3_w->f_data, conv3_w->size, g_w3_q);
     g_wfc_scale = quantize_weights_symmetric(fc_w->f_data, fc_w->size, g_wfc_q);
-    int8_t *fc_store = resolve_fc_storage_ptr();
-    if ((fc_store != NULL) && (fc_store != g_wfc_q)) {
-        memcpy(fc_store, g_wfc_q, sizeof(g_wfc_q));
-        g_wfc_active = fc_store;
-    } else {
-        g_wfc_active = g_wfc_q;
-    }
+#if TINYSPEECH_MC_USE_SCRATCHPAD_FC
+    memcpy(g_wfc_scratch, g_wfc_q, sizeof(g_wfc_q));
+    g_wfc_active = g_wfc_scratch;
+#else
+    g_wfc_active = g_wfc_q;
+#endif
     pack_w_oc_to_k_major(g_w1_q, g_w1_pack, TS_L1_OC, TS_L1_IC);
     pack_w_oc_to_k_major(g_w2_q, g_w2_pack, TS_L2_OC, TS_L2_IC);
     pack_w_oc_to_k_major(g_w3_q, g_w3_pack, TS_L3_OC, TS_L3_IC);
@@ -2089,7 +2046,6 @@ int tinyspeech_int8_prepare(const Tensor *conv1_w,
     g_s1_fixed = 1.0f;
     g_s2_fixed = 1.0f;
     g_s3_fixed = 1.0f;
-    tinyspeech_int8_set_mc_splits(TINYSPEECH_MC_CONV2_OC_SPLIT, TINYSPEECH_MC_CONV3_OC_SPLIT);
 
     g_prepared = 1;
     return 1;
@@ -2415,7 +2371,10 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
 #if defined(__riscv_vector)
 #if TINYSPEECH_INT8_RVV_UKERNELS
 #if TINYSPEECH_INT8_MULTICORE
-    int32_t conv2_split = sanitize_split(g_conv2_split_runtime, TS_L2_OC);
+    int32_t conv2_split = TINYSPEECH_MC_CONV2_OC_SPLIT;
+    if (conv2_split <= 0 || conv2_split >= TS_L2_OC) {
+        conv2_split = TS_L2_OC / 2;
+    }
     clear_l3_hwc_padded_border(g_pad3);
     ts_conv2_mc_job_t conv2_job_h1 = {
         .pad = g_pad2,
@@ -2451,7 +2410,10 @@ static Tensor tinyspeech_run_inference_int8_fixed(const Tensor *input,
     t0 = rdcycle64_int8();
 #if defined(__riscv_vector)
 #if TINYSPEECH_INT8_RVV_UKERNELS
-    int32_t conv3_split = sanitize_split(g_conv3_split_runtime, TS_L3_OC);
+    int32_t conv3_split = TINYSPEECH_MC_CONV3_OC_SPLIT;
+    if (conv3_split <= 0 || conv3_split >= TS_L3_OC) {
+        conv3_split = TS_L3_OC / 2;
+    }
 #if TINYSPEECH_INT8_MULTICORE
     ts_conv3_mc_job_t conv3_job_h1 = {
         .pad_hwc = g_pad3,

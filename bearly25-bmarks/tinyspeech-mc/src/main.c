@@ -2,7 +2,6 @@
 
 #include "bench_config.h"
 #include "simple_setup.h"
-#include "tinyspeech_int8.h"
 #include "tinyspeech_model.h"
 #include "tinyspeech_inputs.h"
 #include "tinyspeech_reference.h"
@@ -277,100 +276,6 @@ static inline void cycle_stat_update(cycle_stat_t *s, uint64_t v) {
     }
 }
 
-#if TINYSPEECH_INT8_PIPELINE && TINYSPEECH_INT8_MULTICORE && TINYSPEECH_MC_AUTOTUNE_SPLITS
-static uint64_t autotune_run_case_cycles(uint32_t tc) {
-    const tinyspeech_test_input_case_t *c = &g_tinyspeech_test_inputs[tc];
-    Tensor input = make_input_tensor(c->data);
-    uint64_t c0 = rdcycle64();
-    Tensor out = tinyspeech_run_inference(&input);
-    uint64_t c1 = rdcycle64();
-    free_tensor(&input);
-    free_tensor(&out);
-    return c1 - c0;
-}
-
-static uint32_t autotune_pick_case_index(uint32_t i, uint32_t n) {
-    if (n <= 1u) {
-        return 0u;
-    }
-    // Evenly spread samples across the full dataset instead of only early cases.
-    return (uint32_t)(((uint64_t)i * (uint64_t)(TINYSPEECH_TEST_NUM_CASES - 1u)) / (uint64_t)(n - 1u));
-}
-
-static uint64_t autotune_measure_split_total(int32_t split2, int32_t split3, uint32_t tune_cases) {
-    uint64_t total = 0;
-    tinyspeech_int8_set_mc_splits(split2, split3);
-    for (uint32_t i = 0; i < tune_cases; i++) {
-        uint32_t tc = autotune_pick_case_index(i, tune_cases);
-        total += autotune_run_case_cycles(tc);
-    }
-    return total;
-}
-
-static void maybe_autotune_mc_splits(void) {
-    static int tuned_once = 0;
-    if (tuned_once) {
-        return;
-    }
-    tuned_once = 1;
-
-    const int32_t conv2_candidates[] = { TINYSPEECH_MC_CONV2_OC_SPLIT_CANDIDATES };
-    const int32_t conv3_candidates[] = { TINYSPEECH_MC_CONV3_OC_SPLIT_CANDIDATES };
-    const size_t n2 = sizeof(conv2_candidates) / sizeof(conv2_candidates[0]);
-    const size_t n3 = sizeof(conv3_candidates) / sizeof(conv3_candidates[0]);
-
-    uint32_t tune_cases = TINYSPEECH_MC_AUTOTUNE_CASES;
-    if (tune_cases == 0u) {
-        tune_cases = 1u;
-    }
-    if (tune_cases > TINYSPEECH_TEST_NUM_CASES) {
-        tune_cases = TINYSPEECH_TEST_NUM_CASES;
-    }
-
-    const int32_t base2 = TINYSPEECH_MC_CONV2_OC_SPLIT;
-    const int32_t base3 = TINYSPEECH_MC_CONV3_OC_SPLIT;
-    uint64_t base_cycles = autotune_measure_split_total(base2, base3, tune_cases);
-
-    int32_t best2 = base2;
-    int32_t best3 = base3;
-    uint64_t best_cycles = base_cycles;
-
-    printf("  autotune  : split search begin (cases=%lu grid=%lux%lu)\n",
-           (unsigned long)tune_cases, (unsigned long)n2, (unsigned long)n3);
-    fflush(stdout);
-
-    for (size_t i2 = 0; i2 < n2; i2++) {
-        for (size_t i3 = 0; i3 < n3; i3++) {
-            int32_t c2 = conv2_candidates[i2];
-            int32_t c3 = conv3_candidates[i3];
-            if ((c2 == base2) && (c3 == base3)) {
-                continue;
-            }
-            uint64_t total_cycles = autotune_measure_split_total(c2, c3, tune_cases);
-            if (total_cycles < best_cycles) {
-                best_cycles = total_cycles;
-                best2 = c2;
-                best3 = c3;
-            }
-        }
-    }
-
-    // Regression guard: keep baseline unless tuning is clearly better.
-    if (best_cycles + (best_cycles / 200u) < base_cycles) { // >0.5% better
-        tinyspeech_int8_set_mc_splits(best2, best3);
-        printf("  autotune  : split search done, adopt conv2=%ld conv3=%ld (base=%lu best=%lu)\n",
-               (long)best2, (long)best3,
-               (unsigned long)base_cycles, (unsigned long)best_cycles);
-    } else {
-        tinyspeech_int8_set_mc_splits(base2, base3);
-        printf("  autotune  : split search done, keep baseline conv2=%ld conv3=%ld (base=%lu best=%lu)\n",
-               (long)base2, (long)base3,
-               (unsigned long)base_cycles, (unsigned long)best_cycles);
-    }
-    fflush(stdout);
-}
-#endif
-
 static int run_suite_for_frequency(uint64_t frequency_hz) {
 #if TINYSPEECH_OUTPUT_SOFTMAX
     const char *score_label = "conf";
@@ -384,12 +289,10 @@ static int run_suite_for_frequency(uint64_t frequency_hz) {
     printf("  kernel mode: fixed-shape INT8 conv/gap/fc\n");
     printf("  weights  : symmetric int8 prepack per layer\n");
 #if TINYSPEECH_INT8_MULTICORE
-    int32_t split2 = 0;
-    int32_t split3 = 0;
-    tinyspeech_int8_get_mc_splits(&split2, &split3);
     printf("  multicore: enabled (hart0+hart1 split for conv2/conv3/gap-quant)\n");
-    printf("  split    : conv2=%ld/%d conv3=%ld/%d\n",
-           (long)split2, 48, (long)split3, 96);
+    printf("  split    : conv2=%d/%d conv3=%d/%d\n",
+           TINYSPEECH_MC_CONV2_OC_SPLIT, 48,
+           TINYSPEECH_MC_CONV3_OC_SPLIT, 96);
 #else
     printf("  multicore: disabled\n");
 #endif
@@ -410,15 +313,6 @@ static int run_suite_for_frequency(uint64_t frequency_hz) {
 #endif
 #if TINYSPEECH_INT8_PIPELINE
     printf("  int8 path: enabled (fixed-shape quantized conv/gap/fc)\n");
-#if (TINYSPEECH_MC_FC_STORAGE_MODE == 1)
-    printf("  mem map  : fc weights in scratchpad @0x%08lx\n",
-           (unsigned long)(TINYSPEECH_MC_SCRATCHPAD_BASE + TINYSPEECH_MC_SCRATCHPAD_FC_OFFSET));
-#elif (TINYSPEECH_MC_FC_STORAGE_MODE == 2)
-    printf("  mem map  : fc weights in core0 TCM @0x%08lx\n",
-           (unsigned long)(TINYSPEECH_MC_CORE0_TCM_BASE + TINYSPEECH_MC_CORE0_TCM_FC_OFFSET));
-#else
-    printf("  mem map  : fc weights in local DRAM (.bss)\n");
-#endif
 #if defined(__riscv_vector) && TINYSPEECH_INT8_RVV_UKERNELS
     printf("  int8 ukrn: enabled (conv2+pool2 and conv3+gap fixed-shape RVV)\n");
 #if TINYSPEECH_INT8_USE_VSE8_PACK_STORE
@@ -481,21 +375,6 @@ static int run_suite_for_frequency(uint64_t frequency_hz) {
     int calib_ok = tinyspeech_int8_calibration_end();
     printf("  calibration: %s\n", calib_ok ? "done" : "failed (falling back to dynamic int8)");
     fflush(stdout);
-#if TINYSPEECH_INT8_MULTICORE && TINYSPEECH_MC_AUTOTUNE_SPLITS
-    if (calib_ok) {
-        maybe_autotune_mc_splits();
-    }
-#endif
-#if TINYSPEECH_INT8_MULTICORE
-    if (calib_ok) {
-        int32_t run_split2 = 0;
-        int32_t run_split3 = 0;
-        tinyspeech_int8_get_mc_splits(&run_split2, &run_split3);
-        printf("  split(run): conv2=%ld/%d conv3=%ld/%d\n",
-               (long)run_split2, 48, (long)run_split3, 96);
-        fflush(stdout);
-    }
-#endif
 #endif
 
     uint32_t pass = 0;

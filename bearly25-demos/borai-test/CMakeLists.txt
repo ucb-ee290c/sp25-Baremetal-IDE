@@ -30,12 +30,13 @@ option(BORAI_TESTQ_PREFILL_MULTICORE
 
 if(BORAI_TESTQ_PREFILL_MULTICORE)
   if (NOT TARGET threadlib)
-    message(FATAL_ERROR "boraiq-test PREFILL_MULTICORE requires THREAD_LIB=ON (threadlib target missing).")
+    message(STATUS "boraiq-test: THREAD_LIB is OFF, disabling PREFILL_MULTICORE (single-core fallback).")
+  else()
+    target_compile_definitions(boraiq-test PRIVATE PREFILL_MULTICORE)
+    target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/thread-lib)
+    target_link_libraries(boraiq-test PRIVATE threadlib)
   endif()
-  target_compile_definitions(boraiq-test PRIVATE PREFILL_MULTICORE)
-  target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR})
-  target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/thread-lib)
-  target_link_libraries(boraiq-test PRIVATE threadlib)
 endif()
 
 option(BORAI_TESTQ_VEC_SOFTMAX

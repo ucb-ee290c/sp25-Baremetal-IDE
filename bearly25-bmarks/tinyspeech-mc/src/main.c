@@ -289,6 +289,24 @@ static uint64_t autotune_run_case_cycles(uint32_t tc) {
     return c1 - c0;
 }
 
+static uint32_t autotune_pick_case_index(uint32_t i, uint32_t n) {
+    if (n <= 1u) {
+        return 0u;
+    }
+    // Evenly spread samples across the full dataset instead of only early cases.
+    return (uint32_t)(((uint64_t)i * (uint64_t)(TINYSPEECH_TEST_NUM_CASES - 1u)) / (uint64_t)(n - 1u));
+}
+
+static uint64_t autotune_measure_split_total(int32_t split2, int32_t split3, uint32_t tune_cases) {
+    uint64_t total = 0;
+    tinyspeech_int8_set_mc_splits(split2, split3);
+    for (uint32_t i = 0; i < tune_cases; i++) {
+        uint32_t tc = autotune_pick_case_index(i, tune_cases);
+        total += autotune_run_case_cycles(tc);
+    }
+    return total;
+}
+
 static void maybe_autotune_mc_splits(void) {
     static int tuned_once = 0;
     if (tuned_once) {
@@ -309,9 +327,13 @@ static void maybe_autotune_mc_splits(void) {
         tune_cases = TINYSPEECH_TEST_NUM_CASES;
     }
 
-    int32_t best2 = TINYSPEECH_MC_CONV2_OC_SPLIT;
-    int32_t best3 = TINYSPEECH_MC_CONV3_OC_SPLIT;
-    uint64_t best_cycles = UINT64_MAX;
+    const int32_t base2 = TINYSPEECH_MC_CONV2_OC_SPLIT;
+    const int32_t base3 = TINYSPEECH_MC_CONV3_OC_SPLIT;
+    uint64_t base_cycles = autotune_measure_split_total(base2, base3, tune_cases);
+
+    int32_t best2 = base2;
+    int32_t best3 = base3;
+    uint64_t best_cycles = base_cycles;
 
     printf("  autotune  : split search begin (cases=%lu grid=%lux%lu)\n",
            (unsigned long)tune_cases, (unsigned long)n2, (unsigned long)n3);
@@ -319,22 +341,32 @@ static void maybe_autotune_mc_splits(void) {
 
     for (size_t i2 = 0; i2 < n2; i2++) {
         for (size_t i3 = 0; i3 < n3; i3++) {
-            uint64_t total_cycles = 0;
-            tinyspeech_int8_set_mc_splits(conv2_candidates[i2], conv3_candidates[i3]);
-            for (uint32_t tc = 0; tc < tune_cases; tc++) {
-                total_cycles += autotune_run_case_cycles(tc);
+            int32_t c2 = conv2_candidates[i2];
+            int32_t c3 = conv3_candidates[i3];
+            if ((c2 == base2) && (c3 == base3)) {
+                continue;
             }
+            uint64_t total_cycles = autotune_measure_split_total(c2, c3, tune_cases);
             if (total_cycles < best_cycles) {
                 best_cycles = total_cycles;
-                best2 = conv2_candidates[i2];
-                best3 = conv3_candidates[i3];
+                best2 = c2;
+                best3 = c3;
             }
         }
     }
 
-    tinyspeech_int8_set_mc_splits(best2, best3);
-    printf("  autotune  : split search done, best conv2=%ld conv3=%ld total_cycles=%lu\n",
-           (long)best2, (long)best3, (unsigned long)best_cycles);
+    // Regression guard: keep baseline unless tuning is clearly better.
+    if (best_cycles + (best_cycles / 200u) < base_cycles) { // >0.5% better
+        tinyspeech_int8_set_mc_splits(best2, best3);
+        printf("  autotune  : split search done, adopt conv2=%ld conv3=%ld (base=%lu best=%lu)\n",
+               (long)best2, (long)best3,
+               (unsigned long)base_cycles, (unsigned long)best_cycles);
+    } else {
+        tinyspeech_int8_set_mc_splits(base2, base3);
+        printf("  autotune  : split search done, keep baseline conv2=%ld conv3=%ld (base=%lu best=%lu)\n",
+               (long)base2, (long)base3,
+               (unsigned long)base_cycles, (unsigned long)best_cycles);
+    }
     fflush(stdout);
 }
 #endif

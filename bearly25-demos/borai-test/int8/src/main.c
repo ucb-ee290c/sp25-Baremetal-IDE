@@ -85,6 +85,7 @@ typedef struct Sampler Sampler;
 char* decode(Tokenizer* t, int prev_token, int token);
 void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens);
 int sample(Sampler* sampler, float* logits);
+void safe_printf(char *piece);
 
 
 /* USER CODE END PFP */

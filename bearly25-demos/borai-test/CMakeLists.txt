@@ -16,7 +16,6 @@ add_executable(boraiq-test
 )
 
 target_include_directories(boraiq-test PUBLIC int8/include)
-target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
   target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)
@@ -34,7 +33,7 @@ if(BORAI_TESTQ_PREFILL_MULTICORE)
     message(FATAL_ERROR "boraiq-test PREFILL_MULTICORE requires THREAD_LIB=ON (threadlib target missing).")
   endif()
   target_compile_definitions(boraiq-test PRIVATE PREFILL_MULTICORE)
-  target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/thread-lib)
+  target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/thread-lib)
   target_link_libraries(boraiq-test PRIVATE threadlib)
 endif()
 

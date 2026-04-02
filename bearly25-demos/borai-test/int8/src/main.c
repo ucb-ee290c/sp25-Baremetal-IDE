@@ -37,7 +37,7 @@
 #include "layers.h"
 #endif
 #ifdef PREFILL_MULTICORE
-#include "hthread.h"
+#include <thread-lib/hthread.h>
 #endif
 
 /* Private includes ----------------------------------------------------------*/
@@ -1794,9 +1794,11 @@ int main(int argc, char **argv) {
 }
 
 
-// Alternative HART runner. Threadlib provides __main when linked.
+// Alternative HART runner. In multicore mode, threadlib provides __main.
+#ifndef PREFILL_MULTICORE
 void __attribute__((weak, noreturn)) __main(void) {
   while (1) {
     asm volatile ("wfi");
   }
 }
+#endif

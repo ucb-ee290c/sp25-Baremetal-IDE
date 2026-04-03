@@ -21,8 +21,8 @@
 * Bringup 2025
 */
 
-#ifndef HAL_I2S_H
-#define HAL_I2S_H
+#ifndef hal_i2s_H
+#define hal_i2s_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -258,4 +258,4 @@ void set_I2S_sample_freq(int channel, uint64_t sys_clk_freq, uint64_t target_sam
 }
 #endif
 
-#endif // HAL_I2S_H
+#endif // hal_i2s_H

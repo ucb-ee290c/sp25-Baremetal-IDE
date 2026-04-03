@@ -1,4 +1,4 @@
-#include "hal_I2S.h"
+#include "hal_i2s.h"
 #include  "hal_mmio.h"
 
 void config_I2S(int channel, i2s_params_t* params) {

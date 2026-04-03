@@ -91,6 +91,19 @@ static const mem_mode_t k_mem_modes[] = {
 static uint32_t g_hw_capture[CONV_BENCH_MAX_HW_OUTPUT_WORDS];
 static float g_ref_output[CONV_BENCH_MAX_REF_OUTPUT_WORDS];
 
+// Baremetal-friendly sqrt approximation to avoid requiring libm at link time.
+static float conv_bench_sqrtf(float x) {
+  if (x <= 0.0f) {
+    return 0.0f;
+  }
+
+  float g = (x > 1.0f) ? x : 1.0f;
+  for (int i = 0; i < 8; ++i) {
+    g = 0.5f * (g + x / g);
+  }
+  return g;
+}
+
 static const char *cache_mode_name(conv_cache_mode_t mode) {
   return (mode == CONV_CACHE_COLD) ? "cold" : "warm";
 }
@@ -249,7 +262,7 @@ static float accuracy_rmse(const accuracy_stats_t *acc) {
   if (acc->samples == 0u) {
     return 0.0f;
   }
-  return (float)sqrt(acc->sum_sq / (double)acc->samples);
+  return conv_bench_sqrtf((float)(acc->sum_sq / (double)acc->samples));
 }
 
 static float accuracy_mean_abs(const accuracy_stats_t *acc) {

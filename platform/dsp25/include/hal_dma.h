@@ -15,7 +15,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <riscv-pk/encoding.h>
+#include "encoding.h"
 
 /*
  * DMA transaction descriptor written into a channel slot.

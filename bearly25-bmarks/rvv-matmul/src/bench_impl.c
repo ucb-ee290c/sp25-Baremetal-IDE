@@ -13,3 +13,11 @@
 #define pack_weight_matrix pack_weight_matrix_i8i32
 #include "i8_i32_matmul_rvv.c"
 #undef pack_weight_matrix
+
+#define pack_weight_matrix pack_weight_matrix_i32
+#include "i32_matmul_rvv.c"
+#undef pack_weight_matrix
+
+#define pack_weight_matrix pack_weight_matrix_i8i8
+#include "i8_i8_matmul_rvv.c"
+#undef pack_weight_matrix

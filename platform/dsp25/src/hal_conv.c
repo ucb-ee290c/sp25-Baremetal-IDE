@@ -286,7 +286,7 @@ void dma_1dConvDriver(
     dma_transaction_t k_trans = {
         .core            = DMA_KERNEL_CORE,
         .transaction_id  = base_id,
-        .addr_r          = kernel_buffer_ptr,  // from memory
+        .addr_r          = (uint64_t)(uintptr_t)kernel_buffer_ptr,  // from memory
         .addr_w          = KERNEL_ADDR,        // to kernel MMIO FIFO/port
         .inc_r           = DMA_WORD_INC,       // walk memory
         .inc_w           = 0,                  // fixed MMIO address
@@ -316,7 +316,7 @@ void dma_1dConvDriver(
         .core            = DMA_OUTPUT_CORE,
         .transaction_id  = base_id + 1,
         .addr_r          = OUTPUT_ADDR,              // from MMIO FIFO
-        .addr_w          = output_buffer_ptr,        // to memory
+        .addr_w          = (uint64_t)(uintptr_t)output_buffer_ptr,  // to memory
         .inc_r           = 0,                        // fixed MMIO address
         .inc_w           = DMA_WORD_INC,             // walk memory
         .len             = output_packets,           // ALL output beats
@@ -331,7 +331,7 @@ void dma_1dConvDriver(
     dma_transaction_t tx_in = {
         .core            = DMA_INPUT_CORE,
         .transaction_id  = base_id + 2,
-        .addr_r          = input_buffer_ptr,         // from memory
+        .addr_r          = (uint64_t)(uintptr_t)input_buffer_ptr,  // from memory
         .addr_w          = INPUT_ADDR,               // to MMIO FIFO
         .inc_r           = DMA_WORD_INC,             // walk memory
         .inc_w           = 0,                        // fixed MMIO address

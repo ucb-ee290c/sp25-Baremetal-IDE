@@ -36,17 +36,49 @@ void int8_int16_gemm_packed(size_t M, size_t N, size_t K,
 void pack_weight_matrix_i8i16(size_t K, size_t N,
                               const int8_t *B, int8_t *B_packed);
 
-void int8_gemm(size_t M, size_t N, size_t K,
-               const int8_t *A, size_t a_row_stride,
-               const int8_t *B,
-               int32_t *C, size_t c_row_stride, size_t c_col_stride);
+void int8_int32_gemm(size_t M, size_t N, size_t K,
+                     const int8_t *A, size_t a_row_stride,
+                     const int8_t *B,
+                     int32_t *C, size_t c_row_stride, size_t c_col_stride);
 
-void int8_gemm_packed(size_t M, size_t N, size_t K,
-                      const int8_t *A, size_t a_row_stride,
-                      const int8_t *B,
-                      int32_t *C, size_t c_row_stride, size_t c_col_stride);
+void int8_int32_gemm_packed(size_t M, size_t N, size_t K,
+                            const int8_t *A, size_t a_row_stride,
+                            const int8_t *B,
+                            int32_t *C, size_t c_row_stride, size_t c_col_stride);
 
 void pack_weight_matrix_i8i32(size_t K, size_t N,
                               const int8_t *B, int8_t *B_packed);
+
+void int32_gemm(size_t M, size_t N, size_t K,
+                const int32_t *A, size_t a_row_stride,
+                const int32_t *B,
+                int32_t *C, size_t c_row_stride, size_t c_col_stride);
+
+void int32_gemm_packed(size_t M, size_t N, size_t K,
+                       const int32_t *A, size_t a_row_stride,
+                       const int32_t *B,
+                       int32_t *C, size_t c_row_stride, size_t c_col_stride);
+
+void pack_weight_matrix_i32(size_t K, size_t N,
+                            const int32_t *B, int32_t *B_packed);
+
+void int8_int8_gemm(size_t M, size_t N, size_t K,
+                    const int8_t *A, size_t a_row_stride,
+                    const int8_t *B,
+                    int8_t *C, size_t c_row_stride, size_t c_col_stride);
+
+void int8_int8_gemm_packed(size_t M, size_t N, size_t K,
+                           const int8_t *A, size_t a_row_stride,
+                           const int8_t *B,
+                           int8_t *C, size_t c_row_stride, size_t c_col_stride);
+
+void pack_weight_matrix_i8i8(size_t K, size_t N,
+                             const int8_t *B, int8_t *B_packed);
+
+/* Return the packed column-block width (nr) for each kernel type.
+ * Needed by the harness to compute TCM split boundaries. */
+size_t packed_nr_f32(void);
+size_t packed_nr_i8_i32(void);
+size_t packed_nr_i8_i8(void);
 
 #endif // RVV_BENCH_KERNELS_H

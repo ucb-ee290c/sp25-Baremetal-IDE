@@ -32,7 +32,7 @@ enum wavelet_flags {
 	WAVELET_FLUSH = 1,
 	WAVELET_FLOAT = 1<<2,
 	WAVELET_FORWARD = 1<<3
-}
+};
 
 /* typedef struct {
    __IO uint64_t EVEN_INPUT;

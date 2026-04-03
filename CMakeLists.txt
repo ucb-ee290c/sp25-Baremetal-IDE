@@ -45,6 +45,7 @@ option(BUILD_VECNN                  "Build vec-nn library"                    OF
 option(BUILD_MFCC_LIB               "Build mfcc-lib library"                  ON)
 option(THREAD_LIB                   "Build thread-lib library"                OFF)
 option(BMARK_LIB                    "Build bmark-lib library"                 OFF)
+option(BUILD_DSP25_TESTS            "Build dsp25-tests targets"               ON)
 
 # Specify whether we are trying to run on the physical chip or in sims/spike
 set(PLATFORM                        "CHIP" CACHE STRING "Runtime platform: CHIP or SIMS")
@@ -210,7 +211,9 @@ add_subdirectory(bearly25-tests)
 add_subdirectory(bearly25-bmarks)
 add_subdirectory(bearly25-demos)
 add_subdirectory(dsp25-demos)
-add_subdirectory(dsp25-tests)
+if(BUILD_DSP25_TESTS)
+  add_subdirectory(dsp25-tests)
+endif()
 add_subdirectory(c2c25-tests)
 add_subdirectory(dsp25-bmarks)
 

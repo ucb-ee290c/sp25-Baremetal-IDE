@@ -1,5 +1,5 @@
 #include "libgloss_asm.h"
-#include <riscv-pk/encoding.h>
+#include "encoding.h"
 
     .globl trap_handler
     .globl trap_entry

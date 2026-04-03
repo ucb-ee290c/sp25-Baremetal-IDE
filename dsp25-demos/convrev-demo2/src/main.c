@@ -23,7 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include "hal_I2S.h"
+#include "hal_i2s.h"
 #include "hal_conv.h"
 
 /* USER CODE END Includes */

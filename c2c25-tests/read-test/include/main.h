@@ -33,6 +33,8 @@ extern "C" {
 #include <string.h>
 #include <time.h>
 #include <ctype.h>
+#include <math.h>
+#include <signal.h>
 
 #include "riscv.h"
 #include "chip_config.h"

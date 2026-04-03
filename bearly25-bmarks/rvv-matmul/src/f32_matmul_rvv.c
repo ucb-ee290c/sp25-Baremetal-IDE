@@ -216,9 +216,13 @@ do {
 } while (nc != 0);
 }
 
+size_t packed_nr_f32(void) {
+  return __riscv_vsetvlmax_e32m4();
+}
+
 void pack_weight_matrix(
-  size_t K, 
-  size_t N, 
+  size_t K,
+  size_t N,
   const float* B,
   float* B_packed)
 {

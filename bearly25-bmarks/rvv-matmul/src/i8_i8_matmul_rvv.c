@@ -272,6 +272,10 @@ void gemm_i8_i8_1xm2_packed(
   } while (nc != 0);
 }
 
+size_t packed_nr_i8_i8(void) {
+    return __riscv_vsetvlmax_e8m2();
+}
+
 void int8_int8_gemm_packed(
     size_t M, size_t N, size_t K,
     const int8_t* A, size_t a_row_stride,

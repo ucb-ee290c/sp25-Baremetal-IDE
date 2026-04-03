@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #ifndef RVV_BENCH_TARGET_FREQUENCY_HZ
-#define RVV_BENCH_TARGET_FREQUENCY_HZ 150000000ULL
+#define RVV_BENCH_TARGET_FREQUENCY_HZ 1050000000ULL
 #endif
 
 // 0: single-frequency mode
@@ -43,12 +43,23 @@
 #endif
 
 #ifndef RVV_BENCH_RUNS_HOT
-#define RVV_BENCH_RUNS_HOT 60000
+#define RVV_BENCH_RUNS_HOT 100000
 #endif
 
 // Approximate L2 cache size for flush-thrash helper
 #ifndef RVV_L2_BYTES
 #define RVV_L2_BYTES (256u * 1024u)
+#endif
+
+// Per-core Tightly Coupled Memory (TCM / scratchpad) addresses.
+#ifndef CORE0_TCM_BASE
+#define CORE0_TCM_BASE 0x08010000UL
+#endif
+#ifndef CORE1_TCM_BASE
+#define CORE1_TCM_BASE 0x08012000UL
+#endif
+#ifndef TCM_SIZE
+#define TCM_SIZE 0x2000UL  /* 8 KB */
 #endif
 
 #ifndef RVV_BENCH_ENABLE_F32
@@ -60,11 +71,11 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I32
-#define RVV_BENCH_ENABLE_I8_I32 0
+#define RVV_BENCH_ENABLE_I8_I32 1
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I32
-#define RVV_BENCH_ENABLE_I32 1
+#define RVV_BENCH_ENABLE_I32 0
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I8
@@ -72,11 +83,11 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_UNPACKED
-#define RVV_BENCH_ENABLE_UNPACKED 1
+#define RVV_BENCH_ENABLE_UNPACKED 0
 #endif
 
 #ifndef RVV_BENCH_ENABLE_PACKED
-#define RVV_BENCH_ENABLE_PACKED 0
+#define RVV_BENCH_ENABLE_PACKED 1
 #endif
 
 // Hart that is allowed to print benchmark logs.

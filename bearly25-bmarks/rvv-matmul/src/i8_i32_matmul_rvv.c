@@ -175,27 +175,9 @@ void gemm_i8_i32_1xm4_packed(
   } while (nc != 0);
 }
 
-void copy_int8_to_tcm(const int8_t *src, size_t n) {
-  // Destination pointer in TCM
-  int8_t *tcm_input = (int8_t *)0x78000000;
-
-  size_t vl;
-  while (n > 0) {
-      // Set VL to process up to 'n' bytes with 8-bit elements, SEW=8, LMUL=1
-      vl = __riscv_vsetvl_e8m8(n);
-
-      // Load vl int8 elements from src
-      vint8m8_t v = __riscv_vle8_v_i8m8(src, vl);
-      // Store them to TCM
-      __riscv_vse8_v_i8m8(tcm_input, v, vl);
-
-      // Advance pointers and decrease remaining count
-      src       += vl;
-      tcm_input += vl;
-      n         -= vl;
-  }
+size_t packed_nr_i8_i32(void) {
+    return __riscv_vsetvlmax_e32m4();
 }
-
 
 void int8_int32_gemm_packed(
     size_t M, size_t N, size_t K,
@@ -209,7 +191,6 @@ void int8_int32_gemm_packed(
     const size_t cm_stride_bytes = c_row_stride * sizeof(int32_t);
     const size_t cn_stride_bytes = c_col_stride;
 
-    copy_int8_to_tcm(B, K*N+N);
     size_t row = 0;
     while (row < M) {
         size_t rows_left = M - row;
@@ -221,7 +202,7 @@ void int8_int32_gemm_packed(
                 kc_bytes,
                 A + row * a_row_stride,
                 a_stride_bytes,
-                (int8_t *)0x78000000,
+                B,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes
@@ -234,7 +215,7 @@ void int8_int32_gemm_packed(
                 kc_bytes,
                 A + row * a_row_stride,
                 a_stride_bytes,
-                (int8_t *)0x78000000,
+                B,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes

@@ -1756,14 +1756,16 @@ int main(int argc, char **argv) {
 
 
 // Alternative HART runner. Multithreading, anyone?
-void __attribute__((weak, noreturn)) __main(void) {
+void __attribute__((noreturn)) __main(void) {
 #ifdef PREFILL_MULTICORE
   unsigned long long hartid;
   asm volatile("csrr %0, mhartid" : "=r"(hartid));
   if (hartid == 1) {
     /* Hart 1 worker: spin until hart 0 signals work, then execute the
-     * hart-1 half of each forward pass alongside hart 0. */
-    while (!_mc_all_done) {
+     * hart-1 half of each forward pass alongside hart 0.
+     * Outer loop re-arms after each generate_mc() round so hart 1
+     * survives the app_main while(1) loop. */
+    while (1) {
       if (_mc_fwd_rdy) {
         _mc_fwd_rdy = 0;
         forward_mc(&_mc_transformer, _mc_token_val, _mc_pos_val, 1);

@@ -41,7 +41,13 @@ typedef struct {
   int8_t *B_i8;
   int8_t *B_i8_packed_i16;
   int8_t *B_i8_packed_i32;
+  int8_t *B_i8_packed_i8;
   int16_t *C_i16;
+  int8_t *C_i8;
+
+  int32_t *A_i32;
+  int32_t *B_i32;
+  int32_t *B_i32_packed;
   int32_t *C_i32;
 } rvv_case_ctx_t;
 
@@ -113,7 +119,12 @@ static void rvv_case_ctx_destroy(rvv_case_ctx_t *ctx) {
   if (ctx->B_i8) free(ctx->B_i8);
   if (ctx->B_i8_packed_i16) free(ctx->B_i8_packed_i16);
   if (ctx->B_i8_packed_i32) free(ctx->B_i8_packed_i32);
+  if (ctx->B_i8_packed_i8) free(ctx->B_i8_packed_i8);
   if (ctx->C_i16) free(ctx->C_i16);
+  if (ctx->C_i8) free(ctx->C_i8);
+  if (ctx->A_i32) free(ctx->A_i32);
+  if (ctx->B_i32) free(ctx->B_i32);
+  if (ctx->B_i32_packed) free(ctx->B_i32_packed);
   if (ctx->C_i32) free(ctx->C_i32);
   memset(ctx, 0, sizeof(*ctx));
 }
@@ -136,12 +147,19 @@ static int rvv_case_ctx_init(rvv_case_ctx_t *ctx, const RvvMatmulCase *cs) {
   ctx->B_i8 = (int8_t *)bench_aligned_alloc(8, ctx->b_elems * sizeof(int8_t));
   ctx->B_i8_packed_i16 = (int8_t *)bench_aligned_alloc(8, ctx->b_elems * sizeof(int8_t));
   ctx->B_i8_packed_i32 = (int8_t *)bench_aligned_alloc(8, ctx->b_elems * sizeof(int8_t));
+  ctx->B_i8_packed_i8 = (int8_t *)bench_aligned_alloc(8, ctx->b_elems * sizeof(int8_t));
   ctx->C_i16 = (int16_t *)bench_aligned_alloc(8, ctx->c_elems * sizeof(int16_t));
+  ctx->C_i8 = (int8_t *)bench_aligned_alloc(8, ctx->c_elems * sizeof(int8_t));
+
+  ctx->A_i32 = (int32_t *)bench_aligned_alloc(8, ctx->a_elems * sizeof(int32_t));
+  ctx->B_i32 = (int32_t *)bench_aligned_alloc(8, ctx->b_elems * sizeof(int32_t));
+  ctx->B_i32_packed = (int32_t *)bench_aligned_alloc(8, ctx->b_elems * sizeof(int32_t));
   ctx->C_i32 = (int32_t *)bench_aligned_alloc(8, ctx->c_elems * sizeof(int32_t));
 
   if (!ctx->A_f32 || !ctx->B_f32 || !ctx->B_f32_packed || !ctx->C_f32 ||
-      !ctx->A_i8 || !ctx->B_i8 || !ctx->B_i8_packed_i16 || !ctx->B_i8_packed_i32 ||
-      !ctx->C_i16 || !ctx->C_i32) {
+      !ctx->A_i8 || !ctx->B_i8 || !ctx->B_i8_packed_i16 ||
+      !ctx->B_i8_packed_i32 || !ctx->B_i8_packed_i8 || !ctx->C_i16 || !ctx->C_i8 ||
+      !ctx->A_i32 || !ctx->B_i32 || !ctx->B_i32_packed || !ctx->C_i32) {
     if (rvv_bench_is_print_hart()) {
       printf("  ERROR: allocation failed\n");
     }
@@ -153,20 +171,25 @@ static int rvv_case_ctx_init(rvv_case_ctx_t *ctx, const RvvMatmulCase *cs) {
     int32_t v = (int32_t)((i * 13u + 7u) % 127u) - 63;
     ctx->A_f32[i] = (float)v * 0.125f;
     ctx->A_i8[i] = (int8_t)v;
+    ctx->A_i32[i] = v;
   }
   for (size_t i = 0; i < ctx->b_elems; ++i) {
     int32_t v = (int32_t)((i * 11u + 3u) % 127u) - 63;
     ctx->B_f32[i] = (float)v * 0.125f;
     ctx->B_i8[i] = (int8_t)v;
+    ctx->B_i32[i] = v;
   }
 
   memset(ctx->C_f32, 0, ctx->c_elems * sizeof(float));
   memset(ctx->C_i16, 0, ctx->c_elems * sizeof(int16_t));
   memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
+  memset(ctx->C_i8, 0, ctx->c_elems * sizeof(int8_t));
 
   pack_weight_matrix_f32(ctx->K, ctx->N, ctx->B_f32, ctx->B_f32_packed);
   pack_weight_matrix_i8i16(ctx->K, ctx->N, ctx->B_i8, ctx->B_i8_packed_i16);
   pack_weight_matrix_i8i32(ctx->K, ctx->N, ctx->B_i8, ctx->B_i8_packed_i32);
+  pack_weight_matrix_i32(ctx->K, ctx->N, ctx->B_i32, ctx->B_i32_packed);
+  pack_weight_matrix_i8i8(ctx->K, ctx->N, ctx->B_i8, ctx->B_i8_packed_i8);
 
   return 0;
 }
@@ -199,21 +222,81 @@ static void run_i16_once(const rvv_case_ctx_t *ctx, bool packed) {
   }
 }
 
+static void run_i8_i32_once(const rvv_case_ctx_t *ctx, bool packed) {
+  if (packed) {
+    int8_int32_gemm_packed(ctx->M, ctx->N, ctx->K,
+                           ctx->A_i8, ctx->K,
+                           ctx->B_i8_packed_i32,
+                           ctx->C_i32, ctx->N, 1);
+  } else {
+    int8_int32_gemm(ctx->M, ctx->N, ctx->K,
+                    ctx->A_i8, ctx->K,
+                    ctx->B_i8,
+                    ctx->C_i32, ctx->N, 1);
+  }
+}
+
 static void run_i32_once(const rvv_case_ctx_t *ctx, bool packed) {
   if (packed) {
-    int8_gemm_packed(ctx->M, ctx->N, ctx->K,
-                     ctx->A_i8, ctx->K,
-                     ctx->B_i8_packed_i32,
-                     ctx->C_i32, ctx->N, 1);
+    int32_gemm_packed(ctx->M, ctx->N, ctx->K,
+                      ctx->A_i32, ctx->K,
+                      ctx->B_i32_packed,
+                      ctx->C_i32, ctx->N, 1);
   } else {
-    int8_gemm(ctx->M, ctx->N, ctx->K,
-              ctx->A_i8, ctx->K,
-              ctx->B_i8,
-              ctx->C_i32, ctx->N, 1);
+    int32_gemm(ctx->M, ctx->N, ctx->K,
+               ctx->A_i32, ctx->K,
+               ctx->B_i32,
+               ctx->C_i32, ctx->N, 1);
+  }
+}
+
+static void run_i8_once(const rvv_case_ctx_t *ctx, bool packed) {
+  if (packed) {
+    int8_int8_gemm_packed(ctx->M, ctx->N, ctx->K,
+                          ctx->A_i8, ctx->K,
+                          ctx->B_i8_packed_i8,
+                          ctx->C_i8, ctx->N, 1);
+  } else {
+    int8_int8_gemm(ctx->M, ctx->N, ctx->K,
+                   ctx->A_i8, ctx->K,
+                   ctx->B_i8,
+                   ctx->C_i8, ctx->N, 1);
   }
 }
 
 #if RVV_BENCH_ENABLE_MULTICORE
+typedef struct {
+  size_t M;
+  size_t N;
+  size_t K;
+  const float *A;
+  size_t a_row_stride;
+  const float *B;
+  float *C;
+  size_t c_row_stride;
+  size_t c_col_stride;
+  bool packed;
+} mc_f32_worker_arg_t;
+
+static void *mc_f32_worker(void *arg_) {
+  mc_f32_worker_arg_t *arg = (mc_f32_worker_arg_t *)arg_;
+  asm volatile("csrw fcsr, x0" ::: "memory");  /* clear FP exception flags */
+  if (arg->packed) {
+    f32_gemm_packed(arg->M, arg->N, arg->K,
+                    arg->A, arg->a_row_stride,
+                    arg->B,
+                    arg->C, arg->c_row_stride,
+                    arg->c_col_stride);
+  } else {
+    f32_gemm(arg->M, arg->N, arg->K,
+             arg->A, arg->a_row_stride,
+             arg->B,
+             arg->C, arg->c_row_stride,
+             arg->c_col_stride);
+  }
+  return NULL;
+}
+
 typedef struct {
   size_t M;
   size_t N;
@@ -225,12 +308,12 @@ typedef struct {
   size_t c_row_stride;
   size_t c_col_stride;
   bool packed;
-  bool widen_i16;  /* true = i8→i16, false = i8→i32 */
+  int out_mode;  /* 0 = i8→i32, 1 = i8→i16, 2 = i8→i8 */
 } mc_i8_worker_arg_t;
 
 static void *mc_i8_worker(void *arg_) {
   mc_i8_worker_arg_t *arg = (mc_i8_worker_arg_t *)arg_;
-  if (arg->widen_i16) {
+  if (arg->out_mode == 1) {
     if (arg->packed) {
       int8_int16_gemm_packed(arg->M, arg->N, arg->K,
                               arg->A, arg->a_row_stride,
@@ -244,20 +327,65 @@ static void *mc_i8_worker(void *arg_) {
                       (int16_t *)arg->C, arg->c_row_stride,
                       arg->c_col_stride);
     }
+  } else if (arg->out_mode == 2) {
+    if (arg->packed) {
+      int8_int8_gemm_packed(arg->M, arg->N, arg->K,
+                            arg->A, arg->a_row_stride,
+                            arg->B,
+                            (int8_t *)arg->C, arg->c_row_stride,
+                            arg->c_col_stride);
+    } else {
+      int8_int8_gemm(arg->M, arg->N, arg->K,
+                     arg->A, arg->a_row_stride,
+                     arg->B,
+                     (int8_t *)arg->C, arg->c_row_stride,
+                     arg->c_col_stride);
+    }
   } else {
     if (arg->packed) {
-      int8_gemm_packed(arg->M, arg->N, arg->K,
-                       arg->A, arg->a_row_stride,
-                       arg->B,
-                       (int32_t *)arg->C, arg->c_row_stride,
-                       arg->c_col_stride);
+      int8_int32_gemm_packed(arg->M, arg->N, arg->K,
+                             arg->A, arg->a_row_stride,
+                             arg->B,
+                             (int32_t *)arg->C, arg->c_row_stride,
+                             arg->c_col_stride);
     } else {
-      int8_gemm(arg->M, arg->N, arg->K,
-                arg->A, arg->a_row_stride,
-                arg->B,
-                (int32_t *)arg->C, arg->c_row_stride,
-                arg->c_col_stride);
+      int8_int32_gemm(arg->M, arg->N, arg->K,
+                      arg->A, arg->a_row_stride,
+                      arg->B,
+                      (int32_t *)arg->C, arg->c_row_stride,
+                      arg->c_col_stride);
     }
+  }
+  return NULL;
+}
+
+typedef struct {
+  size_t M;
+  size_t N;
+  size_t K;
+  const int32_t *A;
+  size_t a_row_stride;
+  const int32_t *B;
+  int32_t *C;
+  size_t c_row_stride;
+  size_t c_col_stride;
+  bool packed;
+} mc_i32_worker_arg_t;
+
+static void *mc_i32_worker(void *arg_) {
+  mc_i32_worker_arg_t *arg = (mc_i32_worker_arg_t *)arg_;
+  if (arg->packed) {
+    int32_gemm_packed(arg->M, arg->N, arg->K,
+                      arg->A, arg->a_row_stride,
+                      arg->B,
+                      arg->C, arg->c_row_stride,
+                      arg->c_col_stride);
+  } else {
+    int32_gemm(arg->M, arg->N, arg->K,
+               arg->A, arg->a_row_stride,
+               arg->B,
+               arg->C, arg->c_row_stride,
+               arg->c_col_stride);
   }
   return NULL;
 }
@@ -279,7 +407,7 @@ static void run_i16_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
   args[0].c_row_stride = ctx->N;
   args[0].c_col_stride = 1;
   args[0].packed = packed;
-  args[0].widen_i16 = true;
+  args[0].out_mode = 1;
 
   args[1].M = rows_h1;
   args[1].N = ctx->N;
@@ -291,7 +419,7 @@ static void run_i16_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
   args[1].c_row_stride = ctx->N;
   args[1].c_col_stride = 1;
   args[1].packed = packed;
-  args[1].widen_i16 = true;
+  args[1].out_mode = 1;
 
   asm volatile("fence rw, rw" ::: "memory");
   hthread_issue(1, mc_i8_worker, &args[1]);
@@ -300,7 +428,7 @@ static void run_i16_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
   asm volatile("fence rw, rw" ::: "memory");
 }
 
-static void run_i32_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
+static void run_i8_i32_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
   mc_i8_worker_arg_t args[2];
 
   const size_t rows_h0 = RVV_BENCH_MC_ROWS_HART0;
@@ -317,7 +445,7 @@ static void run_i32_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
   args[0].c_row_stride = ctx->N;
   args[0].c_col_stride = 1;
   args[0].packed = packed;
-  args[0].widen_i16 = false;
+  args[0].out_mode = 0;
 
   args[1].M = rows_h1;
   args[1].N = ctx->N;
@@ -329,11 +457,121 @@ static void run_i32_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
   args[1].c_row_stride = ctx->N;
   args[1].c_col_stride = 1;
   args[1].packed = packed;
-  args[1].widen_i16 = false;
+  args[1].out_mode = 0;
 
   asm volatile("fence rw, rw" ::: "memory");
   hthread_issue(1, mc_i8_worker, &args[1]);
   (void)mc_i8_worker(&args[0]);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+}
+
+static void run_i32_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
+  mc_i32_worker_arg_t args[2];
+
+  const size_t rows_h0 = RVV_BENCH_MC_ROWS_HART0;
+  const size_t rows_h1 = RVV_BENCH_MC_ROWS_HART1;
+  const int32_t *B = packed ? ctx->B_i32_packed : ctx->B_i32;
+
+  args[0].M = rows_h0;
+  args[0].N = ctx->N;
+  args[0].K = ctx->K;
+  args[0].A = ctx->A_i32;
+  args[0].a_row_stride = ctx->K;
+  args[0].B = B;
+  args[0].C = ctx->C_i32;
+  args[0].c_row_stride = ctx->N;
+  args[0].c_col_stride = 1;
+  args[0].packed = packed;
+
+  args[1].M = rows_h1;
+  args[1].N = ctx->N;
+  args[1].K = ctx->K;
+  args[1].A = ctx->A_i32 + rows_h0 * ctx->K;
+  args[1].a_row_stride = ctx->K;
+  args[1].B = B;
+  args[1].C = ctx->C_i32 + rows_h0 * ctx->N;
+  args[1].c_row_stride = ctx->N;
+  args[1].c_col_stride = 1;
+  args[1].packed = packed;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, mc_i32_worker, &args[1]);
+  (void)mc_i32_worker(&args[0]);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+}
+
+static void run_i8_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
+  mc_i8_worker_arg_t args[2];
+
+  const size_t rows_h0 = RVV_BENCH_MC_ROWS_HART0;
+  const size_t rows_h1 = RVV_BENCH_MC_ROWS_HART1;
+  const int8_t *B = packed ? ctx->B_i8_packed_i8 : ctx->B_i8;
+
+  args[0].M = rows_h0;
+  args[0].N = ctx->N;
+  args[0].K = ctx->K;
+  args[0].A = ctx->A_i8;
+  args[0].a_row_stride = ctx->K;
+  args[0].B = B;
+  args[0].C = ctx->C_i8;
+  args[0].c_row_stride = ctx->N;
+  args[0].c_col_stride = 1;
+  args[0].packed = packed;
+  args[0].out_mode = 2;
+
+  args[1].M = rows_h1;
+  args[1].N = ctx->N;
+  args[1].K = ctx->K;
+  args[1].A = ctx->A_i8 + rows_h0 * ctx->K;
+  args[1].a_row_stride = ctx->K;
+  args[1].B = B;
+  args[1].C = ctx->C_i8 + rows_h0 * ctx->N;
+  args[1].c_row_stride = ctx->N;
+  args[1].c_col_stride = 1;
+  args[1].packed = packed;
+  args[1].out_mode = 2;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, mc_i8_worker, &args[1]);
+  (void)mc_i8_worker(&args[0]);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+}
+
+static void run_f32_once_mc(const rvv_case_ctx_t *ctx, bool packed) {
+  mc_f32_worker_arg_t args[2];
+
+  const size_t rows_h0 = RVV_BENCH_MC_ROWS_HART0;
+  const size_t rows_h1 = RVV_BENCH_MC_ROWS_HART1;
+  const float *B = packed ? ctx->B_f32_packed : ctx->B_f32;
+
+  args[0].M = rows_h0;
+  args[0].N = ctx->N;
+  args[0].K = ctx->K;
+  args[0].A = ctx->A_f32;
+  args[0].a_row_stride = ctx->K;
+  args[0].B = B;
+  args[0].C = ctx->C_f32;
+  args[0].c_row_stride = ctx->N;
+  args[0].c_col_stride = 1;
+  args[0].packed = packed;
+
+  args[1].M = rows_h1;
+  args[1].N = ctx->N;
+  args[1].K = ctx->K;
+  args[1].A = ctx->A_f32 + rows_h0 * ctx->K;
+  args[1].a_row_stride = ctx->K;
+  args[1].B = B;
+  args[1].C = ctx->C_f32 + rows_h0 * ctx->N;
+  args[1].c_row_stride = ctx->N;
+  args[1].c_col_stride = 1;
+  args[1].packed = packed;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, mc_f32_worker, &args[1]);
+  (void)mc_f32_worker(&args[0]);
   hthread_join(1);
   asm volatile("fence rw, rw" ::: "memory");
 }
@@ -450,6 +688,38 @@ static void bench_run_i16_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   print_stats_line(tag, &cold, &hot);
 }
 
+static void bench_run_i8_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
+  bench_stats_t cold;
+  bench_stats_t hot;
+  bench_stats_init(&cold);
+  bench_stats_init(&hot);
+  memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
+
+  for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
+    bench_cache_flush();
+
+    uint64_t t0 = rdcycle64();
+    run_i8_i32_once(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&cold, t1 - t0);
+  }
+
+  bench_cache_flush();
+  run_i8_i32_once(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
+
+  for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
+    uint64_t t0 = rdcycle64();
+    run_i8_i32_once(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&hot, t1 - t0);
+  }
+
+  print_stats_line(tag, &cold, &hot);
+}
+
 static void bench_run_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
   bench_stats_t cold;
   bench_stats_t hot;
@@ -482,7 +752,71 @@ static void bench_run_i32_impl(const rvv_case_ctx_t *ctx, const char *tag, bool 
   print_stats_line(tag, &cold, &hot);
 }
 
+static void bench_run_i8_impl(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
+  bench_stats_t cold;
+  bench_stats_t hot;
+  bench_stats_init(&cold);
+  bench_stats_init(&hot);
+  memset(ctx->C_i8, 0, ctx->c_elems * sizeof(int8_t));
+
+  for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
+    bench_cache_flush();
+
+    uint64_t t0 = rdcycle64();
+    run_i8_once(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&cold, t1 - t0);
+  }
+
+  bench_cache_flush();
+  run_i8_once(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
+
+  for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
+    uint64_t t0 = rdcycle64();
+    run_i8_once(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&hot, t1 - t0);
+  }
+
+  print_stats_line(tag, &cold, &hot);
+}
+
 #if RVV_BENCH_ENABLE_MULTICORE
+static void bench_run_f32_impl_mc(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
+  bench_stats_t cold;
+  bench_stats_t hot;
+  bench_stats_init(&cold);
+  bench_stats_init(&hot);
+  memset(ctx->C_f32, 0, ctx->c_elems * sizeof(float));
+
+  for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
+    bench_cache_flush();
+
+    uint64_t t0 = rdcycle64();
+    run_f32_once_mc(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&cold, t1 - t0);
+  }
+
+  bench_cache_flush();
+  run_f32_once_mc(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
+
+  for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
+    uint64_t t0 = rdcycle64();
+    run_f32_once_mc(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&hot, t1 - t0);
+  }
+
+  print_stats_line(tag, &cold, &hot);
+}
+
 static void bench_run_i16_impl_mc(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
   bench_stats_t cold;
   bench_stats_t hot;
@@ -507,6 +841,38 @@ static void bench_run_i16_impl_mc(const rvv_case_ctx_t *ctx, const char *tag, bo
   for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
     uint64_t t0 = rdcycle64();
     run_i16_once_mc(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&hot, t1 - t0);
+  }
+
+  print_stats_line(tag, &cold, &hot);
+}
+
+static void bench_run_i8_i32_impl_mc(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
+  bench_stats_t cold;
+  bench_stats_t hot;
+  bench_stats_init(&cold);
+  bench_stats_init(&hot);
+  memset(ctx->C_i32, 0, ctx->c_elems * sizeof(int32_t));
+
+  for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
+    bench_cache_flush();
+
+    uint64_t t0 = rdcycle64();
+    run_i8_i32_once_mc(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&cold, t1 - t0);
+  }
+
+  bench_cache_flush();
+  run_i8_i32_once_mc(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
+
+  for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
+    uint64_t t0 = rdcycle64();
+    run_i8_i32_once_mc(ctx, packed);
     uint64_t t1 = rdcycle64();
     rvv_post_gemm_barrier();
     bench_stats_update(&hot, t1 - t0);
@@ -546,6 +912,38 @@ static void bench_run_i32_impl_mc(const rvv_case_ctx_t *ctx, const char *tag, bo
 
   print_stats_line(tag, &cold, &hot);
 }
+
+static void bench_run_i8_impl_mc(const rvv_case_ctx_t *ctx, const char *tag, bool packed) {
+  bench_stats_t cold;
+  bench_stats_t hot;
+  bench_stats_init(&cold);
+  bench_stats_init(&hot);
+  memset(ctx->C_i8, 0, ctx->c_elems * sizeof(int8_t));
+
+  for (int r = 0; r < RVV_BENCH_RUNS_COLD; ++r) {
+    bench_cache_flush();
+
+    uint64_t t0 = rdcycle64();
+    run_i8_once_mc(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&cold, t1 - t0);
+  }
+
+  bench_cache_flush();
+  run_i8_once_mc(ctx, packed);  // warm-up run
+  rvv_post_gemm_barrier();
+
+  for (int r = 0; r < RVV_BENCH_RUNS_HOT; ++r) {
+    uint64_t t0 = rdcycle64();
+    run_i8_once_mc(ctx, packed);
+    uint64_t t1 = rdcycle64();
+    rvv_post_gemm_barrier();
+    bench_stats_update(&hot, t1 - t0);
+  }
+
+  print_stats_line(tag, &cold, &hot);
+}
 #endif /* RVV_BENCH_ENABLE_MULTICORE */
 
 void bench_run_case(const RvvMatmulCase *cs) {
@@ -565,6 +963,7 @@ void bench_run_case(const RvvMatmulCase *cs) {
     return;
   }
 
+#if !RVV_BENCH_MULTICORE_ONLY
 #if RVV_BENCH_ENABLE_F32
 #if RVV_BENCH_ENABLE_UNPACKED
   bench_run_f32_impl(&ctx, "f32_gemm", false);
@@ -580,7 +979,30 @@ void bench_run_case(const RvvMatmulCase *cs) {
   print_disabled_line("f32_gemm", "RVV_BENCH_ENABLE_F32=0");
   print_disabled_line("f32_gemm_packed", "RVV_BENCH_ENABLE_F32=0");
 #endif
+#endif /* !RVV_BENCH_MULTICORE_ONLY */
 
+#if RVV_BENCH_ENABLE_MULTICORE && RVV_BENCH_ENABLE_F32
+  if (cs->M == (RVV_BENCH_MC_ROWS_HART0 + RVV_BENCH_MC_ROWS_HART1)) {
+#if RVV_BENCH_ENABLE_UNPACKED
+    bench_run_f32_impl_mc(&ctx, "f32_mc_gemm", false);
+#else
+    print_disabled_line("f32_mc_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
+#endif
+#if RVV_BENCH_ENABLE_PACKED
+    bench_run_f32_impl_mc(&ctx, "f32_mc_packed", true);
+#else
+    print_disabled_line("f32_mc_packed", "RVV_BENCH_ENABLE_PACKED=0");
+#endif
+  } else {
+    if (rvv_bench_is_print_hart()) {
+      printf("  f32_mc: SKIPPED (M=%llu != %u+%u)\n",
+             (unsigned long long)cs->M,
+             RVV_BENCH_MC_ROWS_HART0, RVV_BENCH_MC_ROWS_HART1);
+    }
+  }
+#endif
+
+#if !RVV_BENCH_MULTICORE_ONLY
 #if RVV_BENCH_ENABLE_I8_I16
 #if RVV_BENCH_ENABLE_UNPACKED
   bench_run_i16_impl(&ctx, "i8_i16_gemm", false);
@@ -596,6 +1018,7 @@ void bench_run_case(const RvvMatmulCase *cs) {
   print_disabled_line("i8_i16_gemm", "RVV_BENCH_ENABLE_I8_I16=0");
   print_disabled_line("i8_i16_gemm_packed", "RVV_BENCH_ENABLE_I8_I16=0");
 #endif
+#endif /* !RVV_BENCH_MULTICORE_ONLY */
 
 #if RVV_BENCH_ENABLE_MULTICORE && RVV_BENCH_ENABLE_I8_I16
   if (cs->M == (RVV_BENCH_MC_ROWS_HART0 + RVV_BENCH_MC_ROWS_HART1)) {
@@ -618,14 +1041,15 @@ void bench_run_case(const RvvMatmulCase *cs) {
   }
 #endif
 
+#if !RVV_BENCH_MULTICORE_ONLY
 #if RVV_BENCH_ENABLE_I8_I32
 #if RVV_BENCH_ENABLE_UNPACKED
-  bench_run_i32_impl(&ctx, "i8_i32_gemm", false);
+  bench_run_i8_i32_impl(&ctx, "i8_i32_gemm", false);
 #else
   print_disabled_line("i8_i32_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
 #endif
 #if RVV_BENCH_ENABLE_PACKED
-  bench_run_i32_impl(&ctx, "i8_i32_gemm_packed", true);
+  bench_run_i8_i32_impl(&ctx, "i8_i32_gemm_packed", true);
 #else
   print_disabled_line("i8_i32_gemm_packed", "RVV_BENCH_ENABLE_PACKED=0");
 #endif
@@ -633,22 +1057,101 @@ void bench_run_case(const RvvMatmulCase *cs) {
   print_disabled_line("i8_i32_gemm", "RVV_BENCH_ENABLE_I8_I32=0");
   print_disabled_line("i8_i32_gemm_packed", "RVV_BENCH_ENABLE_I8_I32=0");
 #endif
+#endif /* !RVV_BENCH_MULTICORE_ONLY */
 
 #if RVV_BENCH_ENABLE_MULTICORE && RVV_BENCH_ENABLE_I8_I32
   if (cs->M == (RVV_BENCH_MC_ROWS_HART0 + RVV_BENCH_MC_ROWS_HART1)) {
 #if RVV_BENCH_ENABLE_UNPACKED
-    bench_run_i32_impl_mc(&ctx, "i8_i32_mc_gemm", false);
+    bench_run_i8_i32_impl_mc(&ctx, "i8_i32_mc_gemm", false);
 #else
     print_disabled_line("i8_i32_mc_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
 #endif
 #if RVV_BENCH_ENABLE_PACKED
-    bench_run_i32_impl_mc(&ctx, "i8_i32_mc_packed", true);
+    bench_run_i8_i32_impl_mc(&ctx, "i8_i32_mc_packed", true);
 #else
     print_disabled_line("i8_i32_mc_packed", "RVV_BENCH_ENABLE_PACKED=0");
 #endif
   } else {
     if (rvv_bench_is_print_hart()) {
       printf("  i8_i32_mc: SKIPPED (M=%llu != %u+%u)\n",
+             (unsigned long long)cs->M,
+             RVV_BENCH_MC_ROWS_HART0, RVV_BENCH_MC_ROWS_HART1);
+    }
+  }
+#endif
+
+#if !RVV_BENCH_MULTICORE_ONLY
+#if RVV_BENCH_ENABLE_I32
+#if RVV_BENCH_ENABLE_UNPACKED
+  bench_run_i32_impl(&ctx, "i32_gemm", false);
+#else
+  print_disabled_line("i32_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
+#endif
+#if RVV_BENCH_ENABLE_PACKED
+  bench_run_i32_impl(&ctx, "i32_gemm_packed", true);
+#else
+  print_disabled_line("i32_gemm_packed", "RVV_BENCH_ENABLE_PACKED=0");
+#endif
+#else
+  print_disabled_line("i32_gemm", "RVV_BENCH_ENABLE_I32=0");
+  print_disabled_line("i32_gemm_packed", "RVV_BENCH_ENABLE_I32=0");
+#endif
+#endif /* !RVV_BENCH_MULTICORE_ONLY */
+
+#if RVV_BENCH_ENABLE_MULTICORE && RVV_BENCH_ENABLE_I32
+  if (cs->M == (RVV_BENCH_MC_ROWS_HART0 + RVV_BENCH_MC_ROWS_HART1)) {
+#if RVV_BENCH_ENABLE_UNPACKED
+    bench_run_i32_impl_mc(&ctx, "i32_mc_gemm", false);
+#else
+    print_disabled_line("i32_mc_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
+#endif
+#if RVV_BENCH_ENABLE_PACKED
+    bench_run_i32_impl_mc(&ctx, "i32_mc_packed", true);
+#else
+    print_disabled_line("i32_mc_packed", "RVV_BENCH_ENABLE_PACKED=0");
+#endif
+  } else {
+    if (rvv_bench_is_print_hart()) {
+      printf("  i32_mc: SKIPPED (M=%llu != %u+%u)\n",
+             (unsigned long long)cs->M,
+             RVV_BENCH_MC_ROWS_HART0, RVV_BENCH_MC_ROWS_HART1);
+    }
+  }
+#endif
+
+#if !RVV_BENCH_MULTICORE_ONLY
+#if RVV_BENCH_ENABLE_I8_I8
+#if RVV_BENCH_ENABLE_UNPACKED
+  bench_run_i8_impl(&ctx, "i8_i8_gemm", false);
+#else
+  print_disabled_line("i8_i8_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
+#endif
+#if RVV_BENCH_ENABLE_PACKED
+  bench_run_i8_impl(&ctx, "i8_i8_gemm_packed", true);
+#else
+  print_disabled_line("i8_i8_gemm_packed", "RVV_BENCH_ENABLE_PACKED=0");
+#endif
+#else
+  print_disabled_line("i8_i8_gemm", "RVV_BENCH_ENABLE_I8_I8=0");
+  print_disabled_line("i8_i8_gemm_packed", "RVV_BENCH_ENABLE_I8_I8=0");
+#endif
+#endif /* !RVV_BENCH_MULTICORE_ONLY */
+
+#if RVV_BENCH_ENABLE_MULTICORE && RVV_BENCH_ENABLE_I8_I8
+  if (cs->M == (RVV_BENCH_MC_ROWS_HART0 + RVV_BENCH_MC_ROWS_HART1)) {
+#if RVV_BENCH_ENABLE_UNPACKED
+    bench_run_i8_impl_mc(&ctx, "i8_i8_mc_gemm", false);
+#else
+    print_disabled_line("i8_i8_mc_gemm", "RVV_BENCH_ENABLE_UNPACKED=0");
+#endif
+#if RVV_BENCH_ENABLE_PACKED
+    bench_run_i8_impl_mc(&ctx, "i8_i8_mc_packed", true);
+#else
+    print_disabled_line("i8_i8_mc_packed", "RVV_BENCH_ENABLE_PACKED=0");
+#endif
+  } else {
+    if (rvv_bench_is_print_hart()) {
+      printf("  i8_i8_mc: SKIPPED (M=%llu != %u+%u)\n",
              (unsigned long long)cs->M,
              RVV_BENCH_MC_ROWS_HART0, RVV_BENCH_MC_ROWS_HART1);
     }

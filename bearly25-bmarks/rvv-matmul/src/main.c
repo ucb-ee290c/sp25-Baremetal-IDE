@@ -23,12 +23,16 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            (unsigned long long)frequency_hz);
     printf("  runs(cold)=%d, runs(hot)=%d\n", RVV_BENCH_RUNS_COLD, RVV_BENCH_RUNS_HOT);
     printf("  cache_thrash_bytes=%u\n", (unsigned)(RVV_L2_BYTES * 2u));
-    printf("  kernels: f32=%d i8_i16=%d i8_i32=%d packed=%d unpacked=%d\n",
+    printf("  kernels: f32=%d i8_i16=%d i8_i32=%d i32=%d i8_i8=%d packed=%d unpacked=%d multicore=%d mc_only=%d\n",
            RVV_BENCH_ENABLE_F32,
            RVV_BENCH_ENABLE_I8_I16,
            RVV_BENCH_ENABLE_I8_I32,
+           RVV_BENCH_ENABLE_I32,
+           RVV_BENCH_ENABLE_I8_I8,
            RVV_BENCH_ENABLE_PACKED,
-           RVV_BENCH_ENABLE_UNPACKED);
+           RVV_BENCH_ENABLE_UNPACKED,
+           RVV_BENCH_ENABLE_MULTICORE,
+           RVV_BENCH_MULTICORE_ONLY);
 
     printf("\n--- SQUARE CASES ---\n");
   }

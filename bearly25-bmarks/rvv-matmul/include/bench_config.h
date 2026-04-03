@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #ifndef RVV_BENCH_TARGET_FREQUENCY_HZ
-#define RVV_BENCH_TARGET_FREQUENCY_HZ 500000000ULL
+#define RVV_BENCH_TARGET_FREQUENCY_HZ 150000000ULL
 #endif
 
 // 0: single-frequency mode
@@ -43,7 +43,7 @@
 #endif
 
 #ifndef RVV_BENCH_RUNS_HOT
-#define RVV_BENCH_RUNS_HOT 20
+#define RVV_BENCH_RUNS_HOT 60000
 #endif
 
 // Approximate L2 cache size for flush-thrash helper
@@ -56,11 +56,19 @@
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I16
-#define RVV_BENCH_ENABLE_I8_I16 1
+#define RVV_BENCH_ENABLE_I8_I16 0
 #endif
 
 #ifndef RVV_BENCH_ENABLE_I8_I32
-#define RVV_BENCH_ENABLE_I8_I32 1
+#define RVV_BENCH_ENABLE_I8_I32 0
+#endif
+
+#ifndef RVV_BENCH_ENABLE_I32
+#define RVV_BENCH_ENABLE_I32 1
+#endif
+
+#ifndef RVV_BENCH_ENABLE_I8_I8
+#define RVV_BENCH_ENABLE_I8_I8 1
 #endif
 
 #ifndef RVV_BENCH_ENABLE_UNPACKED
@@ -79,6 +87,11 @@
 // Multicore matmul: split M rows across 2 harts.
 #ifndef RVV_BENCH_ENABLE_MULTICORE
 #define RVV_BENCH_ENABLE_MULTICORE 1
+#endif
+
+// When 1, skip single-core runs and only run multicore variants.
+#ifndef RVV_BENCH_MULTICORE_ONLY
+#define RVV_BENCH_MULTICORE_ONLY 0
 #endif
 
 #ifndef RVV_BENCH_MC_ROWS_HART0

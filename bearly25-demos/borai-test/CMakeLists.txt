@@ -17,6 +17,13 @@ add_executable(boraiq-test
 
 target_include_directories(boraiq-test PUBLIC int8/include)
 
+option(BORAI_TESTQ_MAX_PERF
+  "Compile boraiq-test with aggressive per-target optimization flags" ON)
+
+if(BORAI_TESTQ_MAX_PERF)
+  target_compile_options(boraiq-test PRIVATE -O3 -fno-math-errno -fno-trapping-math)
+endif()
+
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
   target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)
   target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)

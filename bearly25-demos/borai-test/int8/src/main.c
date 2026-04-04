@@ -148,6 +148,9 @@ typedef struct {
     float *v; // value (dim,)
     float *att; // buffer for scores/attention values (n_heads, seq_len)
     float *logits; // output logits
+    float *rope_freq; // RoPE inverse frequencies per (head_dim/2,)
+    float *rope_cos;  // RoPE cos cache for current position
+    float *rope_sin;  // RoPE sin cache for current position
     // kv cache
     float* key_cache;   // (layer, seq_len, dim)
     float* value_cache; // (layer, seq_len, dim)
@@ -169,6 +172,8 @@ typedef struct {
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int head_size = p->dim / p->n_heads;
+    int rope_terms = head_size / 2;
     s->x = calloc(p->dim, sizeof(float));
     s->xb = calloc(p->dim, sizeof(float));
     s->xb2 = calloc(p->dim, sizeof(float));
@@ -181,12 +186,21 @@ void malloc_run_state(RunState* s, Config* p) {
     s->v = calloc(kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
+    s->rope_freq = rope_terms > 0 ? calloc((size_t)rope_terms, sizeof(float)) : NULL;
+    s->rope_cos = rope_terms > 0 ? calloc((size_t)rope_terms, sizeof(float)) : NULL;
+    s->rope_sin = rope_terms > 0 ? calloc((size_t)rope_terms, sizeof(float)) : NULL;
     s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    if (rope_terms > 0 && s->rope_freq != NULL) {
+        for (int i = 0; i < rope_terms; i++) {
+            int head_dim = i * 2;
+            s->rope_freq[i] = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+        }
+    }
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
-     || !s->value_cache) {
+     || !s->value_cache || (rope_terms > 0 && (!s->rope_freq || !s->rope_cos || !s->rope_sin))) {
         printf("STDERR: malloc failed!\r\n");
         printf("size: %d\r\n", p->n_layers * p->seq_len * kv_dim * sizeof(float));
         printf("s->q: %x\r\n", s->q);
@@ -209,6 +223,9 @@ void free_run_state(RunState* s) {
     free(s->v);
     free(s->att);
     free(s->logits);
+    free(s->rope_freq);
+    free(s->rope_cos);
+    free(s->rope_sin);
     free(s->key_cache);
     free(s->value_cache);
 }
@@ -620,11 +637,11 @@ static void matmul_t(
 
 static Transformer  _mc_transformer;   /* shared transformer, built by hart 0 */
 
-typedef struct {
-    Transformer *transformer;
-    int token;
-    int pos;
-} mc_forward_job_t;
+static volatile int _mc_token_val    = 0;
+static volatile int _mc_pos_val      = 0;
+static volatile int _mc_fwd_req      = 0;
+static volatile int _mc_fwd_done     = 0;
+static volatile int _mc_worker_ready = 0;
 
 static float* forward_mc(Transformer* transformer, int token, int pos, int hartid);
 
@@ -665,13 +682,30 @@ static void matmul_rows(float* xout, QuantizedTensor* x, QuantizedTensor* w,
     }
 }
 
-static void mc_nop_worker(void *arg) {
-    (void)arg;
+static void mc_forward_worker(void *arg) {
+    Transformer *transformer = (Transformer *)arg;
+    _mc_worker_ready = 1;
+    __sync_synchronize();
+    while (1) {
+        while (_mc_fwd_req == 0) {}
+        __sync_synchronize();
+        _mc_fwd_req = 0;
+        int token = _mc_token_val;
+        int pos   = _mc_pos_val;
+        forward_mc(transformer, token, pos, 1);
+        __sync_synchronize();
+        _mc_fwd_done = 1;
+    }
 }
 
-static void mc_forward_worker(void *arg) {
-    mc_forward_job_t *job = (mc_forward_job_t *)arg;
-    forward_mc(job->transformer, job->token, job->pos, 1);
+static void mc_start_worker(Transformer *transformer) {
+    _mc_fwd_req = 0;
+    _mc_fwd_done = 0;
+    _mc_worker_ready = 0;
+    __sync_synchronize();
+    hthread_issue(1, mc_forward_worker, transformer);
+    while (_mc_worker_ready == 0) {}
+    __sync_synchronize();
 }
 
 /* forward_mc — parallel forward pass for two harts.
@@ -706,10 +740,17 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     int kv_mul      = p->n_heads / p->n_kv_heads;
     int hidden_dim  = p->hidden_dim;
     int head_size   = dim / p->n_heads;
+    int rope_terms  = head_size / 2;
+    float inv_sqrt_head_size = 1.0f / sqrtf((float)head_size);
 
     /* embedding copy (hart 0 only; hart 1 waits at first barrier in the loop) */
     if (hartid == 0) {
         memcpy(x, w->token_embedding_table + token * dim, dim * sizeof(float));
+        for (int i = 0; i < rope_terms; i++) {
+            float val = pos * s->rope_freq[i];
+            s->rope_cos[i] = cosf(val);
+            s->rope_sin[i] = sinf(val);
+        }
     }
 
     for (int l = 0; l < p->n_layers; l++) {
@@ -744,11 +785,9 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         /* RoPE relative positional encoding + KV cache store (hart 0) */
         if (hartid == 0) {
             for (int i = 0; i < dim; i += 2) {
-                int head_dim = i % head_size;
-                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-                float val  = pos * freq;
-                float fcr  = cosf(val);
-                float fci  = sinf(val);
+                int rope_idx = (i % head_size) >> 1;
+                float fcr = s->rope_cos[rope_idx];
+                float fci = s->rope_sin[rope_idx];
                 int rotn = i < kv_dim ? 2 : 1;
                 for (int v = 0; v < rotn; v++) {
                     float* vec = v == 0 ? s->q : s->k;
@@ -776,7 +815,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                     float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                     float score = 0.0f;
                     for (int i = 0; i < head_size; i++) score += q[i] * k[i];
-                    att[t] = score / sqrtf(head_size);
+                    att[t] = score * inv_sqrt_head_size;
                 }
 #ifdef VEC_SOFTMAX
                 softmax_vec(att, att, 1, (size_t)(pos + 1));
@@ -873,8 +912,8 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     return hartid == 0 ? s->logits : NULL;
 }
 
-/* generate_mc — same as generate() but dispatches hart 1 work via threadlib
- * (hthread_issue/hthread_join) each token while hart 0 runs forward_mc(). */
+/* generate_mc — same as generate() but uses a persistent hart 1 worker issued
+ * once through threadlib; each token is handed off via shared flags. */
 void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
                  char *prompt, int steps) {
     char *empty_prompt = "";
@@ -894,14 +933,15 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
     _bar_h1_arrived = 0;
     _bar_sense = 0;
     while (pos < steps) {
-        mc_forward_job_t job = {
-            .transformer = transformer,
-            .token = token,
-            .pos = pos
-        };
-        hthread_issue(1, mc_forward_worker, &job);
+        _mc_token_val = token;
+        _mc_pos_val = pos;
+        _mc_fwd_done = 0;
+        __sync_synchronize();
+        _mc_fwd_req = 1;
+        __sync_synchronize();
         float* logits = forward_mc(transformer, token, pos, 0);
-        hthread_join(1);
+        while (_mc_fwd_done == 0) {}
+        __sync_synchronize();
 
         if (pos < num_prompt_tokens - 1) {
             next = prompt_tokens[pos + 1];
@@ -957,9 +997,16 @@ float* forward(Transformer* transformer, int token, int pos) {
     int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
+    int rope_terms = head_size / 2;
+    float inv_sqrt_head_size = 1.0f / sqrtf((float)head_size);
 
     // copy the token embedding into x
     memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
+    for (int i = 0; i < rope_terms; i++) {
+        float val = pos * s->rope_freq[i];
+        s->rope_cos[i] = cosf(val);
+        s->rope_sin[i] = sinf(val);
+    }
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
@@ -981,11 +1028,9 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
+            int rope_idx = (i % head_size) >> 1;
+            float fcr = s->rope_cos[rope_idx];
+            float fci = s->rope_sin[rope_idx];
             int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
             for (int v = 0; v < rotn; v++) {
                 float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
@@ -1022,7 +1067,7 @@ float* forward(Transformer* transformer, int token, int pos) {
                 for (int i = 0; i < head_size; i++) {
                     score += q[i] * k[i];
                 }
-                score /= sqrtf(head_size);
+                score *= inv_sqrt_head_size;
                 // save the score to the attention buffer
                 att[t] = score;
             }
@@ -1757,8 +1802,7 @@ void app_main() {
 
 #ifdef PREFILL_MULTICORE
   hthread_init();
-  hthread_issue(1, mc_nop_worker, NULL);
-  hthread_join(1);
+  mc_start_worker(p_tfm);
 #endif
 
   while (1) {

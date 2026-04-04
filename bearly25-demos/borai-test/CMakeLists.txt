@@ -33,17 +33,6 @@ if(BORAI_TESTQ_TINY_SHAPE_GEMM)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_SHAPE_GEMM)
 endif()
 
-option(BORAI_TESTQ_TINY_SHAPE_GEMM_EXACT
-  "Use exact-shape tiny GEMM entrypoints for boraiq-test common kernels/hart ownership paths" ON)
-
-if(BORAI_TESTQ_TINY_SHAPE_GEMM_EXACT)
-  if(BORAI_TESTQ_TINY_SHAPE_GEMM)
-    target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_SHAPE_GEMM_EXACT)
-  else()
-    message(STATUS "boraiq-test: BORAI_TESTQ_TINY_SHAPE_GEMM is OFF, disabling BORAI_TESTQ_TINY_SHAPE_GEMM_EXACT.")
-  endif()
-endif()
-
 option(BORAI_TESTQ_FAST_SAMPLER_512
   "Enable boraiq-test specialized sampler path for vocab_size=512" ON)
 
@@ -80,17 +69,6 @@ option(BORAI_TESTQ_TINY_ATTN_H8
 
 if(BORAI_TESTQ_TINY_ATTN_H8)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_ATTN_H8)
-endif()
-
-option(BORAI_TESTQ_TINY_ATTN_H8_POS012
-  "Use fused tiny attention microkernel for head_size=8 and pos<=2 (len<=3)" ON)
-
-if(BORAI_TESTQ_TINY_ATTN_H8_POS012)
-  if(BORAI_TESTQ_TINY_ATTN_H8)
-    target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_ATTN_H8_POS012)
-  else()
-    message(STATUS "boraiq-test: BORAI_TESTQ_TINY_ATTN_H8 is OFF, disabling BORAI_TESTQ_TINY_ATTN_H8_POS012.")
-  endif()
 endif()
 
 option(BORAI_TESTQ_FAST_SWIGLU_EXP

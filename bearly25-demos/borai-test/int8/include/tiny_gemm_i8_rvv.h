@@ -13,18 +13,4 @@ int borai_tiny_matmul_t_i8_fout(
     int n_out,
     float scale);
 
-/* Exact-shape entrypoints for boraiq-test tiny model shapes. */
-int borai_tiny_matmul_t_i8_k64_n32(
-    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale);
-int borai_tiny_matmul_t_i8_k64_n64(
-    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale);
-int borai_tiny_matmul_t_i8_k64_n172(
-    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale);
-int borai_tiny_matmul_t_i8_k64_n256(
-    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale);
-int borai_tiny_matmul_t_i8_k64_n512(
-    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale);
-int borai_tiny_matmul_t_i8_k172_n64(
-    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale);
-
 #endif

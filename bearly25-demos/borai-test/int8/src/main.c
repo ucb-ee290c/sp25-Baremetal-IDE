@@ -731,31 +731,7 @@ static void matmul_t(
     int n_in, int n_out)
 {
     float scale = xq->s * w_scale;
-#ifdef BORAIQ_TINY_SHAPE_GEMM_EXACT
-    if (n_in == 64) {
-        switch (n_out) {
-            case 32:
-                if (borai_tiny_matmul_t_i8_k64_n32(xq->q, (const int8_t*)w_t_pack, xout, scale)) return;
-                break;
-            case 64:
-                if (borai_tiny_matmul_t_i8_k64_n64(xq->q, (const int8_t*)w_t_pack, xout, scale)) return;
-                break;
-            case 172:
-                if (borai_tiny_matmul_t_i8_k64_n172(xq->q, (const int8_t*)w_t_pack, xout, scale)) return;
-                break;
-            case 256:
-                if (borai_tiny_matmul_t_i8_k64_n256(xq->q, (const int8_t*)w_t_pack, xout, scale)) return;
-                break;
-            case 512:
-                if (borai_tiny_matmul_t_i8_k64_n512(xq->q, (const int8_t*)w_t_pack, xout, scale)) return;
-                break;
-            default:
-                break;
-        }
-    } else if (n_in == 172 && n_out == 64) {
-        if (borai_tiny_matmul_t_i8_k172_n64(xq->q, (const int8_t*)w_t_pack, xout, scale)) return;
-    }
-#elif defined(BORAIQ_TINY_SHAPE_GEMM)
+#ifdef BORAIQ_TINY_SHAPE_GEMM
     if (borai_tiny_matmul_t_i8_fout(
             xq->q,
             (const int8_t*)w_t_pack,
@@ -956,23 +932,6 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 float* q   = s->q   + h * head_size;
                 float* att = s->att + h * p->seq_len;
                 int kv_head_off = (h / kv_mul) * head_size;
-#ifdef BORAIQ_TINY_ATTN_H8_POS012
-                {
-                    float* xb = s->xb + h * head_size;
-                    if (borai_tiny_attn_h8_pos012_f32(
-                            xb,
-                            att,
-                            q,
-                            s->key_cache + loff,
-                            s->value_cache + loff,
-                            pos,
-                            kv_dim,
-                            kv_head_off,
-                            inv_sqrt_head_size)) {
-                        continue;
-                    }
-                }
-#endif
                 for (int t = 0; t <= pos; t++) {
                     float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
                     float score = dot_qk_head(q, k, head_size);
@@ -1244,23 +1203,6 @@ float* forward(Transformer* transformer, int token, int pos) {
             // attention scores for this head
             float* att = s->att + h * p->seq_len;
             int kv_head_off = (h / kv_mul) * head_size;
-#ifdef BORAIQ_TINY_ATTN_H8_POS012
-            {
-                float* xb = s->xb + h * head_size;
-                if (borai_tiny_attn_h8_pos012_f32(
-                        xb,
-                        att,
-                        q,
-                        s->key_cache + loff,
-                        s->value_cache + loff,
-                        pos,
-                        kv_dim,
-                        kv_head_off,
-                        inv_sqrt_head_size)) {
-                    continue;
-                }
-            }
-#endif
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
@@ -2126,11 +2068,6 @@ void app_main() {
 #else
   printf("Build flags: BORAIQ_TINY_SHAPE_GEMM OFF\r\n");
 #endif
-#if defined(BORAIQ_TINY_SHAPE_GEMM_EXACT)
-  printf("Build flags: BORAIQ_TINY_SHAPE_GEMM_EXACT ON\r\n");
-#else
-  printf("Build flags: BORAIQ_TINY_SHAPE_GEMM_EXACT OFF\r\n");
-#endif
 #if defined(BORAIQ_FAST_SAMPLER_512)
   printf("Build flags: BORAIQ_FAST_SAMPLER_512 ON\r\n");
 #else
@@ -2155,11 +2092,6 @@ void app_main() {
   printf("Build flags: BORAIQ_TINY_ATTN_H8 ON\r\n");
 #else
   printf("Build flags: BORAIQ_TINY_ATTN_H8 OFF\r\n");
-#endif
-#if defined(BORAIQ_TINY_ATTN_H8_POS012)
-  printf("Build flags: BORAIQ_TINY_ATTN_H8_POS012 ON\r\n");
-#else
-  printf("Build flags: BORAIQ_TINY_ATTN_H8_POS012 OFF\r\n");
 #endif
 #if defined(BORAIQ_FAST_SWIGLU_EXP)
   printf("Build flags: BORAIQ_FAST_SWIGLU_EXP ON\r\n");

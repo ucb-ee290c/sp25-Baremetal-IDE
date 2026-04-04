@@ -57,6 +57,16 @@ if(BORAI_TESTQ_BENCH_NO_TOKEN_FLUSH)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_BENCH_NO_TOKEN_FLUSH)
 endif()
 
+option(BORAI_TESTQ_BENCH_GREEDY_DECODE
+  "Use argmax(logits) instead of sampling in short benchmark runs (generation mode only)" ON)
+
+if(BORAI_TESTQ_BENCH_GREEDY_DECODE)
+  target_compile_definitions(
+    boraiq-test PRIVATE
+    BORAIQ_BENCH_GREEDY_DECODE
+    BORAIQ_BENCH_GREEDY_MAX_STEPS=8)
+endif()
+
 option(BORAI_TESTQ_TINY_VEC_OPS
   "Enable boraiq-test specialized tiny-shape quantize/rmsnorm kernels (n=64/172)" ON)
 

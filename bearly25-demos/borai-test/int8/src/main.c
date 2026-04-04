@@ -50,6 +50,9 @@
 #ifndef BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS
 #define BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS 8
 #endif
+#ifndef BORAIQ_BENCH_GREEDY_MAX_STEPS
+#define BORAIQ_BENCH_GREEDY_MAX_STEPS 8
+#endif
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -1069,6 +1072,11 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
 #else
     int emit_tokens = 1;
 #endif
+#if defined(BORAIQ_BENCH_GREEDY_DECODE)
+    const int bench_greedy_decode = (steps <= BORAIQ_BENCH_GREEDY_MAX_STEPS);
+#else
+    const int bench_greedy_decode = 0;
+#endif
     _bar_h1_arrived = 0;
     _bar_sense = 0;
     _mc_swiglu_h1_done = 0;
@@ -1086,7 +1094,9 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
         if (pos < num_prompt_tokens - 1) {
             next = prompt_tokens[pos + 1];
         } else {
-            next = sample(sampler, logits);
+            // Benchmark-only decode fast path: skip temperature/top-p/RNG and take argmax(logits).
+            next = bench_greedy_decode ? sample_argmax(logits, transformer->config.vocab_size)
+                                       : sample(sampler, logits);
         }
         if (next < 0 || next >= transformer->config.vocab_size) {
             printf("STDERR: sampled token out of range (%d), vocab=%d at pos=%d\r\n",
@@ -1835,6 +1845,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 #else
     int emit_tokens = 1;
 #endif
+#if defined(BORAIQ_BENCH_GREEDY_DECODE)
+    const int bench_greedy_decode = (steps <= BORAIQ_BENCH_GREEDY_MAX_STEPS);
+#else
+    const int bench_greedy_decode = 0;
+#endif
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
@@ -1846,7 +1861,8 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             next = prompt_tokens[pos + 1];
         } else {
             // otherwise sample the next token from the logits
-            next = sample(sampler, logits);
+            next = bench_greedy_decode ? sample_argmax(logits, transformer->config.vocab_size)
+                                       : sample(sampler, logits);
         }
         pos++;
 
@@ -2082,6 +2098,11 @@ void app_main() {
   printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH ON\r\n");
 #else
   printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH OFF\r\n");
+#endif
+#if defined(BORAIQ_BENCH_GREEDY_DECODE)
+  printf("Build flags: BORAIQ_BENCH_GREEDY_DECODE ON (max steps=%d)\r\n", BORAIQ_BENCH_GREEDY_MAX_STEPS);
+#else
+  printf("Build flags: BORAIQ_BENCH_GREEDY_DECODE OFF\r\n");
 #endif
 #if defined(BORAIQ_TINY_VEC_OPS)
   printf("Build flags: BORAIQ_TINY_VEC_OPS ON\r\n");

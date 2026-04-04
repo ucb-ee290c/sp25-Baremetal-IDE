@@ -589,27 +589,11 @@ void alloc_and_transpose_weights_i8(
         make_b_pack_i8(wt->w1_T + l * (size_t)(dim + 1) * hidden_dim,
                        w->w1[l].q, hidden_dim, dim);
 
-    /* w2 split by output dim for multicore-friendly projection */
-    wt->w20_n = dim / 2;
-    wt->w21_n = dim - wt->w20_n;
-    wt->w20_T = wt->w20_n > 0 ? (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * wt->w20_n) : NULL;
-    wt->w21_T = wt->w21_n > 0 ? (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * wt->w21_n) : NULL;
-    for (int l = 0; l < n_layers; l++) {
-        if (wt->w20_n > 0) {
-            make_b_pack_i8(
-                wt->w20_T + l * (size_t)(hidden_dim + 1) * wt->w20_n,
-                w->w2[l].q,
-                wt->w20_n,
-                hidden_dim);
-        }
-        if (wt->w21_n > 0) {
-            make_b_pack_i8(
-                wt->w21_T + l * (size_t)(hidden_dim + 1) * wt->w21_n,
-                w->w2[l].q + (size_t)wt->w20_n * hidden_dim,
-                wt->w21_n,
-                hidden_dim);
-        }
-    }
+    /* w2: W[dim × hidden_dim], B_pack [(hidden_dim+1) × dim] per layer */
+    wt->w2_T = (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * dim);
+    for (int l = 0; l < n_layers; l++)
+        make_b_pack_i8(wt->w2_T + l * (size_t)(hidden_dim + 1) * dim,
+                       w->w2[l].q, dim, hidden_dim);
 
     /* w3: same layout as w1 */
     wt->w3_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
@@ -640,8 +624,7 @@ void free_transposed_weights_i8(TransformerWeightsT* wt) {
     free(wt->wv_T);
     free(wt->wo_T);
     free(wt->w1_T);
-    free(wt->w20_T);
-    free(wt->w21_T);
+    free(wt->w2_T);
     free(wt->w3_T);
     free(wt->wcls0_T);
     free(wt->wcls1_T);
@@ -850,9 +833,8 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             for (int h = h_start; h < h_end; h++) {
                 float* q   = s->q   + h * head_size;
                 float* att = s->att + h * p->seq_len;
-                int kv_head_off = (h / kv_mul) * head_size;
                 for (int t = 0; t <= pos; t++) {
-                    float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
+                    float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                     float score = 0.0f;
                     for (int i = 0; i < head_size; i++) score += q[i] * k[i];
                     att[t] = score * inv_sqrt_head_size;
@@ -865,7 +847,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 float* xb = s->xb + h * head_size;
                 memset(xb, 0, head_size * sizeof(float));
                 for (int t = 0; t <= pos; t++) {
-                    float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
+                    float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                     float a  = att[t];
                     for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
                 }
@@ -905,7 +887,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* SwiGLU + quantize hq (hart 0) */
+        /* SwiGLU + quantize hq + w2 matmul + residual (hart 0) */
         if (hartid == 0) {
             for (int i = 0; i < hidden_dim; i++) {
                 float val = s->hb[i];
@@ -914,48 +896,12 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 s->hb[i] = val;
             }
             quantize(&s->hq, s->hb, hidden_dim);
-        }
-        barrier2(hartid);
-
-        /* w2 projection split across harts by output rows */
 #ifdef TRANSPOSED_WEIGHTS
-        if (hartid == 0) {
-            if (wt->w20_n > 0) {
-                matmul_t(
-                    s->xb,
-                    &s->hq,
-                    wt->w20_T + l*(size_t)(hidden_dim+1)*wt->w20_n,
-                    w->w2[l].s,
-                    hidden_dim,
-                    wt->w20_n);
-            }
-        } else {
-            if (wt->w21_n > 0) {
-                matmul_t(
-                    s->xb + wt->w20_n,
-                    &s->hq,
-                    wt->w21_T + l*(size_t)(hidden_dim+1)*wt->w21_n,
-                    w->w2[l].s,
-                    hidden_dim,
-                    wt->w21_n);
-            }
-        }
+            matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
 #else
-        {
-            int d_half = dim / 2;
-            int d_start = hartid == 0 ? 0 : d_half;
-            int d_end = hartid == 0 ? d_half : dim;
-            matmul_rows(s->xb, &s->hq, w->w2 + l, hidden_dim, dim, d_start, d_end);
-        }
+            matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 #endif
-        barrier2(hartid);
-
-        /* residual add split across harts */
-        {
-            int d_half = dim / 2;
-            int d_start = hartid == 0 ? 0 : d_half;
-            int d_end = hartid == 0 ? d_half : dim;
-            for (int i = d_start; i < d_end; i++) x[i] += s->xb[i];
+            for (int i = 0; i < dim; i++) x[i] += s->xb[i];
         }
         barrier2(hartid);
     }
@@ -1223,24 +1169,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
 #ifdef TRANSPOSED_WEIGHTS
-        if (wt->w20_n > 0) {
-            matmul_t(
-                s->xb,
-                &s->hq,
-                wt->w20_T + l*(size_t)(hidden_dim+1)*wt->w20_n,
-                w->w2[l].s,
-                hidden_dim,
-                wt->w20_n);
-        }
-        if (wt->w21_n > 0) {
-            matmul_t(
-                s->xb + wt->w20_n,
-                &s->hq,
-                wt->w21_T + l*(size_t)(hidden_dim+1)*wt->w21_n,
-                w->w2[l].s,
-                hidden_dim,
-                wt->w21_n);
-        }
+        matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
 #else
         matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 #endif

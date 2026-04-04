@@ -32,6 +32,30 @@ if(BORAI_TESTQ_TINY_SHAPE_GEMM)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_SHAPE_GEMM)
 endif()
 
+option(BORAI_TESTQ_FAST_SAMPLER_512
+  "Enable boraiq-test specialized sampler path for vocab_size=512" ON)
+
+if(BORAI_TESTQ_FAST_SAMPLER_512)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_FAST_SAMPLER_512)
+endif()
+
+option(BORAI_TESTQ_BENCH_SUPPRESS_TOKEN_IO
+  "Suppress per-token decode/print in very short benchmarks to avoid UART overhead" ON)
+
+if(BORAI_TESTQ_BENCH_SUPPRESS_TOKEN_IO)
+  target_compile_definitions(
+    boraiq-test PRIVATE
+    BORAIQ_BENCH_SUPPRESS_TOKEN_IO
+    BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS=8)
+endif()
+
+option(BORAI_TESTQ_BENCH_NO_TOKEN_FLUSH
+  "Disable per-token fflush(stdout) in generation path" ON)
+
+if(BORAI_TESTQ_BENCH_NO_TOKEN_FLUSH)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_BENCH_NO_TOKEN_FLUSH)
+endif()
+
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
   if(BUILD_VECNN)
     target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)

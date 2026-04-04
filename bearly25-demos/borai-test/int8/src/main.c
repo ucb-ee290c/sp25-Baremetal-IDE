@@ -46,6 +46,10 @@
 #include <thread-lib/hthread.h>
 #endif
 
+#ifndef BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS
+#define BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS 8
+#endif
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -1048,6 +1052,11 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
     int next;
     int token = prompt_tokens[0];
     int pos   = 0;
+#if defined(BORAIQ_BENCH_SUPPRESS_TOKEN_IO)
+    int emit_tokens = (steps > BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS);
+#else
+    int emit_tokens = 1;
+#endif
     _bar_h1_arrived = 0;
     _bar_sense = 0;
     _mc_swiglu_h1_done = 0;
@@ -1076,9 +1085,13 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
 
         if (next == 1) { break; }
 
-        char* piece = decode(tokenizer, token, next);
-        safe_printf(piece);
-        fflush(stdout);
+        if (emit_tokens) {
+            char* piece = decode(tokenizer, token, next);
+            safe_printf(piece);
+#ifndef BORAIQ_BENCH_NO_TOKEN_FLUSH
+            fflush(stdout);
+#endif
+        }
         token = next;
 
         if (start == 0) { start = READ_CSR("mcycle"); }
@@ -1523,7 +1536,9 @@ typedef struct Sampler {
     int vocab_size;
     ProbIndex* probindex; // buffer used in top-p sampling
     float temperature;
+    float inv_temperature;
     float topp;
+    int fast_vocab512;
     unsigned long long rng_state;
 } Sampler;
 
@@ -1551,6 +1566,34 @@ int sample_mult(float* probabilities, int n, float coin) {
         }
     }
     return n - 1; // in case of rounding errors
+}
+
+static inline void scale_logits_temp_inplace(float* logits, int n, float inv_temp) {
+#if defined(__riscv_vector)
+    int i = 0;
+    while (i < n) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vfloat32m4_t v = __riscv_vle32_v_f32m4(logits + i, vl);
+        v = __riscv_vfmul_vf_f32m4(v, inv_temp, vl);
+        __riscv_vse32_v_f32m4(logits + i, v, vl);
+        i += (int)vl;
+    }
+#else
+    for (int i = 0; i < n; i++) {
+        logits[i] *= inv_temp;
+    }
+#endif
+}
+
+static inline int sample_mult_512(float* probabilities, float coin) {
+    float cdf = 0.0f;
+    for (int i = 0; i < 512; i++) {
+        cdf += probabilities[i];
+        if (coin < cdf) {
+            return i;
+        }
+    }
+    return 511;
 }
 
 static inline void heap_swap_probindex(ProbIndex* a, ProbIndex* b) {
@@ -1637,10 +1680,54 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, f
     return probindex[n0 - 1].index; // in case of rounding errors
 }
 
+static inline int sample_topp_512(float* probabilities, float topp, ProbIndex* probindex, float coin) {
+    int n0 = 0;
+    const float cutoff = (1.0f - topp) / 511.0f;
+    for (int i = 0; i < 512; i++) {
+        float p = probabilities[i];
+        if (p >= cutoff) {
+            probindex[n0].index = i;
+            probindex[n0].prob = p;
+            n0++;
+        }
+    }
+    if (n0 <= 0) {
+        return sample_argmax(probabilities, 512);
+    }
+
+    for (int i = (n0 / 2) - 1; i >= 0; i--) {
+        heapify_down_probindex(probindex, n0, i);
+    }
+
+    int heap_size = n0;
+    int selected_start = n0;
+    float cumulative_prob = 0.0f;
+    while (heap_size > 0) {
+        ProbIndex top = heap_pop_max_probindex(probindex, &heap_size);
+        probindex[--selected_start] = top;
+        cumulative_prob += top.prob;
+        if (cumulative_prob > topp) {
+            break;
+        }
+    }
+
+    float r = coin * cumulative_prob;
+    float cdf = 0.0f;
+    for (int i = selected_start; i < n0; i++) {
+        cdf += probindex[i].prob;
+        if (r < cdf) {
+            return probindex[i].index;
+        }
+    }
+    return probindex[n0 - 1].index;
+}
+
 void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed) {
     sampler->vocab_size = vocab_size;
     sampler->temperature = temperature;
+    sampler->inv_temperature = (temperature > 0.0f) ? (1.0f / temperature) : 0.0f;
     sampler->topp = topp;
+    sampler->fast_vocab512 = (vocab_size == 512);
     sampler->rng_state = rng_seed;
     // buffer only used with nucleus sampling; may not need but it's ~small
     sampler->probindex = malloc(sampler->vocab_size * sizeof(ProbIndex));
@@ -1668,8 +1755,29 @@ int sample(Sampler* sampler, float* logits) {
         // greedy argmax sampling: take the token with the highest probability
         next = sample_argmax(logits, sampler->vocab_size);
     } else {
+#ifdef BORAIQ_FAST_SAMPLER_512
+        if (sampler->fast_vocab512) {
+            if (sampler->inv_temperature != 1.0f) {
+                scale_logits_temp_inplace(logits, 512, sampler->inv_temperature);
+            }
+#if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
+            softmax_vec(logits, logits, 1, (size_t)512);
+#else
+            softmax(logits, 512);
+#endif
+            float coin = random_f32(&sampler->rng_state);
+            if (sampler->topp <= 0 || sampler->topp >= 1) {
+                next = sample_mult_512(logits, coin);
+            } else {
+                next = sample_topp_512(logits, sampler->topp, sampler->probindex, coin);
+            }
+            return next;
+        }
+#endif
         // apply the temperature to the logits
-        for (int q=0; q<sampler->vocab_size; q++) { logits[q] /= sampler->temperature; }
+        if (sampler->inv_temperature != 1.0f) {
+            scale_logits_temp_inplace(logits, sampler->vocab_size, sampler->inv_temperature);
+        }
         // apply softmax to the logits to get the probabilities for next token
         softmax(logits, sampler->vocab_size);
         // flip a (float) coin (this is our source of entropy for sampling)
@@ -1717,6 +1825,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
+#if defined(BORAIQ_BENCH_SUPPRESS_TOKEN_IO)
+    int emit_tokens = (steps > BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS);
+#else
+    int emit_tokens = 1;
+#endif
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
@@ -1735,10 +1848,14 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         // data-dependent terminating condition: the BOS (=1) token delimits sequences
         if (next == 1) { break; }
 
-        // print the token as string, decode it with the Tokenizer object
-        char* piece = decode(tokenizer, token, next);
-        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-        fflush(stdout);
+        if (emit_tokens) {
+            // print the token as string, decode it with the Tokenizer object
+            char* piece = decode(tokenizer, token, next);
+            safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+#ifndef BORAIQ_BENCH_NO_TOKEN_FLUSH
+            fflush(stdout);
+#endif
+        }
         token = next;
 
         // init the timer here because the first iteration can be slower
@@ -1945,6 +2062,21 @@ void app_main() {
   printf("Build flags: BORAIQ_TINY_SHAPE_GEMM ON\r\n");
 #else
   printf("Build flags: BORAIQ_TINY_SHAPE_GEMM OFF\r\n");
+#endif
+#if defined(BORAIQ_FAST_SAMPLER_512)
+  printf("Build flags: BORAIQ_FAST_SAMPLER_512 ON\r\n");
+#else
+  printf("Build flags: BORAIQ_FAST_SAMPLER_512 OFF\r\n");
+#endif
+#if defined(BORAIQ_BENCH_SUPPRESS_TOKEN_IO)
+  printf("Build flags: BORAIQ_BENCH_SUPPRESS_TOKEN_IO ON (min steps=%d)\r\n", BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS);
+#else
+  printf("Build flags: BORAIQ_BENCH_SUPPRESS_TOKEN_IO OFF\r\n");
+#endif
+#if defined(BORAIQ_BENCH_NO_TOKEN_FLUSH)
+  printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH ON\r\n");
+#else
+  printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH OFF\r\n");
 #endif
 
   // Parameters //

@@ -39,6 +39,7 @@
 #ifdef BORAIQ_TINY_SHAPE_GEMM
 #include "tiny_gemm_i8_rvv.h"
 #endif
+#include "tiny_vec_ops_rvv.h"
 #if defined(__riscv_vector)
 #include <riscv_vector.h>
 #endif
@@ -250,6 +251,11 @@ void dequantize(QuantizedTensor *qx, float* x, int n) {
 }
 
 void quantize(QuantizedTensor *qx, float* x, int n) {
+#ifdef BORAIQ_TINY_VEC_OPS
+    if (borai_tiny_quantize_i8(&qx->s, qx->q, x, n)) {
+        return;
+    }
+#endif
     float Q_MAX = 127.0f;
 
     // find the max absolute value
@@ -472,6 +478,11 @@ void free_transformer(Transformer* t) {
 // neural net blocks; the dynamics of the Transformer
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
+#ifdef BORAIQ_TINY_VEC_OPS
+    if (borai_tiny_rmsnorm_f32(o, x, weight, size)) {
+        return;
+    }
+#endif
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -524,6 +535,12 @@ static inline void softmax_attn(float *att, int len) {
 }
 
 static inline float dot_qk_head(const float *q, const float *k, int n) {
+#ifdef BORAIQ_TINY_ATTN_H8
+    float out = 0.0f;
+    if (borai_tiny_dot_qk_head_f32(&out, q, k, n)) {
+        return out;
+    }
+#endif
 #if defined(__riscv_vector)
     int i = 0;
     vfloat32m1_t acc = __riscv_vfmv_v_f_f32m1(0.0f, 1);
@@ -544,6 +561,11 @@ static inline float dot_qk_head(const float *q, const float *k, int n) {
 }
 
 static inline void axpy_v_head(float *dst, const float *v, float a, int n) {
+#ifdef BORAIQ_TINY_ATTN_H8
+    if (borai_tiny_axpy_head_f32(dst, v, a, n)) {
+        return;
+    }
+#endif
 #if defined(__riscv_vector)
     int i = 0;
     while (i < n) {
@@ -963,12 +985,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
          * runs quantize + w2 + residual to avoid extra barriers on matmul. */
         if (hartid == 0) {
             int h_half = hidden_dim / 2;
-            for (int i = 0; i < h_half; i++) {
-                float val = s->hb[i];
-                val *= 1.0f / (1.0f + expf(-val));
-                val *= s->hb2[i];
-                s->hb[i] = val;
-            }
+            borai_swiglu_apply_range(s->hb, s->hb2, 0, h_half);
             while (_mc_swiglu_h1_done == 0) {}
             __sync_synchronize();
             _mc_swiglu_h1_done = 0;
@@ -981,12 +998,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             for (int i = 0; i < dim; i++) x[i] += s->xb[i];
         } else {
             int h_half = hidden_dim / 2;
-            for (int i = h_half; i < hidden_dim; i++) {
-                float val = s->hb[i];
-                val *= 1.0f / (1.0f + expf(-val));
-                val *= s->hb2[i];
-                s->hb[i] = val;
-            }
+            borai_swiglu_apply_range(s->hb, s->hb2, h_half, hidden_dim);
             __sync_synchronize();
             _mc_swiglu_h1_done = 1;
         }
@@ -1246,14 +1258,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 #endif
 
         // SwiGLU non-linearity
-        for (int i = 0; i < hidden_dim; i++) {
-            float val = s->hb[i];
-            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            val *= (1.0f / (1.0f + expf(-val)));
-            // elementwise multiply with w3(x)
-            val *= s->hb2[i];
-            s->hb[i] = val;
-        }
+        borai_swiglu_apply(s->hb, s->hb2, hidden_dim);
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
@@ -2077,6 +2082,21 @@ void app_main() {
   printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH ON\r\n");
 #else
   printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_VEC_OPS)
+  printf("Build flags: BORAIQ_TINY_VEC_OPS ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_VEC_OPS OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_ATTN_H8)
+  printf("Build flags: BORAIQ_TINY_ATTN_H8 ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_ATTN_H8 OFF\r\n");
+#endif
+#if defined(BORAIQ_FAST_SWIGLU_EXP)
+  printf("Build flags: BORAIQ_FAST_SWIGLU_EXP ON\r\n");
+#else
+  printf("Build flags: BORAIQ_FAST_SWIGLU_EXP OFF\r\n");
 #endif
 
   // Parameters //

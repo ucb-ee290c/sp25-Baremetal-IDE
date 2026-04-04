@@ -14,6 +14,7 @@ option(BORAI_TESTQ_TRANSPOSED_WEIGHTS
 add_executable(boraiq-test
   int8/src/main.c
   int8/src/tiny_gemm_i8_rvv.c
+  int8/src/tiny_vec_ops_rvv.c
 )
 
 target_include_directories(boraiq-test PUBLIC int8/include)
@@ -54,6 +55,27 @@ option(BORAI_TESTQ_BENCH_NO_TOKEN_FLUSH
 
 if(BORAI_TESTQ_BENCH_NO_TOKEN_FLUSH)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_BENCH_NO_TOKEN_FLUSH)
+endif()
+
+option(BORAI_TESTQ_TINY_VEC_OPS
+  "Enable boraiq-test specialized tiny-shape quantize/rmsnorm kernels (n=64/172)" ON)
+
+if(BORAI_TESTQ_TINY_VEC_OPS)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_VEC_OPS)
+endif()
+
+option(BORAI_TESTQ_TINY_ATTN_H8
+  "Enable boraiq-test specialized tiny attention kernels for head_size=8" ON)
+
+if(BORAI_TESTQ_TINY_ATTN_H8)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_ATTN_H8)
+endif()
+
+option(BORAI_TESTQ_FAST_SWIGLU_EXP
+  "Enable boraiq-test fast SwiGLU sigmoid approximation (replaces expf in SiLU)" ON)
+
+if(BORAI_TESTQ_FAST_SWIGLU_EXP)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_FAST_SWIGLU_EXP)
 endif()
 
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)

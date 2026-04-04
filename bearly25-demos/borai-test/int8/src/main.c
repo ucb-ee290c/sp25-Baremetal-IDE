@@ -497,6 +497,22 @@ void softmax(float* x, int size) {
     }
 }
 
+#ifndef ATTN_VEC_SOFTMAX_MIN
+#define ATTN_VEC_SOFTMAX_MIN 48
+#endif
+
+static inline void softmax_attn(float *att, int len) {
+#ifdef VEC_SOFTMAX
+    if (len >= ATTN_VEC_SOFTMAX_MIN) {
+        softmax_vec(att, att, 1, (size_t)len);
+    } else {
+        softmax(att, len);
+    }
+#else
+    softmax(att, len);
+#endif
+}
+
 void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
@@ -664,6 +680,7 @@ static volatile int _mc_pos_val      = 0;
 static volatile int _mc_fwd_req      = 0;
 static volatile int _mc_fwd_done     = 0;
 static volatile int _mc_worker_ready = 0;
+static volatile int _mc_swiglu_h1_done = 0;
 
 static float* forward_mc(Transformer* transformer, int token, int pos, int hartid);
 
@@ -724,6 +741,7 @@ static void mc_start_worker(Transformer *transformer) {
     _mc_fwd_req = 0;
     _mc_fwd_done = 0;
     _mc_worker_ready = 0;
+    _mc_swiglu_h1_done = 0;
     __sync_synchronize();
     hthread_issue(1, mc_forward_worker, transformer);
     while (_mc_worker_ready == 0) {}
@@ -743,8 +761,8 @@ static void mc_start_worker(Transformer *transformer) {
  *   wcls : both harts split vocab work (TRANSPOSED_WEIGHTS split packs,
  *          or scalar row split)
  *
- * All sequential work (rmsnorm, RoPE, kv-store, residual, SwiGLU, w2) is done
- * by hart 0; hart 1 spins at barriers outside its assigned kernels.
+ * Mostly-sequential work (rmsnorm, RoPE, kv-store, residual, w2) stays on
+ * hart 0; hart 1 additionally handles half of SwiGLU between FFN matmuls.
  *
  * When TRANSPOSED_WEIGHTS is also defined, w1/w3/wq/wk/wv/wo all use the
  * vectorized matmul_t kernel on their full matrices.
@@ -841,11 +859,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                     for (int i = 0; i < head_size; i++) score += q[i] * k[i];
                     att[t] = score * inv_sqrt_head_size;
                 }
-#ifdef VEC_SOFTMAX
-                softmax_vec(att, att, 1, (size_t)(pos + 1));
-#else
-                softmax(att, pos + 1);
-#endif
+                softmax_attn(att, pos + 1);
                 float* xb = s->xb + h * head_size;
                 memset(xb, 0, head_size * sizeof(float));
                 for (int t = 0; t <= pos; t++) {
@@ -889,14 +903,19 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* SwiGLU + quantize hq + w2 matmul + residual (hart 0) */
+        /* SwiGLU split: both harts process disjoint hidden ranges, then hart 0
+         * runs quantize + w2 + residual to avoid extra barriers on matmul. */
         if (hartid == 0) {
-            for (int i = 0; i < hidden_dim; i++) {
+            int h_half = hidden_dim / 2;
+            for (int i = 0; i < h_half; i++) {
                 float val = s->hb[i];
                 val *= 1.0f / (1.0f + expf(-val));
                 val *= s->hb2[i];
                 s->hb[i] = val;
             }
+            while (_mc_swiglu_h1_done == 0) {}
+            __sync_synchronize();
+            _mc_swiglu_h1_done = 0;
             quantize(&s->hq, s->hb, hidden_dim);
 #ifdef TRANSPOSED_WEIGHTS
             matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
@@ -904,6 +923,16 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 #endif
             for (int i = 0; i < dim; i++) x[i] += s->xb[i];
+        } else {
+            int h_half = hidden_dim / 2;
+            for (int i = h_half; i < hidden_dim; i++) {
+                float val = s->hb[i];
+                val *= 1.0f / (1.0f + expf(-val));
+                val *= s->hb2[i];
+                s->hb[i] = val;
+            }
+            __sync_synchronize();
+            _mc_swiglu_h1_done = 1;
         }
         barrier2(hartid);
     }
@@ -969,6 +998,7 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
     int pos   = 0;
     _bar_h1_arrived = 0;
     _bar_sense = 0;
+    _mc_swiglu_h1_done = 0;
     while (pos < steps) {
         _mc_token_val = token;
         _mc_pos_val = pos;
@@ -1110,11 +1140,7 @@ float* forward(Transformer* transformer, int token, int pos) {
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
-#ifdef VEC_SOFTMAX
-            softmax_vec(att, att, 1, (size_t)(pos + 1));
-#else
-            softmax(att, pos + 1);
-#endif
+            softmax_attn(att, pos + 1);
 
             // weighted sum of the values, store back into xb
             float* xb = s->xb + h * head_size;

@@ -1505,12 +1505,35 @@ int sample_mult(float* probabilities, int n, float coin) {
     return n - 1; // in case of rounding errors
 }
 
-int compare(const void* a, const void* b) {
-    ProbIndex* a_ = (ProbIndex*) a;
-    ProbIndex* b_ = (ProbIndex*) b;
-    if (a_->prob > b_->prob) return -1;
-    if (a_->prob < b_->prob) return 1;
-    return 0;
+static inline void heap_swap_probindex(ProbIndex* a, ProbIndex* b) {
+    ProbIndex t = *a;
+    *a = *b;
+    *b = t;
+}
+
+/* max-heapify at index i for ProbIndex.prob */
+static inline void heapify_down_probindex(ProbIndex* heap, int size, int i) {
+    while (1) {
+        int left = (i << 1) + 1;
+        int right = left + 1;
+        int largest = i;
+        if (left < size && heap[left].prob > heap[largest].prob) largest = left;
+        if (right < size && heap[right].prob > heap[largest].prob) largest = right;
+        if (largest == i) break;
+        heap_swap_probindex(&heap[i], &heap[largest]);
+        i = largest;
+    }
+}
+
+/* pop max element from heap[0..*size-1], decrements *size */
+static inline ProbIndex heap_pop_max_probindex(ProbIndex* heap, int* size) {
+    ProbIndex out = heap[0];
+    (*size)--;
+    if (*size > 0) {
+        heap[0] = heap[*size];
+        heapify_down_probindex(heap, *size, 0);
+    }
+    return out;
 }
 
 int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, float coin) {
@@ -1519,41 +1542,51 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, f
     // have very low probabilities and are less likely to go "off the rails".
     // coin is a random number in [0, 1), usually from random_f32()
 
+    if (n <= 1) return 0;
+
     int n0 = 0;
-    // quicksort indices in descending order of probabilities
     // values smaller than (1 - topp) / (n - 1) cannot be part of the result
-    // so for efficiency we crop these out as candidates before sorting
+    // so for efficiency we crop these out as candidates before heap building
     const float cutoff = (1.0f - topp) / (n - 1);
     for (int i = 0; i < n; i++) {
-        if (probabilities[i] >= cutoff) {
+        float p = probabilities[i];
+        if (p >= cutoff) {
             probindex[n0].index = i;
-            probindex[n0].prob = probabilities[i];
+            probindex[n0].prob = p;
             n0++;
         }
     }
-    qsort(probindex, n0, sizeof(ProbIndex), compare);
-
-    // truncate the list where cumulative probability exceeds topp
-    float cumulative_prob = 0.0f;
-    int last_idx = n0 - 1; // in case of rounding errors consider all elements
-    for (int i = 0; i < n0; i++) {
-        cumulative_prob += probindex[i].prob;
-        if (cumulative_prob > topp) {
-            last_idx = i;
-            break; // we've exceeded topp by including last_idx
-        }
+    if (n0 <= 0) {
+        return sample_argmax(probabilities, n);
     }
 
-    // sample from the truncated list
+    // Build max-heap in-place: O(n0)
+    for (int i = (n0 / 2) - 1; i >= 0; i--) {
+        heapify_down_probindex(probindex, n0, i);
+    }
+
+    // Pop only as many top tokens as needed to exceed topp cumulative mass.
+    // Store popped candidates at the tail [selected_start, n0) for sampling.
+    int heap_size = n0;
+    int selected_start = n0;
+    float cumulative_prob = 0.0f;
+    while (heap_size > 0) {
+        ProbIndex top = heap_pop_max_probindex(probindex, &heap_size);
+        probindex[--selected_start] = top;
+        cumulative_prob += top.prob;
+        if (cumulative_prob > topp) break;
+    }
+
+    // sample from the selected candidates
     float r = coin * cumulative_prob;
     float cdf = 0.0f;
-    for (int i = 0; i <= last_idx; i++) {
+    for (int i = selected_start; i < n0; i++) {
         cdf += probindex[i].prob;
         if (r < cdf) {
             return probindex[i].index;
         }
     }
-    return probindex[last_idx].index; // in case of rounding errors
+    return probindex[n0 - 1].index; // in case of rounding errors
 }
 
 void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed) {

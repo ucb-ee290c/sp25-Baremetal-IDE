@@ -120,11 +120,19 @@ typedef struct {
     unsigned char* wk_T;    /* (n_layers, dim+1, kv_dim)      B_pack for wk  */
     unsigned char* wv_T;    /* (n_layers, dim+1, kv_dim)      B_pack for wv  */
     unsigned char* wo_T;    /* (n_layers, dim+1, dim)         B_pack for wo  */
+    unsigned char* wo0_T;   /* (n_layers, dim+1, dim0)        B_pack for wo first half */
+    unsigned char* wo1_T;   /* (n_layers, dim+1, dim1)        B_pack for wo second half */
     unsigned char* w1_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w1  */
     unsigned char* w2_T;    /* (n_layers, hidden_dim+1, dim)  B_pack for w2  */
+    unsigned char* w20_T;   /* (n_layers, hidden_dim+1, dim0) B_pack for w2 first half */
+    unsigned char* w21_T;   /* (n_layers, hidden_dim+1, dim1) B_pack for w2 second half */
     unsigned char* w3_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w3  */
     unsigned char* wcls0_T; /* (dim+1, vocab0)                B_pack for wcls first half */
     unsigned char* wcls1_T; /* (dim+1, vocab1)                B_pack for wcls second half */
+    int wo0_n;              /* dim0 = floor(dim/2) */
+    int wo1_n;              /* dim1 = dim - dim0 */
+    int w20_n;              /* dim0 = floor(dim/2) */
+    int w21_n;              /* dim1 = dim - dim0 */
     int wcls0_n;            /* vocab0 = floor(vocab_size/2) */
     int wcls1_n;            /* vocab1 = vocab_size - vocab0 */
 } TransformerWeightsT;

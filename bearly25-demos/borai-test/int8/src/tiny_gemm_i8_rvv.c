@@ -1,5 +1,6 @@
 #include "tiny_gemm_i8_rvv.h"
 
+#include <math.h>
 #include <stddef.h>
 
 #if defined(__riscv_vector)
@@ -243,6 +244,71 @@ int borai_tiny_matmul_t_i8_fout(
     (void)n_in;
     (void)n_out;
     (void)scale;
+#endif
+    return 0;
+}
+
+int borai_tiny_fused_qmatmul_t_i8_fout(
+    const float* x,
+    const int8_t* w_t_pack,
+    float* xout,
+    int n_in,
+    int n_out,
+    float w_scale)
+{
+#if defined(__riscv_vector)
+    /* First target the dominant FFN projection in this model. */
+    if (n_in == 172 && n_out == 64) {
+        float wmax = 0.0f;
+        for (int i = 0; i < n_in; i++) {
+            float a = fabsf(x[i]);
+            if (a > wmax) {
+                wmax = a;
+            }
+        }
+        if (wmax == 0.0f) {
+            for (int i = 0; i < n_out; i++) {
+                xout[i] = 0.0f;
+            }
+            return 1;
+        }
+
+        const float x_scale = wmax / 127.0f;
+        const float inv_x_scale = 1.0f / x_scale;
+        const float out_scale = x_scale * w_scale;
+        const size_t stride = (size_t)n_out;
+        const int8_t* w_data = w_t_pack + stride; /* skip bias row */
+
+        size_t off = 0;
+        while (off < (size_t)n_out) {
+            size_t vl = __riscv_vsetvl_e32m8((size_t)n_out - off);
+            vint32m8_t acc = __riscv_vmv_v_x_i32m8(0, vl);
+            const int8_t* bp = w_data + off;
+
+            for (int k = 0; k < n_in; k++) {
+                int q = (int)roundf(x[k] * inv_x_scale);
+                if (q > 127) q = 127;
+                if (q < -127) q = -127;
+                vint16m4_t vb = __riscv_vwcvt_x_x_v_i16m4(
+                    __riscv_vle8_v_i8m2(bp, vl), vl);
+                acc = __riscv_vwmacc_vx_i32m8(acc, (int8_t)q, vb, vl);
+                bp += stride;
+            }
+
+            vfloat32m8_t vf = __riscv_vfcvt_f_x_v_f32m8(acc, vl);
+            vf = __riscv_vfmul_vf_f32m8(vf, out_scale, vl);
+            __riscv_vse32_v_f32m8(xout + off, vf, vl);
+            off += vl;
+        }
+        return 1;
+    }
+#else
+    (void)x;
+    (void)w_t_pack;
+    (void)xout;
+    (void)n_in;
+    (void)n_out;
+    (void)w_scale;
 #endif
     return 0;
 }

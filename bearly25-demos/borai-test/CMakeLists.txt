@@ -78,6 +78,13 @@ if(BORAI_TESTQ_FAST_SWIGLU_EXP)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_FAST_SWIGLU_EXP)
 endif()
 
+option(BORAI_TESTQ_FUSED_W2_QMATMUL
+  "Enable boraiq-test fused quantize+matmul path for FFN w2 (hidden->dim)" ON)
+
+if(BORAI_TESTQ_FUSED_W2_QMATMUL)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_FUSED_W2_QMATMUL)
+endif()
+
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
   if(BUILD_VECNN)
     target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)

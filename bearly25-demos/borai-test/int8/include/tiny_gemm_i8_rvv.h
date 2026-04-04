@@ -13,4 +13,15 @@ int borai_tiny_matmul_t_i8_fout(
     int n_out,
     float scale);
 
+/* Fused path: quantize float input x[n_in] and immediately run transposed
+ * int8 matmul into xout[n_out]. `w_scale` is the weight scale.
+ * Returns 1 if handled by a specialized fused kernel, 0 otherwise. */
+int borai_tiny_fused_qmatmul_t_i8_fout(
+    const float* x,
+    const int8_t* w_t_pack,
+    float* xout,
+    int n_in,
+    int n_out,
+    float w_scale);
+
 #endif

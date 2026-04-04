@@ -834,11 +834,7 @@ static void mc_start_worker(Transformer *transformer) {
  * simultaneously rather than each computing half-rows of a single matrix.
  *
  * Assignment per layer:
-#ifdef BORAIQ_MC_REBALANCE_QKV
- *   QKV  : hart 0 → wq       |  hart 1 → wk + wv
-#else
  *   QKV  : hart 0 → wq + wk  |  hart 1 → wv
-#endif
  *   Attn : both — each handles n_heads/2 heads
  *   FFN  : hart 0 → w1       |  hart 1 → w3  (key parallelism win)
  *   wcls : both harts split vocab work (TRANSPOSED_WEIGHTS split packs,
@@ -886,31 +882,21 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* QKV projections — mutual exclusion.
-         * Default: hart0=wq+wk, hart1=wv.
-         * Rebalanced: hart0=wq, hart1=wk+wv. */
+        /* QKV projections — mutual exclusion:
+         *   hart 0 → wq (s->q) + wk (s->k)
+         *   hart 1 → wv (s->v)                              */
         if (hartid == 0) {
 #ifdef TRANSPOSED_WEIGHTS
             matmul_t(s->q, &s->xq, wt->wq_T + l*(size_t)(dim+1)*dim,    w->wq[l].s, dim, dim);
-#ifndef BORAIQ_MC_REBALANCE_QKV
             matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
-#endif
 #else
             matmul(s->q, &s->xq, w->wq + l, dim, dim);
-#ifndef BORAIQ_MC_REBALANCE_QKV
             matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
-#endif
 #endif
         } else {
 #ifdef TRANSPOSED_WEIGHTS
-#ifdef BORAIQ_MC_REBALANCE_QKV
-            matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
-#endif
             matmul_t(s->v, &s->xq, wt->wv_T + l*(size_t)(dim+1)*kv_dim, w->wv[l].s, dim, kv_dim);
 #else
-#ifdef BORAIQ_MC_REBALANCE_QKV
-            matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
-#endif
             matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
 #endif
         }
@@ -2111,11 +2097,6 @@ void app_main() {
   printf("Build flags: BORAIQ_FAST_SWIGLU_EXP ON\r\n");
 #else
   printf("Build flags: BORAIQ_FAST_SWIGLU_EXP OFF\r\n");
-#endif
-#if defined(BORAIQ_MC_REBALANCE_QKV)
-  printf("Build flags: BORAIQ_MC_REBALANCE_QKV ON\r\n");
-#else
-  printf("Build flags: BORAIQ_MC_REBALANCE_QKV OFF\r\n");
 #endif
 
   // Parameters //

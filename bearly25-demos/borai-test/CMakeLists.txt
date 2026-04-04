@@ -13,6 +13,7 @@ option(BORAI_TESTQ_TRANSPOSED_WEIGHTS
 
 add_executable(boraiq-test
   int8/src/main.c
+  int8/src/tiny_gemm_i8_rvv.c
 )
 
 target_include_directories(boraiq-test PUBLIC int8/include)
@@ -22,6 +23,13 @@ option(BORAI_TESTQ_MAX_PERF
 
 if(BORAI_TESTQ_MAX_PERF)
   target_compile_options(boraiq-test PRIVATE -O3 -fno-math-errno -fno-trapping-math)
+endif()
+
+option(BORAI_TESTQ_TINY_SHAPE_GEMM
+  "Enable boraiq-test specialized RVV tiny-shape int8 matmul kernels (K=64/172)" ON)
+
+if(BORAI_TESTQ_TINY_SHAPE_GEMM)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_SHAPE_GEMM)
 endif()
 
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)

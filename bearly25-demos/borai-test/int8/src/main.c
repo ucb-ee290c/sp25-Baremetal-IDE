@@ -36,6 +36,9 @@
 #if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
 #include "layers.h"
 #endif
+#ifdef BORAIQ_TINY_SHAPE_GEMM
+#include "tiny_gemm_i8_rvv.h"
+#endif
 #if defined(__riscv_vector)
 #include <riscv_vector.h>
 #endif
@@ -702,6 +705,17 @@ static void matmul_t(
     int n_in, int n_out)
 {
     float scale = xq->s * w_scale;
+#ifdef BORAIQ_TINY_SHAPE_GEMM
+    if (borai_tiny_matmul_t_i8_fout(
+            xq->q,
+            (const int8_t*)w_t_pack,
+            xout,
+            n_in,
+            n_out,
+            scale)) {
+        return;
+    }
+#endif
     quant_fully_connected_int8_t(
         (size_t)n_in, (size_t)n_out, 1,
         xq->q, w_t_pack, xout, scale);
@@ -1926,6 +1940,11 @@ void app_main() {
   printf("Build flags: TRANSPOSED_WEIGHTS ON\r\n");
 #else
   printf("Build flags: TRANSPOSED_WEIGHTS OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_SHAPE_GEMM)
+  printf("Build flags: BORAIQ_TINY_SHAPE_GEMM ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_SHAPE_GEMM OFF\r\n");
 #endif
 
   // Parameters //

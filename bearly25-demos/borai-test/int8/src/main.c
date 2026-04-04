@@ -600,29 +600,6 @@ static void make_b_pack_i8(
             ipack[(k + 1) * n_out + j] = W[j * n_in + k];
 }
 
-/* Build B_pack for a contiguous output-column slice of W[n_out_total x n_in].
- * Slice is rows [out_start, out_start + out_count) in the row-major W layout. */
-static void make_b_pack_i8_slice(
-    unsigned char* pack,
-    const int8_t* W,
-    int n_out_total,
-    int n_in,
-    int out_start,
-    int out_count)
-{
-    int8_t* ipack = (int8_t*)pack;
-    for (int j = 0; j < out_count; j++) {
-        ipack[j] = 0;
-    }
-    for (int k = 0; k < n_in; k++) {
-        for (int j = 0; j < out_count; j++) {
-            int out_idx = out_start + j;
-            ipack[(k + 1) * out_count + j] = W[out_idx * n_in + k];
-        }
-    }
-    (void)n_out_total;
-}
-
 /* ---------------------------------------------------------------------------
  * alloc_and_transpose_weights_i8 — allocate and fill transposed B_packs.
  * Called once in build_transformer().
@@ -660,30 +637,6 @@ void alloc_and_transpose_weights_i8(
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wo_T + l * (size_t)(dim + 1) * dim,
                        w->wo[l].q, dim, dim);
-    wt->wo0_n = dim / 2;
-    wt->wo1_n = dim - wt->wo0_n;
-    wt->wo0_T = wt->wo0_n > 0 ? (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * wt->wo0_n) : NULL;
-    wt->wo1_T = wt->wo1_n > 0 ? (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * wt->wo1_n) : NULL;
-    for (int l = 0; l < n_layers; l++) {
-        if (wt->wo0_n > 0) {
-            make_b_pack_i8_slice(
-                wt->wo0_T + l * (size_t)(dim + 1) * wt->wo0_n,
-                w->wo[l].q,
-                dim,
-                dim,
-                0,
-                wt->wo0_n);
-        }
-        if (wt->wo1_n > 0) {
-            make_b_pack_i8_slice(
-                wt->wo1_T + l * (size_t)(dim + 1) * wt->wo1_n,
-                w->wo[l].q,
-                dim,
-                dim,
-                wt->wo0_n,
-                wt->wo1_n);
-        }
-    }
 
     /* w1: W[hidden_dim × dim], B_pack [(dim+1) × hidden_dim] per layer */
     wt->w1_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
@@ -696,30 +649,6 @@ void alloc_and_transpose_weights_i8(
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->w2_T + l * (size_t)(hidden_dim + 1) * dim,
                        w->w2[l].q, dim, hidden_dim);
-    wt->w20_n = dim / 2;
-    wt->w21_n = dim - wt->w20_n;
-    wt->w20_T = wt->w20_n > 0 ? (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * wt->w20_n) : NULL;
-    wt->w21_T = wt->w21_n > 0 ? (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * wt->w21_n) : NULL;
-    for (int l = 0; l < n_layers; l++) {
-        if (wt->w20_n > 0) {
-            make_b_pack_i8_slice(
-                wt->w20_T + l * (size_t)(hidden_dim + 1) * wt->w20_n,
-                w->w2[l].q,
-                dim,
-                hidden_dim,
-                0,
-                wt->w20_n);
-        }
-        if (wt->w21_n > 0) {
-            make_b_pack_i8_slice(
-                wt->w21_T + l * (size_t)(hidden_dim + 1) * wt->w21_n,
-                w->w2[l].q,
-                dim,
-                hidden_dim,
-                wt->w20_n,
-                wt->w21_n);
-        }
-    }
 
     /* w3: same layout as w1 */
     wt->w3_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
@@ -749,12 +678,8 @@ void free_transposed_weights_i8(TransformerWeightsT* wt) {
     free(wt->wk_T);
     free(wt->wv_T);
     free(wt->wo_T);
-    free(wt->wo0_T);
-    free(wt->wo1_T);
     free(wt->w1_T);
     free(wt->w2_T);
-    free(wt->w20_T);
-    free(wt->w21_T);
     free(wt->w3_T);
     free(wt->wcls0_T);
     free(wt->wcls1_T);
@@ -794,6 +719,7 @@ static volatile int _mc_pos_val      = 0;
 static volatile int _mc_fwd_req      = 0;
 static volatile int _mc_fwd_done     = 0;
 static volatile int _mc_worker_ready = 0;
+static volatile int _mc_swiglu_h1_done = 0;
 
 static float* forward_mc(Transformer* transformer, int token, int pos, int hartid);
 
@@ -854,6 +780,7 @@ static void mc_start_worker(Transformer *transformer) {
     _mc_fwd_req = 0;
     _mc_fwd_done = 0;
     _mc_worker_ready = 0;
+    _mc_swiglu_h1_done = 0;
     __sync_synchronize();
     hthread_issue(1, mc_forward_worker, transformer);
     while (_mc_worker_ready == 0) {}
@@ -867,18 +794,16 @@ static void mc_start_worker(Transformer *transformer) {
  * simultaneously rather than each computing half-rows of a single matrix.
  *
  * Assignment per layer:
- *   QKV  : hart 0 → wq  |  hart 1 → wk + wv
+ *   QKV  : hart 0 → wq + wk  |  hart 1 → wv
  *   Attn : both — each handles n_heads/2 heads
- *   wo   : both split output dim (wo0/wo1 split B_pack)
- *   FFN  : hart 0 → w1       |  hart 1 → w3
- *   w2   : both split output dim (w20/w21 split B_pack)
+ *   FFN  : hart 0 → w1       |  hart 1 → w3  (key parallelism win)
  *   wcls : both harts split vocab work (TRANSPOSED_WEIGHTS split packs,
  *          or scalar row split)
  *
- * Mostly-sequential work (rmsnorm, RoPE, kv-store, residual add) stays on
- * hart 0. SwiGLU is split by hidden range across both harts.
+ * Mostly-sequential work (rmsnorm, RoPE, kv-store, residual, w2) stays on
+ * hart 0; hart 1 additionally handles half of SwiGLU between FFN matmuls.
  *
- * When TRANSPOSED_WEIGHTS is also defined, w1/w2/w3/wq/wk/wv/wo all use the
+ * When TRANSPOSED_WEIGHTS is also defined, w1/w3/wq/wk/wv/wo all use the
  * vectorized matmul_t kernel on their full matrices.
  *
  * Returns logits (hart 0) or NULL (hart 1). */
@@ -917,21 +842,21 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* QKV projections — rebalanced:
-         *   hart 0 → wq (s->q)
-         *   hart 1 → wk (s->k) + wv (s->v) */
+        /* QKV projections — mutual exclusion:
+         *   hart 0 → wq (s->q) + wk (s->k)
+         *   hart 1 → wv (s->v)                              */
         if (hartid == 0) {
 #ifdef TRANSPOSED_WEIGHTS
             matmul_t(s->q, &s->xq, wt->wq_T + l*(size_t)(dim+1)*dim,    w->wq[l].s, dim, dim);
+            matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
 #else
             matmul(s->q, &s->xq, w->wq + l, dim, dim);
+            matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
 #endif
         } else {
 #ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
             matmul_t(s->v, &s->xq, wt->wv_T + l*(size_t)(dim+1)*kv_dim, w->wv[l].s, dim, kv_dim);
 #else
-            matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
             matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
 #endif
         }
@@ -984,46 +909,14 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* Quantize attention output (hart 0), then split wo matmul across harts. */
+        /* wo matmul + residual + FFN rmsnorm + quantize (hart 0) */
         if (hartid == 0) {
             quantize(&s->xq, s->xb, dim);
-        }
-        barrier2(hartid);
-
 #ifdef TRANSPOSED_WEIGHTS
-        if (hartid == 0) {
-            if (wt->wo0_n > 0) {
-                matmul_t(
-                    s->xb2,
-                    &s->xq,
-                    wt->wo0_T + l*(size_t)(dim+1)*wt->wo0_n,
-                    w->wo[l].s,
-                    dim,
-                    wt->wo0_n);
-            }
-        } else {
-            if (wt->wo1_n > 0) {
-                matmul_t(
-                    s->xb2 + wt->wo0_n,
-                    &s->xq,
-                    wt->wo1_T + l*(size_t)(dim+1)*wt->wo1_n,
-                    w->wo[l].s,
-                    dim,
-                    wt->wo1_n);
-            }
-        }
+            matmul_t(s->xb2, &s->xq, wt->wo_T + l*(size_t)(dim+1)*dim, w->wo[l].s, dim, dim);
 #else
-        {
-            int d_half  = dim / 2;
-            int d_start = hartid * d_half;
-            int d_end   = (hartid == 0) ? d_half : dim;
-            matmul_rows(s->xb2, &s->xq, w->wo + l, dim, dim, d_start, d_end);
-        }
+            matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
 #endif
-        barrier2(hartid);
-
-        /* residual + FFN rmsnorm + quantize (hart 0) */
-        if (hartid == 0) {
             for (int i = 0; i < dim; i++) x[i] += s->xb2[i];
             rmsnorm(s->xb, x, w->rms_ffn_weight + l * dim, dim);
             quantize(&s->xq, s->xb, dim);
@@ -1048,7 +941,8 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* SwiGLU split over hidden range. */
+        /* SwiGLU split: both harts process disjoint hidden ranges, then hart 0
+         * runs quantize + w2 + residual to avoid extra barriers on matmul. */
         if (hartid == 0) {
             int h_half = hidden_dim / 2;
             for (int i = 0; i < h_half; i++) {
@@ -1057,6 +951,16 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 val *= s->hb2[i];
                 s->hb[i] = val;
             }
+            while (_mc_swiglu_h1_done == 0) {}
+            __sync_synchronize();
+            _mc_swiglu_h1_done = 0;
+            quantize(&s->hq, s->hb, hidden_dim);
+#ifdef TRANSPOSED_WEIGHTS
+            matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
+#else
+            matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
+#endif
+            for (int i = 0; i < dim; i++) x[i] += s->xb[i];
         } else {
             int h_half = hidden_dim / 2;
             for (int i = h_half; i < hidden_dim; i++) {
@@ -1065,49 +969,10 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 val *= s->hb2[i];
                 s->hb[i] = val;
             }
+            __sync_synchronize();
+            _mc_swiglu_h1_done = 1;
         }
         barrier2(hartid);
-
-        if (hartid == 0) {
-            quantize(&s->hq, s->hb, hidden_dim);
-        }
-        barrier2(hartid);
-
-#ifdef TRANSPOSED_WEIGHTS
-        if (hartid == 0) {
-            if (wt->w20_n > 0) {
-                matmul_t(
-                    s->xb,
-                    &s->hq,
-                    wt->w20_T + l*(size_t)(hidden_dim+1)*wt->w20_n,
-                    w->w2[l].s,
-                    hidden_dim,
-                    wt->w20_n);
-            }
-        } else {
-            if (wt->w21_n > 0) {
-                matmul_t(
-                    s->xb + wt->w20_n,
-                    &s->hq,
-                    wt->w21_T + l*(size_t)(hidden_dim+1)*wt->w21_n,
-                    w->w2[l].s,
-                    hidden_dim,
-                    wt->w21_n);
-            }
-        }
-#else
-        {
-            int d_half  = dim / 2;
-            int d_start = hartid * d_half;
-            int d_end   = (hartid == 0) ? d_half : dim;
-            matmul_rows(s->xb, &s->hq, w->w2 + l, hidden_dim, dim, d_start, d_end);
-        }
-#endif
-        barrier2(hartid);
-
-        if (hartid == 0) {
-            for (int i = 0; i < dim; i++) x[i] += s->xb[i];
-        }
     }
 
     /* final rmsnorm + quantize (hart 0) */
@@ -1171,6 +1036,7 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
     int pos   = 0;
     _bar_h1_arrived = 0;
     _bar_sense = 0;
+    _mc_swiglu_h1_done = 0;
     while (pos < steps) {
         _mc_token_val = token;
         _mc_pos_val = pos;

@@ -740,10 +740,11 @@ static void mc_start_worker(Transformer *transformer) {
  *   QKV  : hart 0 → wq + wk  |  hart 1 → wv
  *   Attn : both — each handles n_heads/2 heads
  *   FFN  : hart 0 → w1       |  hart 1 → w3  (key parallelism win)
- *   wcls : hart 0 vectorized (TRANSPOSED_WEIGHTS) or both split rows (scalar)
+ *   wcls : both harts split vocab work (TRANSPOSED_WEIGHTS split packs,
+ *          or scalar row split)
  *
- * All sequential work (rmsnorm, RoPE, kv-store, residual, SwiGLU, w2, wcls
- * when transposed) is done by hart 0; hart 1 spins at barriers.
+ * All sequential work (rmsnorm, RoPE, kv-store, residual, SwiGLU, w2) is done
+ * by hart 0; hart 1 spins at barriers outside its assigned kernels.
  *
  * When TRANSPOSED_WEIGHTS is also defined, w1/w3/wq/wk/wv/wo all use the
  * vectorized matmul_t kernel on their full matrices.
@@ -833,8 +834,9 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             for (int h = h_start; h < h_end; h++) {
                 float* q   = s->q   + h * head_size;
                 float* att = s->att + h * p->seq_len;
+                int kv_head_off = (h / kv_mul) * head_size;
                 for (int t = 0; t <= pos; t++) {
-                    float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                    float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
                     float score = 0.0f;
                     for (int i = 0; i < head_size; i++) score += q[i] * k[i];
                     att[t] = score * inv_sqrt_head_size;
@@ -847,7 +849,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 float* xb = s->xb + h * head_size;
                 memset(xb, 0, head_size * sizeof(float));
                 for (int t = 0; t <= pos; t++) {
-                    float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                    float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
                     float a  = att[t];
                     for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
                 }

@@ -161,6 +161,31 @@ static inline void qgemm_k172_m4(
     }
 }
 
+/* Exact-shape entrypoints used by borai-test (dim=64, hidden=172, vocab=512). */
+static inline void qgemm_k64_n32(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
+    qgemm_k64_m4(a, w_t_pack, c, 32, scale);
+}
+
+static inline void qgemm_k64_n64(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
+    qgemm_k64_m8(a, w_t_pack, c, 64, scale);
+}
+
+static inline void qgemm_k64_n172(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
+    qgemm_k64_m8(a, w_t_pack, c, 172, scale);
+}
+
+static inline void qgemm_k64_n256(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
+    qgemm_k64_m8(a, w_t_pack, c, 256, scale);
+}
+
+static inline void qgemm_k64_n512(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
+    qgemm_k64_m8(a, w_t_pack, c, 512, scale);
+}
+
+static inline void qgemm_k172_n64(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
+    qgemm_k172_m8(a, w_t_pack, c, 64, scale);
+}
+
 #endif /* __riscv_vector */
 
 int borai_tiny_matmul_t_i8_fout(
@@ -173,6 +198,25 @@ int borai_tiny_matmul_t_i8_fout(
 {
 #if defined(__riscv_vector)
     if (n_in == 64) {
+        switch (n_out) {
+            case 32:
+                qgemm_k64_n32(xq, w_t_pack, xout, scale);
+                return 1;
+            case 64:
+                qgemm_k64_n64(xq, w_t_pack, xout, scale);
+                return 1;
+            case 172:
+                qgemm_k64_n172(xq, w_t_pack, xout, scale);
+                return 1;
+            case 256:
+                qgemm_k64_n256(xq, w_t_pack, xout, scale);
+                return 1;
+            case 512:
+                qgemm_k64_n512(xq, w_t_pack, xout, scale);
+                return 1;
+            default:
+                break;
+        }
         if (n_out >= 64) {
             qgemm_k64_m8(xq, w_t_pack, xout, n_out, scale);
         } else {
@@ -181,6 +225,10 @@ int borai_tiny_matmul_t_i8_fout(
         return 1;
     }
     if (n_in == 172) {
+        if (n_out == 64) {
+            qgemm_k172_n64(xq, w_t_pack, xout, scale);
+            return 1;
+        }
         if (n_out >= 64) {
             qgemm_k172_m8(xq, w_t_pack, xout, n_out, scale);
         } else {

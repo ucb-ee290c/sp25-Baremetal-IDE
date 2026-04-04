@@ -36,6 +36,9 @@
 #if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
 #include "layers.h"
 #endif
+#if defined(__riscv_vector)
+#include <riscv_vector.h>
+#endif
 #ifdef PREFILL_MULTICORE
 #include <thread-lib/hthread.h>
 #endif
@@ -513,6 +516,42 @@ static inline void softmax_attn(float *att, int len) {
 #endif
 }
 
+static inline float dot_qk_head(const float *q, const float *k, int n) {
+#if defined(__riscv_vector)
+    int i = 0;
+    vfloat32m1_t acc = __riscv_vfmv_v_f_f32m1(0.0f, 1);
+    while (i < n) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vfloat32m4_t vq = __riscv_vle32_v_f32m4(q + i, vl);
+        vfloat32m4_t vk = __riscv_vle32_v_f32m4(k + i, vl);
+        vfloat32m4_t vm = __riscv_vfmul_vv_f32m4(vq, vk, vl);
+        acc = __riscv_vfredusum_vs_f32m4_f32m1(vm, acc, vl);
+        i += (int)vl;
+    }
+    return __riscv_vfmv_f_s_f32m1_f32(acc);
+#else
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) sum += q[i] * k[i];
+    return sum;
+#endif
+}
+
+static inline void axpy_v_head(float *dst, const float *v, float a, int n) {
+#if defined(__riscv_vector)
+    int i = 0;
+    while (i < n) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vfloat32m4_t vd = __riscv_vle32_v_f32m4(dst + i, vl);
+        vfloat32m4_t vv = __riscv_vle32_v_f32m4(v + i, vl);
+        vd = __riscv_vfmacc_vf_f32m4(vd, a, vv, vl);
+        __riscv_vse32_v_f32m4(dst + i, vd, vl);
+        i += (int)vl;
+    }
+#else
+    for (int i = 0; i < n; i++) dst[i] += a * v[i];
+#endif
+}
+
 void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
@@ -855,8 +894,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 int kv_head_off = (h / kv_mul) * head_size;
                 for (int t = 0; t <= pos; t++) {
                     float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
-                    float score = 0.0f;
-                    for (int i = 0; i < head_size; i++) score += q[i] * k[i];
+                    float score = dot_qk_head(q, k, head_size);
                     att[t] = score * inv_sqrt_head_size;
                 }
                 softmax_attn(att, pos + 1);
@@ -865,7 +903,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
                 for (int t = 0; t <= pos; t++) {
                     float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
                     float a  = att[t];
-                    for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
+                    axpy_v_head(xb, v, a, head_size);
                 }
             }
         }
@@ -1125,15 +1163,13 @@ float* forward(Transformer* transformer, int token, int pos) {
             float* q = s->q + h * head_size;
             // attention scores for this head
             float* att = s->att + h * p->seq_len;
+            int kv_head_off = (h / kv_mul) * head_size;
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
                 // calculate the attention score as the dot product of q and k
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
-                }
+                float score = dot_qk_head(q, k, head_size);
                 score *= inv_sqrt_head_size;
                 // save the score to the attention buffer
                 att[t] = score;
@@ -1147,13 +1183,11 @@ float* forward(Transformer* transformer, int token, int pos) {
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
-                for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
-                }
+                axpy_v_head(xb, v, a, head_size);
             }
         }
 

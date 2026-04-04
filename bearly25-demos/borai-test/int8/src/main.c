@@ -259,16 +259,24 @@ void quantize(QuantizedTensor *qx, float* x, int n) {
 
     // calculate and write the scaling factor
     float scale = wmax / Q_MAX;
-    float inv_scale = 1.0f / scale;
     qx->s = scale;
 
     // calculate and write the quantized values
+#if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
+    quantization_params_t qp = {
+        .scale = scale,
+        .zero_point = 0
+    };
+    quant_f32((size_t)n, x, qx->q, qp);
+#else
+    float inv_scale = 1.0f / scale;
     for (int i = 0; i < n; i++) {
         int q = (int)roundf(x[i] * inv_scale);
         if (q > 127) q = 127;
         if (q < -127) q = -127;
         qx->q[i] = (int8_t)q;
     }
+#endif
 }
 
 /* initialize `n` x quantized tensor (with `size_each` elements), starting from memory pointed at *ptr */

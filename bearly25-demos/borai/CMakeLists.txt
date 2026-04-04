@@ -19,11 +19,12 @@ target_include_directories(boraiq PUBLIC int8/include)
 target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 if(BORAIQ_TRANSPOSED_WEIGHTS)
+  if(NOT BUILD_VECNN)
+    message(FATAL_ERROR "BORAIQ_TRANSPOSED_WEIGHTS requires BUILD_VECNN=ON")
+  endif()
   target_compile_definitions(boraiq PRIVATE TRANSPOSED_WEIGHTS)
   target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
-  if(BUILD_VECNN)
-    target_link_libraries(boraiq PRIVATE vecnn)
-  endif()
+  target_link_libraries(boraiq PRIVATE vecnn)
 endif()
 
 option(BORAIQ_PREFILL_MULTICORE

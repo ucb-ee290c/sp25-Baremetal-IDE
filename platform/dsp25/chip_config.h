@@ -23,7 +23,7 @@ extern "C" {
 #include "hal_rcc.h"
 #include "hal_i2s.h"
 #include "hal_dma.h"
-#include "hal_wavelet.h"
+// #include "hal_wavelet.h"
 #include "hal_conv.h"
 
 

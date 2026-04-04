@@ -1147,11 +1147,10 @@ float* forward(Transformer* transformer, int token, int pos) {
             float* q = s->q + h * head_size;
             // attention scores for this head
             float* att = s->att + h * p->seq_len;
-            int kv_head_off = (h / kv_mul) * head_size;
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
+                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
@@ -1174,7 +1173,7 @@ float* forward(Transformer* transformer, int token, int pos) {
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
+                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb

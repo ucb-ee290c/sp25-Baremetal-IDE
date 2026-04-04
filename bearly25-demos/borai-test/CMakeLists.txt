@@ -91,11 +91,17 @@ endif()
 option(BORAI_TESTQ_PREFILL_MULTICORE
   "Enable dual-hart multicore prefill in boraiq-test (splits attention heads and FFN rows)" ON)
 
+option(BORAI_TESTQ_MC_REBALANCE_QKV
+  "Rebalance multicore QKV stage: hart0=wq, hart1=wk+wv (for dim=64, kv_dim=32)" ON)
+
 if(BORAI_TESTQ_PREFILL_MULTICORE)
   if (NOT TARGET threadlib)
     message(STATUS "boraiq-test: THREAD_LIB is OFF, disabling PREFILL_MULTICORE (single-core fallback).")
   else()
     target_compile_definitions(boraiq-test PRIVATE PREFILL_MULTICORE)
+    if(BORAI_TESTQ_MC_REBALANCE_QKV)
+      target_compile_definitions(boraiq-test PRIVATE BORAIQ_MC_REBALANCE_QKV)
+    endif()
     target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR})
     target_include_directories(boraiq-test BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/thread-lib)
     target_link_libraries(boraiq-test PRIVATE threadlib)

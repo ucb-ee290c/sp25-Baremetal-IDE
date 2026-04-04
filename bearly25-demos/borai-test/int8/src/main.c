@@ -36,7 +36,7 @@
 #if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
 #include "layers.h"
 #endif
-#if defined(BORAIQ_TINY_SHAPE_GEMM) || defined(BORAIQ_FUSED_W2_QMATMUL)
+#ifdef BORAIQ_TINY_SHAPE_GEMM
 #include "tiny_gemm_i8_rvv.h"
 #endif
 #include "tiny_vec_ops_rvv.h"
@@ -989,24 +989,11 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             while (_mc_swiglu_h1_done == 0) {}
             __sync_synchronize();
             _mc_swiglu_h1_done = 0;
-#if defined(BORAIQ_FUSED_W2_QMATMUL) && defined(TRANSPOSED_WEIGHTS)
-            if (!borai_tiny_fused_qmatmul_t_i8_fout(
-                    s->hb,
-                    (const int8_t*)(wt->w2_T + l*(size_t)(hidden_dim+1)*dim),
-                    s->xb,
-                    hidden_dim,
-                    dim,
-                    w->w2[l].s)) {
-                quantize(&s->hq, s->hb, hidden_dim);
-                matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
-            }
-#else
             quantize(&s->hq, s->hb, hidden_dim);
 #ifdef TRANSPOSED_WEIGHTS
             matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
 #else
             matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
-#endif
 #endif
             for (int i = 0; i < dim; i++) x[i] += s->xb[i];
         } else {
@@ -1274,24 +1261,11 @@ float* forward(Transformer* transformer, int token, int pos) {
         borai_swiglu_apply(s->hb, s->hb2, hidden_dim);
 
         // final matmul to get the output of the ffn
-#if defined(BORAIQ_FUSED_W2_QMATMUL) && defined(TRANSPOSED_WEIGHTS)
-        if (!borai_tiny_fused_qmatmul_t_i8_fout(
-                s->hb,
-                (const int8_t*)(wt->w2_T + l*(size_t)(hidden_dim+1)*dim),
-                s->xb,
-                hidden_dim,
-                dim,
-                w->w2[l].s)) {
-            quantize(&s->hq, s->hb, hidden_dim);
-            matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
-        }
-#else
         quantize(&s->hq, s->hb, hidden_dim);
 #ifdef TRANSPOSED_WEIGHTS
         matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
 #else
         matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
-#endif
 #endif
 
         // residual connection
@@ -2123,11 +2097,6 @@ void app_main() {
   printf("Build flags: BORAIQ_FAST_SWIGLU_EXP ON\r\n");
 #else
   printf("Build flags: BORAIQ_FAST_SWIGLU_EXP OFF\r\n");
-#endif
-#if defined(BORAIQ_FUSED_W2_QMATMUL)
-  printf("Build flags: BORAIQ_FUSED_W2_QMATMUL ON\r\n");
-#else
-  printf("Build flags: BORAIQ_FUSED_W2_QMATMUL OFF\r\n");
 #endif
 
   // Parameters //

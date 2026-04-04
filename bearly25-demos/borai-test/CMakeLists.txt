@@ -71,6 +71,13 @@ if(BORAI_TESTQ_TINY_ATTN_H8)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_TINY_ATTN_H8)
 endif()
 
+option(BORAI_TESTQ_FAST_SWIGLU_EXP
+  "Enable boraiq-test fast SwiGLU sigmoid approximation (replaces expf in SiLU)" ON)
+
+if(BORAI_TESTQ_FAST_SWIGLU_EXP)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_FAST_SWIGLU_EXP)
+endif()
+
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
   if(BUILD_VECNN)
     target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)

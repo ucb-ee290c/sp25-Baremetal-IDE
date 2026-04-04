@@ -131,3 +131,21 @@ int borai_tiny_axpy_head_f32(float* dst, const float* v, float a, int n) {
     dst[7] += a * v[7];
     return 1;
 }
+
+void borai_swiglu_apply_range(float* hb, const float* hb2, int start, int end) {
+    for (int i = start; i < end; i++) {
+        float x = hb[i];
+#ifdef BORAIQ_FAST_SWIGLU_EXP
+        /* Fast sigmoid approximation:
+         * sigma(x) ~= 0.5 * (x / (1 + |x|)) + 0.5 */
+        float sig = 0.5f * (x / (1.0f + fabsf(x))) + 0.5f;
+#else
+        float sig = 1.0f / (1.0f + expf(-x));
+#endif
+        hb[i] = (x * sig) * hb2[i];
+    }
+}
+
+void borai_swiglu_apply(float* hb, const float* hb2, int n) {
+    borai_swiglu_apply_range(hb, hb2, 0, n);
+}

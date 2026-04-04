@@ -39,9 +39,7 @@
 #ifdef BORAIQ_TINY_SHAPE_GEMM
 #include "tiny_gemm_i8_rvv.h"
 #endif
-#if defined(BORAIQ_TINY_VEC_OPS) || defined(BORAIQ_TINY_ATTN_H8)
 #include "tiny_vec_ops_rvv.h"
-#endif
 #if defined(__riscv_vector)
 #include <riscv_vector.h>
 #endif
@@ -987,12 +985,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
          * runs quantize + w2 + residual to avoid extra barriers on matmul. */
         if (hartid == 0) {
             int h_half = hidden_dim / 2;
-            for (int i = 0; i < h_half; i++) {
-                float val = s->hb[i];
-                val *= 1.0f / (1.0f + expf(-val));
-                val *= s->hb2[i];
-                s->hb[i] = val;
-            }
+            borai_swiglu_apply_range(s->hb, s->hb2, 0, h_half);
             while (_mc_swiglu_h1_done == 0) {}
             __sync_synchronize();
             _mc_swiglu_h1_done = 0;
@@ -1005,12 +998,7 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             for (int i = 0; i < dim; i++) x[i] += s->xb[i];
         } else {
             int h_half = hidden_dim / 2;
-            for (int i = h_half; i < hidden_dim; i++) {
-                float val = s->hb[i];
-                val *= 1.0f / (1.0f + expf(-val));
-                val *= s->hb2[i];
-                s->hb[i] = val;
-            }
+            borai_swiglu_apply_range(s->hb, s->hb2, h_half, hidden_dim);
             __sync_synchronize();
             _mc_swiglu_h1_done = 1;
         }
@@ -1270,14 +1258,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 #endif
 
         // SwiGLU non-linearity
-        for (int i = 0; i < hidden_dim; i++) {
-            float val = s->hb[i];
-            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            val *= (1.0f / (1.0f + expf(-val)));
-            // elementwise multiply with w3(x)
-            val *= s->hb2[i];
-            s->hb[i] = val;
-        }
+        borai_swiglu_apply(s->hb, s->hb2, hidden_dim);
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
@@ -2111,6 +2092,11 @@ void app_main() {
   printf("Build flags: BORAIQ_TINY_ATTN_H8 ON\r\n");
 #else
   printf("Build flags: BORAIQ_TINY_ATTN_H8 OFF\r\n");
+#endif
+#if defined(BORAIQ_FAST_SWIGLU_EXP)
+  printf("Build flags: BORAIQ_FAST_SWIGLU_EXP ON\r\n");
+#else
+  printf("Build flags: BORAIQ_FAST_SWIGLU_EXP OFF\r\n");
 #endif
 
   // Parameters //

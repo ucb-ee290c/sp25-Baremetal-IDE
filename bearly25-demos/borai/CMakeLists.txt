@@ -56,10 +56,13 @@ target_link_libraries(borai PRIVATE
 ## Include Math.h library
 target_link_libraries(borai PRIVATE m)
 
-target_link_libraries(boraiq PRIVATE 
+target_link_libraries(boraiq PRIVATE
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
 ## Include Math.h library
 target_link_libraries(boraiq PRIVATE m)
+
+## Increase heap to 2MB for transposed weights + RunState buffers
+target_link_options(boraiq PRIVATE -Wl,--defsym,__heap_size=2097152)
 
 target_include_directories(borai PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)

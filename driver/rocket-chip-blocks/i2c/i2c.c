@@ -9,6 +9,15 @@
  */
 
 #include "i2c.h"
+#include "clint.h"
+
+#ifndef CLINT_BASE
+#define CLINT_BASE 0x02000000U
+#endif
+
+static inline uint64_t i2c_get_time(void) {
+  return clint_get_time((CLINT_Type *)(uintptr_t)CLINT_BASE);
+}
 
 void i2c_init(I2C_Type *I2Cx, I2C_InitType *I2C_init) {
   // need to disable I2C before make any change to prescaler
@@ -22,19 +31,19 @@ void i2c_init(I2C_Type *I2Cx, I2C_InitType *I2C_init) {
   i2c_enable(I2Cx);
 }
 
-Status i2c_wait_for_flag(I2C_Type *I2Cx, I2C_Flag flag, State state, uint32_t timestart, uint32_t timeout) {
+Status i2c_wait_for_flag(I2C_Type *I2Cx, I2C_Flag flag, State state, uint64_t timestart, uint64_t timeout) {
   while (i2c_get_flag(I2Cx, flag) != state) {
     if (timeout == 0UL) {
       continue;
     }
-    if (CLINT_getTime() > (timestart + timeout)) {
+    if (i2c_get_time() > (timestart + timeout)) {
       return TIMEOUT;
     }
   }
   return OK;
 }
 
-Status i2c_wait_for_transaction(I2C_Type *I2Cx, uint32_t timestart, uint32_t timeout) {
+Status i2c_wait_for_transaction(I2C_Type *I2Cx, uint64_t timestart, uint64_t timeout) {
   if (i2c_wait_for_flag(I2Cx, I2C_FLAG_TIP, RESET, timestart, timeout) != OK) {
     // generate STOP to release the bus
     I2Cx->STAT_CMD = I2C_STAT_CMD_BUSY_STO_MSK;
@@ -47,10 +56,12 @@ Status i2c_wait_for_transaction(I2C_Type *I2Cx, uint32_t timestart, uint32_t tim
     I2Cx->STAT_CMD = I2C_STAT_CMD_BUSY_STO_MSK;
     return ERROR;
   }
+
+  return OK;
 }
 
 Status i2c_master_receive(I2C_Type *I2Cx, uint16_t device_addr, uint8_t *buffer, uint16_t size, uint64_t timeout) {
-  uint64_t timestart = clint_get_time();
+  uint64_t timestart = i2c_get_time();
   Status status;
 
   if (i2c_wait_for_flag(I2Cx, I2C_FLAG_BUSY, RESET, timestart, timeout) != OK) {
@@ -100,7 +111,7 @@ Status i2c_master_receive(I2C_Type *I2Cx, uint16_t device_addr, uint8_t *buffer,
 }
 
 Status i2c_master_transmit(I2C_Type *I2Cx, uint16_t device_addr, uint8_t *buffer, uint16_t size, uint64_t timeout) {
-  uint64_t timestart = clint_get_time();
+  uint64_t timestart = i2c_get_time();
   Status status;
 
   if (i2c_wait_for_flag(I2Cx, I2C_FLAG_BUSY, RESET, timestart, timeout) != OK) {
@@ -146,7 +157,7 @@ Status i2c_master_transmit(I2C_Type *I2Cx, uint16_t device_addr, uint8_t *buffer
 }
 
 Status i2c_read_memory(I2C_Type *I2Cx, uint16_t device_addr, uint8_t mem_addr, uint8_t *buffer, uint16_t size, uint64_t timeout) {
-  uint64_t timestart = clint_get_time();
+  uint64_t timestart = i2c_get_time();
   Status status;
 
   if (i2c_wait_for_flag(I2Cx, I2C_FLAG_BUSY, RESET, timestart, timeout) != OK) {
@@ -215,7 +226,7 @@ Status i2c_read_memory(I2C_Type *I2Cx, uint16_t device_addr, uint8_t mem_addr, u
 }
 
 Status i2c_write_memory(I2C_Type *I2Cx, uint16_t device_addr, uint8_t mem_addr, uint8_t *buffer, uint16_t size, uint32_t timeout) {
-  uint64_t timestart = clint_get_time();
+  uint64_t timestart = i2c_get_time();
   Status status;
 
   if (i2c_wait_for_flag(I2Cx, I2C_FLAG_BUSY, RESET, timestart, timeout) != OK) {

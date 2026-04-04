@@ -1,0 +1,341 @@
+#include "dsp/transform_functions_f16.h"
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+
+/**
+  @brief         Generic initialization of the MFCC F16 instance structure
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     fftLen  fft length
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+
+  @par
+                This function should be used only if you don't know the FFT sizes that
+                you'll need at build time. The use of this function will prevent the
+                linker from removing the FFT tables that are not needed and the library
+                code size will be bigger than needed.
+
+  @par
+                If you use NMSIS-DSP as a static library, and if you know the MFCC sizes
+                that you need at build time, then it is better to use the initialization
+                functions defined for each MFCC size.
+
+ */
+
+RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_init_f16(
+  riscv_mfcc_instance_f16 * S,
+  uint32_t fftLen,
+  uint32_t nbMelFilters,
+  uint32_t nbDctOutputs,
+  const float16_t *dctCoefs,
+  const uint32_t *filterPos,
+  const uint32_t *filterLengths,
+  const float16_t *filterCoefs,
+  const float16_t *windowCoefs
+  )
+{
+ riscv_status status;
+
+ S->fftLen=fftLen;
+ S->nbMelFilters=nbMelFilters;
+ S->nbDctOutputs=nbDctOutputs;
+ S->dctCoefs=dctCoefs;
+ S->filterPos=filterPos;
+ S->filterLengths=filterLengths;
+ S->filterCoefs=filterCoefs;
+ S->windowCoefs=windowCoefs;
+
+ #if defined(RISCV_MFCC_CFFT_BASED)
+ status=riscv_cfft_init_f16(&(S->cfft),fftLen);
+ #else
+ status=riscv_rfft_fast_init_f16(&(S->rfft),fftLen);
+ #endif
+
+ return(status);
+}
+
+#define MFCC_INIT_F16(LEN)                       \
+RISCV_DSP_ATTRIBUTE riscv_status riscv_mfcc_init_##LEN##_f16(            \
+  riscv_mfcc_instance_f16 * S,                     \
+  uint32_t nbMelFilters,                         \
+  uint32_t nbDctOutputs,                         \
+  const float16_t *dctCoefs,                     \
+  const uint32_t *filterPos,                     \
+  const uint32_t *filterLengths,                 \
+  const float16_t *filterCoefs,                  \
+  const float16_t *windowCoefs                   \
+  )                                              \
+{                                                \
+ riscv_status status;                              \
+                                                 \
+ S->fftLen=LEN;                                  \
+ S->nbMelFilters=nbMelFilters;                   \
+ S->nbDctOutputs=nbDctOutputs;                   \
+ S->dctCoefs=dctCoefs;                           \
+ S->filterPos=filterPos;                         \
+ S->filterLengths=filterLengths;                 \
+ S->filterCoefs=filterCoefs;                     \
+ S->windowCoefs=windowCoefs;                     \
+                                                 \
+ status=riscv_rfft_fast_init_##LEN##_f16(&(S->rfft));\
+                                                 \
+ return(status);                                 \
+}
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 32 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(32)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 64 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(64)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 128 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(128)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 256 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(256)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 512 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(512)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 1024 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(1024)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 2048 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(2048)
+
+/**
+  @brief         Initialization of the MFCC F16 instance structure for 4096 samples MFCC
+  @param[out]    S       points to the mfcc instance structure
+  @param[in]     nbMelFilters  number of Mel filters
+  @param[in]     nbDctOutputs  number of Dct outputs
+  @param[in]     dctCoefs  points to an array of DCT coefficients
+  @param[in]     filterPos  points of the array of filter positions
+  @param[in]     filterLengths  points to the array of filter lengths
+  @param[in]     filterCoefs  points to the array of filter coefficients
+  @param[in]     windowCoefs  points to the array of window coefficients
+
+  @return        error status
+
+  @par           Description
+                   The matrix of Mel filter coefficients is sparse.
+                   Most of the coefficients are zero.
+                   To avoid multiplying the spectrogram by those zeros, the
+                   filter is applied only to a given position in the spectrogram
+                   and on a given number of FFT bins (the filter length).
+                   It is the reason for the arrays filterPos and filterLengths.
+
+                   window coefficients can describe (for instance) a Hamming window.
+                   The array has the same size as the FFT length.
+
+                   The folder Scripts is containing a Python script that can be used
+                   to generate the filter, dct and window arrays.
+*/
+MFCC_INIT_F16(4096)
+
+#endif /* defined(RISCV_FLOAT16_SUPPORTED) */
+/**
+  @} end of MFCCF16 group
+ */

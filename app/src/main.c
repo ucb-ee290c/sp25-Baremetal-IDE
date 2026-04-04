@@ -16,11 +16,12 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "chip_config.h"
+#include "simple_setup.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 int count = 0;
-uint64_t target_frequency = 500000000l;
+uint64_t target_frequency = 150000000l;
 
 /* USER CODE END Includes */
 

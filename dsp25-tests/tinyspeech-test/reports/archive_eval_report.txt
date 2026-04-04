@@ -1,0 +1,33 @@
+TinySpeech archive evaluation
+archive     : /Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/datasets/cache/speech_commands_v0.02.tar.gz
+weights     : /Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/include/weights.h
+split       : test
+max_per_lbl : -1
+samples/label:
+    yes: 419
+     no: 405
+     on: 396
+    off: 402
+   stop: 411
+     go: 402
+
+correct/total: 2336/2435
+accuracy     : 95.9343%
+
+per-class accuracy:
+    yes: 413/419 (98.5680%)
+     no: 385/405 (95.0617%)
+     on: 378/396 (95.4545%)
+    off: 379/402 (94.2786%)
+   stop: 401/411 (97.5669%)
+     go: 380/402 (94.5274%)
+
+confusion matrix (rows=true, cols=pred):
+                yes      no      on     off    stop      go
+       yes     413       2       0       1       1       2
+        no       3     385       1       1       2      13
+        on       0       2     378      11       4       1
+       off       4       2       9     379       3       5
+      stop       0       1       5       0     401       4
+        go       1      14       2       1       4     380
+

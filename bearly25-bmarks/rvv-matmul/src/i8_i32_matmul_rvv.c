@@ -4,8 +4,8 @@
 #include <string.h>
 #include <assert.h>
 
-#include <riscv_vector.h> 
-// Example: 7x(m4) int8->int32 microkernel with no float scaling.
+#include <riscv_vector.h>
+// 7x(m4) int8->int32 microkernel with widening multiply.
 // A is [mr × kc], B is fused into w (int8 weights) laid out per column-block, C is [mr × nc] in int32.
 void gemm_i8_i32_7xm4_packed(
     size_t mr,        // number of rows to process (1..7)
@@ -59,7 +59,7 @@ void gemm_i8_i32_7xm4_packed(
     // Initialize them to zero. You could also load a "bias" from w if you wanted.
     vint32m4_t vacc0 = __riscv_vwcvt_x_x_v_i32m4(__riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl), vl);
     w = w + nr;
-    
+
     vint32m4_t vacc1 = __riscv_vmv_v_v_i32m4(vacc0, vl);
     vint32m4_t vacc2 = __riscv_vmv_v_v_i32m4(vacc0, vl);
     vint32m4_t vacc3 = __riscv_vmv_v_v_i32m4(vacc0, vl);
@@ -175,29 +175,11 @@ void gemm_i8_i32_1xm4_packed(
   } while (nc != 0);
 }
 
-void copy_int8_to_tcm(const int8_t *src, size_t n) {
-  // Destination pointer in TCM
-  int8_t *tcm_input = (int8_t *)0x78000000;
-
-  size_t vl;
-  while (n > 0) {
-      // Set VL to process up to 'n' bytes with 8‑bit elements, SEW=8, LMUL=1
-      vl = __riscv_vsetvl_e8m8(n);
-
-      // Load vl int8 elements from src
-      vint8m8_t v = __riscv_vle8_v_i8m8(src, vl);
-      // Store them to TCM
-      __riscv_vse8_v_i8m8(tcm_input, v, vl);
-
-      // Advance pointers and decrease remaining count
-      src       += vl;
-      tcm_input += vl;
-      n         -= vl;
-  }
+size_t packed_nr_i8_i32(void) {
+    return __riscv_vsetvlmax_e32m4();
 }
 
-
-void int8_gemm_packed(
+void int8_int32_gemm_packed(
     size_t M, size_t N, size_t K,
     const int8_t* A, size_t a_row_stride,
     const int8_t* B,
@@ -209,7 +191,6 @@ void int8_gemm_packed(
     const size_t cm_stride_bytes = c_row_stride * sizeof(int32_t);
     const size_t cn_stride_bytes = c_col_stride;
 
-    copy_int8_to_tcm(B, K*N+N);
     size_t row = 0;
     while (row < M) {
         size_t rows_left = M - row;
@@ -221,7 +202,7 @@ void int8_gemm_packed(
                 kc_bytes,
                 A + row * a_row_stride,
                 a_stride_bytes,
-                (int8_t *)0x78000000,
+                B,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes
@@ -234,7 +215,7 @@ void int8_gemm_packed(
                 kc_bytes,
                 A + row * a_row_stride,
                 a_stride_bytes,
-                (int8_t *)0x78000000,
+                B,
                 C + row * c_row_stride,
                 cm_stride_bytes,
                 cn_stride_bytes
@@ -245,24 +226,22 @@ void int8_gemm_packed(
 }
 
 void pack_weight_matrix(
-    size_t K, 
-    size_t N, 
+    size_t K,
+    size_t N,
     const int8_t* B,
     int8_t* B_packed)
   {
     size_t nr = __riscv_vsetvlmax_e32m4();
     nr = (N < nr) ? N : nr;
     int i = 0;
-  
+
     for (size_t nc = 0; nc < N; nc += nr){
-      // printf("nr: %d \n", nr);
       if (N - nc < nr) {
         nr = N - nc;
       }
-      
+
       for (size_t row = 0; row < K + 1; row++) {
-        for (size_t c = 0; c < nr; c++) { 
-          // if (i < 200) printf("row: %d, c: %d, nc+c:%d, index: %d, i: %d, value loaded: %d \n", row, c, nc+c, row * N + nc + c, i, (int) B[row * N + nc + c]);
+        for (size_t c = 0; c < nr; c++) {
           B_packed[i] = B[row * N + nc + c];
           i ++;
         }
@@ -316,7 +295,6 @@ void gemm_i8_i32_7xm4(
     w_new = w + vl;
 
     // Create int32 accumulators for each row
-    // Initialize them to zero. You could also load a "bias" from w if you wanted.
     vint32m4_t vacc0 = __riscv_vwcvt_x_x_v_i32m4(__riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl), vl);
     w = w + nr;
 
@@ -420,7 +398,7 @@ void gemm_i8_i32_1xm4(
       const int8_t va0 = *a0++;
       vint16m2_t vb = __riscv_vwcvt_x_x_v_i16m2(__riscv_vle8_v_i8m1(w, vl), vl);
       w = w + nr;
-      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl); 
+      vacc0 = __riscv_vwmacc_vx_i32m4(vacc0, va0, vb, vl);
 
       k -= 1;
     } while (k != 0);
@@ -433,7 +411,7 @@ void gemm_i8_i32_1xm4(
   } while (nc != 0);
 }
 
-void int8_gemm(
+void int8_int32_gemm(
     size_t M, size_t N, size_t K,
     const int8_t* A, size_t a_row_stride,
     const int8_t* B,

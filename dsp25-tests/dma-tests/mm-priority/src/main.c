@@ -1,0 +1,74 @@
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "hal_dma.h"
+#include "dma_test_utils.h"
+
+#define TEST_NAME "dma-mm-priority"
+
+int main(int argc, char **argv) {
+  const size_t words = 128;
+  const uintptr_t low_src = DMA_TEST_REGION0;
+  const uintptr_t high_src = DMA_TEST_REGION1;
+  const uintptr_t dst = DMA_TEST_REGION2;
+
+  dma_transaction_t low_tx;
+  dma_transaction_t high_tx;
+  int fail;
+
+  (void)argc;
+  (void)argv;
+
+  printf("[%s] start\n", TEST_NAME);
+
+  dma_test_fill_words(low_src, words, 3U);
+  dma_test_fill_words(high_src, words, 7U);
+  dma_test_zero_words(dst, words);
+
+  low_tx.core = 0;
+  low_tx.transaction_id = 0x20;
+  low_tx.transaction_priority = 1;
+  low_tx.peripheral_id = 0;
+  low_tx.addr_r = low_src;
+  low_tx.addr_w = dst;
+  low_tx.inc_r = 4;
+  low_tx.inc_w = 4;
+  low_tx.len = (uint16_t)words;
+  low_tx.logw = 2;
+  low_tx.do_interrupt = false;
+  low_tx.do_address_gate = false;
+
+  high_tx = low_tx;
+  high_tx.transaction_id = 0x21;
+  high_tx.transaction_priority = 3;
+  high_tx.addr_r = high_src;
+
+  if (!set_DMA_C(0, low_tx, true) || !set_DMA_C(1, high_tx, true)) {
+    printf("[%s] failed to configure channels\n", TEST_NAME);
+    return 1;
+  }
+
+  start_DMA(0, low_tx.transaction_id, NULL);
+  start_DMA(1, high_tx.transaction_id, NULL);
+  dma_wait_till_inactive(30);
+
+  /* High-priority traffic should be serviced first, then low priority overwrites dst last. */
+  fail = dma_test_expect_equal_words(low_src, dst, words, TEST_NAME);
+
+  dma_reset();
+
+  if (fail) {
+    printf("[%s] FAIL\n", TEST_NAME);
+    return 1;
+  }
+
+  printf("[%s] PASS\n", TEST_NAME);
+  return 0;
+}
+
+void __attribute__((weak, noreturn)) __main(void) {
+  while (1) {
+    asm volatile("wfi");
+  }
+}

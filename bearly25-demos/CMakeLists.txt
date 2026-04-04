@@ -1,4 +1,5 @@
 add_subdirectory(mobilenet)
 add_subdirectory(borai)
+add_subdirectory(borai-test)
 add_subdirectory(mobilenet-imagenet)
 add_subdirectory(mobilenet-imagenet-quant)

@@ -30,6 +30,7 @@ option(BAREMETAL_BUILD_RISCV        "Build for RISC-V platform"               ON
 option(BAREMETAL_BUILD_X86          "Build for x86 platform"                  OFF )
 
 option(CHIP                         "Build for a specific platform"           OFF )
+set(LINKER                         "" CACHE STRING "Linker script variant (e.g. sims, chip, flash)")
 
 option(PROF_COV                     "Build with profiling and coverage"       OFF )
 option(GCNO_ONLY                    "Only build gcno files"                   OFF )
@@ -38,9 +39,13 @@ option(OPT_INFO                     "Build with optimization information"     OF
 
 option(USE_FREERTOS                 "Build with FreeRTOS"                     OFF )
 option(ENABLE_RVV                   "Build for RVV targets"                   ON)
+set(RVV_TYPE                        "" CACHE STRING "RVV mode: 0=No RVV, 1=RVV (rv64gcv_zfh), 2=RVV+Zvfh (rv64gcv_zfh_zvfh)")
+set_property(CACHE RVV_TYPE PROPERTY STRINGS 0 1 2)
 option(BUILD_VECNN                  "Build vec-nn library"                    OFF)
+option(BUILD_MFCC_LIB               "Build mfcc-lib library"                  ON)
 option(THREAD_LIB                   "Build thread-lib library"                OFF)
 option(BMARK_LIB                    "Build bmark-lib library"                 OFF)
+option(BUILD_DSP25_TESTS            "Build dsp25-tests targets"               ON)
 
 # Specify whether we are trying to run on the physical chip or in sims/spike
 set(PLATFORM                        "CHIP" CACHE STRING "Runtime platform: CHIP or SIMS")
@@ -59,11 +64,31 @@ set(CMAKE_EXECUTABLE_SUFFIX            ".elf")
 #################################
 
 # CPU architecture
-if (ENABLE_RVV)
-  set(ARCH                "rv64gcv_zfh")
+# RVV_TYPE takes precedence when provided:
+#   0 -> no RVV
+#   1 -> existing RVV config (default)
+#   2 -> RVV + Zvfh (f16 vector capable toolchain/ISA required)
+if (NOT RVV_TYPE STREQUAL "")
+  set(_RVV_MODE "${RVV_TYPE}")
 else()
-  set(ARCH                "rv64imafd")
+  if (ENABLE_RVV)
+    set(_RVV_MODE "1")
+  else()
+    set(_RVV_MODE "0")
+  endif()
 endif()
+
+if (_RVV_MODE STREQUAL "0")
+  set(ARCH "rv64imafd")
+elseif (_RVV_MODE STREQUAL "1")
+  set(ARCH "rv64gcv_zfh")
+elseif (_RVV_MODE STREQUAL "2")
+  set(ARCH "rv64gcv_zfh_zvfh")
+else()
+  message(FATAL_ERROR "Invalid RVV_TYPE='${_RVV_MODE}'. Use 0, 1, or 2.")
+endif()
+
+message(STATUS "RVV mode=${_RVV_MODE} ARCH=${ARCH}")
 set(ABI                 "lp64d")
 set(CMODEL              "medany")
 set(ARCH_FLAGS          -march=${ARCH} -mabi=${ABI} -mcmodel=${CMODEL})
@@ -75,6 +100,20 @@ set(SPEC_FLAGS          -specs=${SPECS})
 
 # convert CHIP to lowercase
 string(TOLOWER ${CHIP} CHIP)
+string(TOLOWER "${PLATFORM}" PLATFORM_LOWER)
+
+# Resolve linker variant:
+# - If LINKER is explicitly provided, honor it.
+# - Otherwise derive from PLATFORM to avoid accidental "-off.ld".
+if ((NOT DEFINED LINKER) OR (LINKER STREQUAL "") OR (LINKER STREQUAL "OFF") OR (LINKER STREQUAL "off"))
+  if (PLATFORM_LOWER STREQUAL "sims")
+    set(LINKER "sims")
+  else()
+    set(LINKER "chip")
+  endif()
+endif()
+string(TOLOWER "${LINKER}" LINKER)
+message(STATUS "Resolved linker variant LINKER=${LINKER} (PLATFORM=${PLATFORM})")
 
 # linker script
 # HACK: ideally this should be handled by glossy, but currently i couldn't 
@@ -87,8 +126,6 @@ if (NOT CHIP)
 else()
   set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}.ld")
 endif()
-
-add_subdirectory(${CMAKE_SOURCE_DIR}/platform/${CHIP})
 
 add_compile_options(-O1)
 add_compile_options(-Wall -Wextra)
@@ -136,6 +173,7 @@ if (PROF_COV)
   add_link_options(-lgcov)
 endif()
 
+add_subdirectory(${CMAKE_SOURCE_DIR}/platform/${CHIP})  # moved to fix linker issue with DMA
 
 #################################
 # Dependencies
@@ -145,7 +183,12 @@ add_subdirectory(driver)
 add_subdirectory(glossy)
 add_subdirectory(lib)
 add_subdirectory(examples)
+
 add_subdirectory(bmark-lib)
+
+if(BUILD_MFCC_LIB)
+  add_subdirectory(mfcc-lib)
+endif()
 
 if(BUILD_VECNN)
   add_subdirectory(vec-nn)
@@ -159,7 +202,6 @@ if(BMARK_LIB)
   add_subdirectory(bmark-lib)
 endif()
 
-
 #################################
 # Build Target Directories
 #################################
@@ -168,7 +210,12 @@ add_subdirectory(app)
 add_subdirectory(bearly25-tests)
 add_subdirectory(bearly25-bmarks)
 add_subdirectory(bearly25-demos)
-add_subdirectory(c2c25)
+add_subdirectory(dsp25-demos)
+if(BUILD_DSP25_TESTS)
+  add_subdirectory(dsp25-tests)
+endif()
+add_subdirectory(c2c25-tests)
+add_subdirectory(dsp25-bmarks)
 
 
 #################################

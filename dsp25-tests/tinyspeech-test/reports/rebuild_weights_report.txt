@@ -1,0 +1,49 @@
+SimpleCNN rebuild report
+archive=/Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/datasets/cache/speech_commands_v0.02.tar.gz
+device=cpu
+samples train/val/test=18631/2261/2435
+
+Epoch metrics
+hyperparams: epochs=35 batch=128 lr=0.001 weight_decay=0.0001 label_smoothing=0.05
+epoch 01/35: train_loss=1.312059 train_acc=0.529172 val_acc=0.752322 test_acc=0.736345
+epoch 02/35: train_loss=0.842299 train_acc=0.792013 val_acc=0.844317 test_acc=0.829979
+epoch 03/35: train_loss=0.685525 train_acc=0.853792 val_acc=0.863777 test_acc=0.843532
+epoch 04/35: train_loss=0.599231 train_acc=0.885943 val_acc=0.902256 test_acc=0.889938
+epoch 05/35: train_loss=0.543606 train_acc=0.910150 val_acc=0.918620 test_acc=0.907187
+epoch 06/35: train_loss=0.494696 train_acc=0.926037 val_acc=0.915524 test_acc=0.921971
+epoch 07/35: train_loss=0.465726 train_acc=0.935860 val_acc=0.934985 test_acc=0.937577
+epoch 08/35: train_loss=0.446353 train_acc=0.944447 val_acc=0.936754 test_acc=0.931006
+epoch 09/35: train_loss=0.435040 train_acc=0.947346 val_acc=0.943830 test_acc=0.949487
+epoch 10/35: train_loss=0.422979 train_acc=0.952552 val_acc=0.946926 test_acc=0.946612
+epoch 11/35: train_loss=0.413545 train_acc=0.955397 val_acc=0.933658 test_acc=0.933881
+epoch 12/35: train_loss=0.405887 train_acc=0.959422 val_acc=0.957541 test_acc=0.950719
+epoch 13/35: train_loss=0.396012 train_acc=0.962589 val_acc=0.958425 test_acc=0.951951
+epoch 14/35: train_loss=0.388521 train_acc=0.965541 val_acc=0.952676 test_acc=0.957700
+epoch 15/35: train_loss=0.385722 train_acc=0.965327 val_acc=0.954445 test_acc=0.954004
+epoch 16/35: train_loss=0.382202 train_acc=0.967796 val_acc=0.953560 test_acc=0.954004
+epoch 17/35: train_loss=0.375368 train_acc=0.970855 val_acc=0.958425 test_acc=0.955236
+epoch 18/35: train_loss=0.372436 train_acc=0.971016 val_acc=0.958868 test_acc=0.956057
+epoch 19/35: train_loss=0.368257 train_acc=0.972465 val_acc=0.957099 test_acc=0.955236
+epoch 20/35: train_loss=0.364390 train_acc=0.975095 val_acc=0.958868 test_acc=0.954004
+epoch 21/35: train_loss=0.360543 train_acc=0.975632 val_acc=0.959752 test_acc=0.956057
+epoch 22/35: train_loss=0.359596 train_acc=0.976813 val_acc=0.961521 test_acc=0.957700
+epoch 23/35: train_loss=0.355821 train_acc=0.978477 val_acc=0.960637 test_acc=0.957700
+epoch 24/35: train_loss=0.352448 train_acc=0.980033 val_acc=0.961964 test_acc=0.959754
+epoch 25/35: train_loss=0.350759 train_acc=0.980463 val_acc=0.960637 test_acc=0.958522
+epoch 26/35: train_loss=0.348816 train_acc=0.981214 val_acc=0.962848 test_acc=0.961396
+epoch 27/35: train_loss=0.347322 train_acc=0.982019 val_acc=0.960195 test_acc=0.958522
+epoch 28/35: train_loss=0.346016 train_acc=0.982663 val_acc=0.961964 test_acc=0.958522
+epoch 29/35: train_loss=0.344476 train_acc=0.983629 val_acc=0.960195 test_acc=0.959754
+epoch 30/35: train_loss=0.343233 train_acc=0.983468 val_acc=0.959752 test_acc=0.960575
+epoch 31/35: train_loss=0.342535 train_acc=0.983468 val_acc=0.960195 test_acc=0.956879
+epoch 32/35: train_loss=0.341698 train_acc=0.983629 val_acc=0.961079 test_acc=0.958932
+epoch 33/35: train_loss=0.341237 train_acc=0.983898 val_acc=0.962848 test_acc=0.958522
+epoch 34/35: train_loss=0.340841 train_acc=0.984327 val_acc=0.962848 test_acc=0.958111
+epoch 35/35: train_loss=0.340601 train_acc=0.984327 val_acc=0.962406 test_acc=0.957700
+
+Best checkpoint accuracy
+train=0.983039
+val=0.962848
+test=0.961396
+
+weights_h=/Users/yash/Projects/sp25-Baremetal-IDE/dsp25-tests/tinyspeech-test/include/weights.h

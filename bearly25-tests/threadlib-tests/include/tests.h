@@ -11,11 +11,18 @@ extern "C" {
 #endif
 
 void run_all_tests(void);
+extern int g_threadlib_multicore_ok;
 
 void test_basic_local_queue(void);
 void test_basic_lifo_order(void);
 void test_work_stealing_distribution(void);
 void test_barrier_correctness(void);
+void test_issue_affinity(void);
+void test_join_completion_semantics(void);
+void test_dispatch_capacity_stress(void);
+void test_barrier_repeated_stress(void);
+void test_mixed_mode_stress(void);
+void test_api_edge_cases(void);
 
 #ifdef __cplusplus
 }

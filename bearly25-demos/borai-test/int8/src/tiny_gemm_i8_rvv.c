@@ -246,3 +246,75 @@ int borai_tiny_matmul_t_i8_fout(
 #endif
     return 0;
 }
+
+int borai_tiny_matmul_t_i8_k64_n32(
+    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale)
+{
+#if defined(__riscv_vector)
+    qgemm_k64_n32(xq, w_t_pack, xout, scale);
+    return 1;
+#else
+    (void)xq; (void)w_t_pack; (void)xout; (void)scale;
+    return 0;
+#endif
+}
+
+int borai_tiny_matmul_t_i8_k64_n64(
+    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale)
+{
+#if defined(__riscv_vector)
+    qgemm_k64_n64(xq, w_t_pack, xout, scale);
+    return 1;
+#else
+    (void)xq; (void)w_t_pack; (void)xout; (void)scale;
+    return 0;
+#endif
+}
+
+int borai_tiny_matmul_t_i8_k64_n172(
+    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale)
+{
+#if defined(__riscv_vector)
+    qgemm_k64_n172(xq, w_t_pack, xout, scale);
+    return 1;
+#else
+    (void)xq; (void)w_t_pack; (void)xout; (void)scale;
+    return 0;
+#endif
+}
+
+int borai_tiny_matmul_t_i8_k64_n256(
+    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale)
+{
+#if defined(__riscv_vector)
+    qgemm_k64_n256(xq, w_t_pack, xout, scale);
+    return 1;
+#else
+    (void)xq; (void)w_t_pack; (void)xout; (void)scale;
+    return 0;
+#endif
+}
+
+int borai_tiny_matmul_t_i8_k64_n512(
+    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale)
+{
+#if defined(__riscv_vector)
+    qgemm_k64_n512(xq, w_t_pack, xout, scale);
+    return 1;
+#else
+    (void)xq; (void)w_t_pack; (void)xout; (void)scale;
+    return 0;
+#endif
+}
+
+int borai_tiny_matmul_t_i8_k172_n64(
+    const int8_t* xq, const int8_t* w_t_pack, float* xout, float scale)
+{
+#if defined(__riscv_vector)
+    qgemm_k172_n64(xq, w_t_pack, xout, scale);
+    return 1;
+#else
+    (void)xq; (void)w_t_pack; (void)xout; (void)scale;
+    return 0;
+#endif
+}

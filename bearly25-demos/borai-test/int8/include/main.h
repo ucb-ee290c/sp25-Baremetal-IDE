@@ -121,7 +121,10 @@ typedef struct {
     unsigned char* wv_T;    /* (n_layers, dim+1, kv_dim)      B_pack for wv  */
     unsigned char* wo_T;    /* (n_layers, dim+1, dim)         B_pack for wo  */
     unsigned char* w1_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w1  */
-    unsigned char* w2_T;    /* (n_layers, hidden_dim+1, dim)  B_pack for w2  */
+    unsigned char* w20_T;   /* (n_layers, hidden_dim+1, dim0) B_pack for w2 first half */
+    unsigned char* w21_T;   /* (n_layers, hidden_dim+1, dim1) B_pack for w2 second half */
+    int w20_n;              /* dim0 = floor(dim/2) */
+    int w21_n;              /* dim1 = dim - dim0 */
     unsigned char* w3_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w3  */
     unsigned char* wcls0_T; /* (dim+1, vocab0)                B_pack for wcls first half */
     unsigned char* wcls1_T; /* (dim+1, vocab1)                B_pack for wcls second half */

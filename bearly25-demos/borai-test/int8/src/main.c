@@ -39,6 +39,9 @@
 #ifdef BORAIQ_TINY_SHAPE_GEMM
 #include "tiny_gemm_i8_rvv.h"
 #endif
+#if defined(BORAIQ_TINY_VEC_OPS) || defined(BORAIQ_TINY_ATTN_H8)
+#include "tiny_vec_ops_rvv.h"
+#endif
 #if defined(__riscv_vector)
 #include <riscv_vector.h>
 #endif
@@ -250,6 +253,11 @@ void dequantize(QuantizedTensor *qx, float* x, int n) {
 }
 
 void quantize(QuantizedTensor *qx, float* x, int n) {
+#ifdef BORAIQ_TINY_VEC_OPS
+    if (borai_tiny_quantize_i8(&qx->s, qx->q, x, n)) {
+        return;
+    }
+#endif
     float Q_MAX = 127.0f;
 
     // find the max absolute value
@@ -472,6 +480,11 @@ void free_transformer(Transformer* t) {
 // neural net blocks; the dynamics of the Transformer
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
+#ifdef BORAIQ_TINY_VEC_OPS
+    if (borai_tiny_rmsnorm_f32(o, x, weight, size)) {
+        return;
+    }
+#endif
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -524,6 +537,12 @@ static inline void softmax_attn(float *att, int len) {
 }
 
 static inline float dot_qk_head(const float *q, const float *k, int n) {
+#ifdef BORAIQ_TINY_ATTN_H8
+    float out = 0.0f;
+    if (borai_tiny_dot_qk_head_f32(&out, q, k, n)) {
+        return out;
+    }
+#endif
 #if defined(__riscv_vector)
     int i = 0;
     vfloat32m1_t acc = __riscv_vfmv_v_f_f32m1(0.0f, 1);
@@ -544,6 +563,11 @@ static inline float dot_qk_head(const float *q, const float *k, int n) {
 }
 
 static inline void axpy_v_head(float *dst, const float *v, float a, int n) {
+#ifdef BORAIQ_TINY_ATTN_H8
+    if (borai_tiny_axpy_head_f32(dst, v, a, n)) {
+        return;
+    }
+#endif
 #if defined(__riscv_vector)
     int i = 0;
     while (i < n) {
@@ -2077,6 +2101,16 @@ void app_main() {
   printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH ON\r\n");
 #else
   printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_VEC_OPS)
+  printf("Build flags: BORAIQ_TINY_VEC_OPS ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_VEC_OPS OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_ATTN_H8)
+  printf("Build flags: BORAIQ_TINY_ATTN_H8 ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_ATTN_H8 OFF\r\n");
 #endif
 
   // Parameters //

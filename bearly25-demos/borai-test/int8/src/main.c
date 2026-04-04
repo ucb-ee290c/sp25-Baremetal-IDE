@@ -251,15 +251,23 @@ void quantize(QuantizedTensor *qx, float* x, int n) {
         }
     }
 
+    if (wmax == 0.0f) {
+        qx->s = 1.0f;
+        memset(qx->q, 0, (size_t)n * sizeof(int8_t));
+        return;
+    }
+
     // calculate and write the scaling factor
     float scale = wmax / Q_MAX;
+    float inv_scale = 1.0f / scale;
     qx->s = scale;
 
     // calculate and write the quantized values
     for (int i = 0; i < n; i++) {
-        float quant_value = x[i] / scale; // scale
-        int8_t quantized = (int8_t) round(quant_value); // round and clamp
-        qx->q[i] = quantized;
+        int q = (int)roundf(x[i] * inv_scale);
+        if (q > 127) q = 127;
+        if (q < -127) q = -127;
+        qx->q[i] = (int8_t)q;
     }
 }
 
@@ -483,8 +491,9 @@ void softmax(float* x, int size) {
         sum += x[i];
     }
     // normalize
+    float inv_sum = 1.0f / sum;
     for (int i = 0; i < size; i++) {
-        x[i] /= sum;
+        x[i] *= inv_sum;
     }
 }
 
@@ -592,9 +601,21 @@ void alloc_and_transpose_weights_i8(
         make_b_pack_i8(wt->w3_T + l * (size_t)(dim + 1) * hidden_dim,
                        w->w3[l].q, hidden_dim, dim);
 
-    /* wcls: W[vocab_size × dim], B_pack [(dim+1) × vocab_size] */
-    wt->wcls_T = (unsigned char*)malloc((size_t)(dim + 1) * p->vocab_size);
-    make_b_pack_i8(wt->wcls_T, w->wcls[0].q, p->vocab_size, dim);
+    /* wcls split for multicore-friendly logits: both halves keep B_pack layout */
+    wt->wcls0_n = p->vocab_size / 2;
+    wt->wcls1_n = p->vocab_size - wt->wcls0_n;
+    wt->wcls0_T = wt->wcls0_n > 0 ? (unsigned char*)malloc((size_t)(dim + 1) * wt->wcls0_n) : NULL;
+    wt->wcls1_T = wt->wcls1_n > 0 ? (unsigned char*)malloc((size_t)(dim + 1) * wt->wcls1_n) : NULL;
+    if (wt->wcls0_n > 0) {
+        make_b_pack_i8(wt->wcls0_T, w->wcls[0].q, wt->wcls0_n, dim);
+    }
+    if (wt->wcls1_n > 0) {
+        make_b_pack_i8(
+            wt->wcls1_T,
+            w->wcls[0].q + (size_t)wt->wcls0_n * dim,
+            wt->wcls1_n,
+            dim);
+    }
 }
 
 void free_transposed_weights_i8(TransformerWeightsT* wt) {
@@ -605,7 +626,8 @@ void free_transposed_weights_i8(TransformerWeightsT* wt) {
     free(wt->w1_T);
     free(wt->w2_T);
     free(wt->w3_T);
-    free(wt->wcls_T);
+    free(wt->wcls0_T);
+    free(wt->wcls1_T);
 }
 
 /* ---------------------------------------------------------------------------
@@ -892,12 +914,25 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     barrier2(hartid);
 
     /* wcls:
-     *   TRANSPOSED_WEIGHTS → hart 0 runs full vectorized matmul_t; hart 1 idles.
+     *   TRANSPOSED_WEIGHTS → both harts compute disjoint vocab slices with
+     *                        split B_pack buffers (wcls0_T/wcls1_T).
      *   scalar             → both harts split vocab_size rows (mutual exclusion
      *                        via non-overlapping [0, vs_half) / [vs_half, end)). */
 #ifdef TRANSPOSED_WEIGHTS
     if (hartid == 0) {
-        matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
+        if (wt->wcls0_n > 0) {
+            matmul_t(s->logits, &s->xq, wt->wcls0_T, w->wcls[0].s, dim, wt->wcls0_n);
+        }
+    } else {
+        if (wt->wcls1_n > 0) {
+            matmul_t(
+                s->logits + wt->wcls0_n,
+                &s->xq,
+                wt->wcls1_T,
+                w->wcls[0].s,
+                dim,
+                wt->wcls1_n);
+        }
     }
 #else
     {
@@ -1151,7 +1186,18 @@ float* forward(Transformer* transformer, int token, int pos) {
     // classifier into logits
     quantize(&s->xq, x, dim);
 #ifdef TRANSPOSED_WEIGHTS
-    matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
+    if (wt->wcls0_n > 0) {
+        matmul_t(s->logits, &s->xq, wt->wcls0_T, w->wcls[0].s, dim, wt->wcls0_n);
+    }
+    if (wt->wcls1_n > 0) {
+        matmul_t(
+            s->logits + wt->wcls0_n,
+            &s->xq,
+            wt->wcls1_T,
+            w->wcls[0].s,
+            dim,
+            wt->wcls1_n);
+    }
 #else
     matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
 #endif

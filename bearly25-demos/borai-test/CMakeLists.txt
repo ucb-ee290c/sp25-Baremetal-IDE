@@ -25,10 +25,12 @@ if(BORAI_TESTQ_MAX_PERF)
 endif()
 
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
-  target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)
-  target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
   if(BUILD_VECNN)
+    target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)
+    target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
     target_link_libraries(boraiq-test PRIVATE vecnn)
+  else()
+    message(STATUS "boraiq-test: BUILD_VECNN is OFF, disabling TRANSPOSED_WEIGHTS.")
   endif()
 endif()
 
@@ -47,13 +49,15 @@ if(BORAI_TESTQ_PREFILL_MULTICORE)
 endif()
 
 option(BORAI_TESTQ_VEC_SOFTMAX
-  "Use vectorized RVV softmax for attention in boraiq-test (requires vecnn)" OFF)
+  "Use vectorized RVV softmax for attention in boraiq-test (requires vecnn)" ON)
 
 if(BORAI_TESTQ_VEC_SOFTMAX)
-  target_compile_definitions(boraiq-test PRIVATE VEC_SOFTMAX)
-  target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
   if(BUILD_VECNN)
+    target_compile_definitions(boraiq-test PRIVATE VEC_SOFTMAX)
+    target_include_directories(boraiq-test PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
     target_link_libraries(boraiq-test PRIVATE vecnn)
+  else()
+    message(STATUS "boraiq-test: BUILD_VECNN is OFF, disabling VEC_SOFTMAX.")
   endif()
 endif()
 

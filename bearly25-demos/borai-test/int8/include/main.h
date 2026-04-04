@@ -123,7 +123,10 @@ typedef struct {
     unsigned char* w1_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w1  */
     unsigned char* w2_T;    /* (n_layers, hidden_dim+1, dim)  B_pack for w2  */
     unsigned char* w3_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w3  */
-    unsigned char* wcls_T;  /* (dim+1, vocab_size)            B_pack for wcls*/
+    unsigned char* wcls0_T; /* (dim+1, vocab0)                B_pack for wcls first half */
+    unsigned char* wcls1_T; /* (dim+1, vocab1)                B_pack for wcls second half */
+    int wcls0_n;            /* vocab0 = floor(vocab_size/2) */
+    int wcls1_n;            /* vocab1 = vocab_size - vocab0 */
 } TransformerWeightsT;
 #endif /* TRANSPOSED_WEIGHTS */
 

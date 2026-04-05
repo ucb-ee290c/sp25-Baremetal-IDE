@@ -4,6 +4,6 @@
 #include "bench_config.h"
 
 void bench_cache_init(void);
-void bench_cache_flush(void);
+void bench_cache_flush(uint32_t hart_id);
 
 #endif

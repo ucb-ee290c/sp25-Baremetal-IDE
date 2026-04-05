@@ -5,6 +5,7 @@
 #include "bench_cache.h"
 #include "bench_cases.h"
 #include "bench_config.h"
+#include "chip_config.h"
 #include "hthread.h"
 #include "mfcc_driver.h"
 #include "mfcc_reference_data.h"
@@ -64,6 +65,7 @@ typedef struct {
   cycle_stats_t total_warm[MFCC_VAR_COUNT];
   uint32_t case_start;
   uint32_t case_end;
+  uint32_t hart_id;
 } hart_state_t;
 
 static uint64_t target_frequency = MFCC_BENCH_TARGET_FREQUENCY_HZ;
@@ -188,7 +190,7 @@ static int run_f32_mode(hart_state_t *hs,
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
     if (is_cold) {
-      bench_cache_flush();
+      bench_cache_flush(hs->hart_id);
     }
     st = mfcc_driver_run_f32(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
@@ -227,7 +229,7 @@ static int run_q31_mode(hart_state_t *hs,
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
     if (is_cold) {
-      bench_cache_flush();
+      bench_cache_flush(hs->hart_id);
     }
     st = mfcc_driver_run_q31(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
@@ -266,7 +268,7 @@ static int run_q15_mode(hart_state_t *hs,
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
     if (is_cold) {
-      bench_cache_flush();
+      bench_cache_flush(hs->hart_id);
     }
     st = mfcc_driver_run_q15(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
@@ -306,7 +308,7 @@ static int run_f16_mode(hart_state_t *hs,
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
     if (is_cold) {
-      bench_cache_flush();
+      bench_cache_flush(hs->hart_id);
     }
     st = mfcc_driver_run_f16(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
@@ -346,7 +348,7 @@ static int run_sp_f32_mode(hart_state_t *hs,
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
     if (is_cold) {
-      bench_cache_flush();
+      bench_cache_flush(hs->hart_id);
     }
     st = mfcc_driver_run_sp1024x23x12_f32(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
@@ -386,7 +388,7 @@ static int run_sp_f16_mode(hart_state_t *hs,
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
     if (is_cold) {
-      bench_cache_flush();
+      bench_cache_flush(hs->hart_id);
     }
     st = mfcc_driver_run_sp1024x23x12_f16(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
@@ -855,16 +857,21 @@ static void reset_hart_stats(hart_state_t *hs) {
   }
 }
 
-/* Worker function dispatched to hart 1 via hthread_issue. */
-static void hart1_worker(void *arg) {
+/* __main() for secondary harts is provided by hthread.c (WFI loop).
+ * Do not define __main here so that hthread_issue/join can dispatch
+ * work to the secondary hart. */
+
+static void *hart1_worker(void *arg) {
   hart_state_t *hs = (hart_state_t *)arg;
   for (uint32_t tc = hs->case_start; tc < hs->case_end; tc++) {
     run_case(hs, &g_cases[tc], tc);
   }
+  return NULL;
 }
 
-static void mc_nop_worker(void *arg) {
+static void *mc_nop(void *arg) {
   (void)arg;
+  return NULL;
 }
 
 static void print_global_cycle_summary(const cycle_stats_t total_cold[MFCC_VAR_COUNT],
@@ -914,6 +921,9 @@ static int setup_once(void) {
   bench_cache_init();
   mfcc_bench_prepare_cases(g_cases, MFCC_BENCH_NUM_CASES);
 
+  g_hart[0].hart_id = 0U;
+  g_hart[1].hart_id = 1U;
+
   /* Initialize both driver instances. */
   if (mfcc_driver_init(&g_hart[0].driver) != MFCC_DRIVER_OK) {
     if (mfcc_bench_is_print_hart()) {
@@ -942,9 +952,9 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
   /* Split cases between the two harts: hart 0 gets the first half, hart 1 gets the second. */
   const uint32_t half = MFCC_BENCH_NUM_CASES / 2U;
   g_hart[0].case_start = 0U;
-  g_hart[0].case_end = half;
-  g_hart[1].case_start = half;
-  g_hart[1].case_end = MFCC_BENCH_NUM_CASES;
+  g_hart[0].case_end = MFCC_BENCH_NUM_CASES;  /* DEBUG: all cases on hart 0 */
+  g_hart[1].case_start = MFCC_BENCH_NUM_CASES;
+  g_hart[1].case_end = MFCC_BENCH_NUM_CASES;   /* DEBUG: no cases on hart 1 */
 
   if (mfcc_bench_is_print_hart()) {
     printf("\n=== MFCC Driver Benchmark (Multicore) @ %llu Hz ===\n",
@@ -969,6 +979,7 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
   }
 
   /* Dispatch hart 1's share, then run hart 0's share on this core. */
+  asm volatile("fence rw, rw" ::: "memory");
   hthread_issue(1, hart1_worker, &g_hart[1]);
 
   for (uint32_t tc = g_hart[0].case_start; tc < g_hart[0].case_end; tc++) {
@@ -976,6 +987,7 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
   }
 
   hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
 
   /* Merge stats from both harts. */
   cycle_stats_t merged_cold[MFCC_VAR_COUNT];
@@ -996,11 +1008,13 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 }
 
 void app_init(void) {
-  // init_test(target_frequency);
-  hthread_init();
-  /* Warm hart 1 once so steady-state dispatch has no cold-start hiccup. */
-  hthread_issue(1, mc_nop_worker, NULL);
+  init_test(target_frequency);
+  /* Warm hart 1 once so it enters a clean WFI state. */
+  printf("Warming hart 1...\n");
+  hthread_issue(1, mc_nop, NULL);
   hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+  printf("Hart 1 warmed, entering main loop.\n");
   if (setup_once() != 0) {
     if (mfcc_bench_is_print_hart()) {
       printf("MFCC benchmark setup failed\n");
@@ -1013,6 +1027,7 @@ void app_init(void) {
 
 void app_main(void) {
   run_suite_for_frequency(target_frequency);
+  // printf("MFCC benchmark main loop not implemented (PLL sweep disabled)\n");
 }
 
 #if MFCC_BENCH_ENABLE_PLL_SWEEP
@@ -1028,9 +1043,9 @@ int main(void) {
 
   target_frequency = k_pll_sweep_freqs_hz[0];
   init_test(target_frequency);
-  hthread_init();
-  hthread_issue(1, mc_nop_worker, NULL);
+  hthread_issue(1, mc_nop, NULL);
   hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
   if (setup_once() != 0) {
     return -1;
   }
@@ -1039,8 +1054,9 @@ int main(void) {
   for (size_t i = 1; i < num_freqs; ++i) {
     target_frequency = k_pll_sweep_freqs_hz[i];
     reconfigure_pll(target_frequency, MFCC_BENCH_PLL_SWEEP_SLEEP_MS);
-    hthread_issue(1, mc_nop_worker, NULL);
+    hthread_issue(1, mc_nop, NULL);
     hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
     run_suite_for_frequency(target_frequency);
   }
   return 0;

@@ -64,7 +64,7 @@ const unsigned char *ASCII_BEL = (const unsigned char *) "\a";
 
 // int32_t GS = 64; // group size global for quantization of the weights
 
-uint64_t target_frequency = 1050000000l;
+uint64_t target_frequency = 1000000000l;
 
 // #ifdef ENABLE_DMA_MATVEC
 // int32_t GS_MATVEC_BOUND = 0;
@@ -306,69 +306,29 @@ void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t sha
 
 void read_checkpoint_from_header(Config* config, TransformerWeights* weights, float** data, size_t* file_size) {
   size_t cumulative_offset = 0;
-  printf("Loading checkpoint data...\r\n");
   // Check magic number
   uint32_t magic = *((uint32_t*)(WEIGHTS + cumulative_offset));
   if (magic != MODEL_MAGIC_NUMBER) {
-    printf("Model magic number does not match! Please preprocess with export.py.\r\n");
+    printf("ERROR: Model magic number mismatch!\r\n");
   }
-  printf("Magic number verified\r\n");
   cumulative_offset += sizeof(uint32_t);
 
   uint32_t version = *((uint32_t*)(WEIGHTS + cumulative_offset));
   if (version != MODEL_VERSION_INT8) {
-    printf("Model version is not an Int8 Quantized model. Version (hex) = %x", version);
+    printf("ERROR: Model version is not Int8 Quantized. Version (hex) = %x\r\n", version);
   }
-  printf("Model is properly formatted as Int8 Quantized (Version 2).\r\n");
   cumulative_offset += sizeof(uint32_t);
-  
+
   // load from weights.h WEIGHTS
   memcpy(config, (WEIGHTS + cumulative_offset), sizeof(Config));
   cumulative_offset += sizeof(Config);
-  printf("Successfully loaded configuration structure.\r\n");
-  printf("\tTransformer Dimension:\t%d\r\n", config->dim);
-  printf("\tFFN Layer Dimension:\t%d\r\n", config->hidden_dim);
-  printf("\tLayer Count:\t%d\r\n", config->n_layers);
-  printf("\tQuery Head Count:\t%d\r\n", config->n_heads);
-  printf("\tKey/Value Head Count:\t%d\r\n", config->n_kv_heads);
-  printf("\tByte-Level Vocabulary Size:\t%d\r\n", config->vocab_size);
-  printf("\tMaximum Sequence Length:\t%d\r\n", config->seq_len);
 
   // Check shared classifier byte
   uint8_t shared_classifier = *((uint8_t*)(WEIGHTS + cumulative_offset));
-  if (shared_classifier != 1) {
-    printf("Non-shared classifier detected. Shared classifier byte value = %x", shared_classifier);
-  }
-  printf("Proper shared classifier detected.\r\n");
   cumulative_offset += sizeof(uint8_t);
 
-  // Read group size
-  //int32_t group_size = *((int32_t*)(WEIGHTS + cumulative_offset));
-  //GS = group_size;
-  //cumulative_offset += sizeof(int32_t);
-  //printf("\tGroup Size:\t%d\r\n", GS);
-
-  printf("Accelerator Status:\r\n");
-  printf("\tBearly24 DMA MatVec:\t");
-#ifdef ENABLE_DMA_MATVEC
-  printf("Enabled\r\n");
-#else
-  printf("Disabled\r\n");
-#endif
-
-  printf("\tBearly24 QTrans DotProd:\t");
 #ifdef ENABLE_QT_DOTPROD
   GS_QTDP_BOUND = GS / 8 * 8;
-  printf("Enabled\r\n");
-#else
-  printf("Disabled\r\n");
-#endif
-
-  printf("\tDSP'24 Saturn-V Vector:\t");
-#ifdef ENABLE_SATURNV_VEC
-  printf("Enabled\r\n");
-#else
-  printf("Disabled\r\n");
 #endif
 
   // int shared_weights = config->vocab_size > 0 ? 1 : 0;
@@ -382,17 +342,10 @@ void read_checkpoint_from_header(Config* config, TransformerWeights* weights, fl
 }
 
 void build_transformer(Transformer *t) {
-    // read in the Config and the Weights from the checkpoint
     read_checkpoint_from_header(&t->config, &t->weights, &t->data, &t->file_size);
-    printf("[DBG] read_checkpoint done\r\n");
-    // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
-    printf("[DBG] malloc_run_state done\r\n");
 #ifdef TRANSPOSED_WEIGHTS
-    // transpose all weight matrices once; forward() will use weights_t exclusively
-    printf("[DBG] starting alloc_and_transpose_weights_i8...\r\n");
     alloc_and_transpose_weights_i8(&t->weights_t, &t->weights, &t->config);
-    printf("[DBG] alloc_and_transpose done\r\n");
 #endif
 }
 
@@ -607,6 +560,41 @@ static void matmul_t(
         xq->q, w_t_pack, xout, scale);
 }
 #endif /* TRANSPOSED_WEIGHTS */
+
+// ----------------------------------------------------------------------------
+// Types needed by both single-core and multicore paths
+
+typedef struct {
+    char *str;
+    int id;
+} TokenIndex;
+
+typedef struct {
+    char** vocab;
+    float* vocab_scores;
+    TokenIndex *sorted_vocab;
+    int vocab_size;
+    unsigned int max_token_length;
+    unsigned char byte_pieces[512];
+} Tokenizer;
+
+typedef struct {
+    float prob;
+    int index;
+} ProbIndex;
+
+typedef struct {
+    int vocab_size;
+    ProbIndex* probindex;
+    float temperature;
+    float topp;
+    unsigned long long rng_state;
+} Sampler;
+
+// Forward declarations of functions used by generate paths
+void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens);
+char* decode(Tokenizer* t, int prev_token, int token);
+int sample(Sampler* sampler, float* logits);
 
 // ----------------------------------------------------------------------------
 // Multicore prefill support
@@ -856,39 +844,6 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     return hartid == 0 ? s->logits : NULL;
 }
 
-// Forward declarations of types defined later in the file, needed by generate_mc
-typedef struct {
-    char *str;
-    int id;
-} TokenIndex;
-
-typedef struct {
-    char** vocab;
-    float* vocab_scores;
-    TokenIndex *sorted_vocab;
-    int vocab_size;
-    unsigned int max_token_length;
-    unsigned char byte_pieces[512];
-} Tokenizer;
-
-typedef struct {
-    float prob;
-    int index;
-} ProbIndex;
-
-typedef struct {
-    int vocab_size;
-    ProbIndex* probindex;
-    float temperature;
-    float topp;
-    unsigned long long rng_state;
-} Sampler;
-
-// Forward declarations of functions used by generate_mc
-void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens);
-char* decode(Tokenizer* t, int prev_token, int token);
-int sample(Sampler* sampler, float* logits);
-
 /* generate_mc — same as generate() but uses forward_mc(hartid=0) and
  * signals hart 1 before each token via _mc_fwd_rdy. */
 void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
@@ -938,13 +893,12 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
 
     if (pos > 1) {
         unsigned long end = READ_CSR("mcycle");
-        printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end - start);
-        printf("BENCHMARK: Total tokens:\t%d\r\n", pos - 1);
-        printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end - start) / (pos - 1));
-        printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end - start) / target_frequency) / (pos - 1));
-        printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end - start) / (float)target_frequency) / (float)(pos - 1));
-        printf("BENCHMARK: CLOCK Frequency:\t%u\r\n", target_frequency);
-        printf("STDERR: achieved tok/s: %f\r\n", (pos - 1) / (((double)(end - start)) / target_frequency));
+        unsigned long elapsed = end - start;
+        int toks = pos - 1;
+        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
+               toks, elapsed,
+               (double)toks / ((double)elapsed / target_frequency),
+               target_frequency);
     }
 
     free(prompt_tokens);
@@ -1524,14 +1478,12 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1) {
         unsigned long end = READ_CSR("mcycle");
-        printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end-start);
-        printf("BENCHMARK: Total tokens:\t%d\r\n", pos-1);
-        printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end-start)/(pos-1));
-        printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end-start)/target_frequency)/(pos-1));
-        printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end-start)/(float)target_frequency)/(float)(pos-1));
-
-        printf("BENCHMARK: CLOCK Frequency:\t%u\r\n", target_frequency);
-        printf("STDERR: achieved tok/s: %f\r\n", (pos-1) / (((double)(end-start))/target_frequency));
+        unsigned long elapsed = end - start;
+        int toks = pos - 1;
+        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
+               toks, elapsed,
+               (double)toks / ((double)elapsed / target_frequency),
+               target_frequency);
     }
 
     free(prompt_tokens);
@@ -1679,17 +1631,15 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
         if (next == 2) { printf("\r\n"); }
     }
 
-    unsigned long end = READ_CSR("mcycle");
-    printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end-start);
-    printf("BENCHMARK: Total tokens:\t%d\r\n", pos-1);
-    printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end-start)/(pos-1));
-    printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end-start)/SYS_CLK_FREQ)/(pos-1));
-    printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end-start)/(float)SYS_CLK_FREQ)/(float)(pos-1));
-
-    printf("BENCHMARK: MTIME Frequency:\t%u\r\n", MTIME_FREQ);
-    user_turn = 1;
-    start = 0;
-    printf("\r\n");
+    if (pos > 1) {
+        unsigned long end = READ_CSR("mcycle");
+        unsigned long elapsed = end - start;
+        int toks = pos - 1;
+        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
+               toks, elapsed,
+               (double)toks / ((double)elapsed / SYS_CLK_FREQ),
+               SYS_CLK_FREQ);
+    }
     free(prompt_tokens);
 }
 
@@ -1701,7 +1651,7 @@ void app_main() {
   // Parameters //
   float temperature = 0.8f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
   float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-  int steps = 4;            // number of steps to run for (default 512)
+  int steps = 4;           // number of steps to run for
   char *prompt = NULL;        // prompt string
   unsigned long long rng_seed = CLINT->MTIME; // seed rng with time by default
   GenMode mode = GENERATE;    // generate|chat
@@ -1720,35 +1670,26 @@ void app_main() {
   Transformer _tfm_buf;
   Transformer* p_tfm = &_tfm_buf;
 #endif
-  printf("[DBG] calling build_transformer...\r\n");
   build_transformer(p_tfm);
-  printf("[DBG] build_transformer done\r\n");
   if (steps == 0 || steps > p_tfm->config.seq_len) steps = p_tfm->config.seq_len;
 
   // Import the tokenizer binary
   Tokenizer tokenizer;
-  printf("[DBG] calling build_tokenizer_from_header...\r\n");
   build_tokenizer_from_header(&tokenizer, p_tfm->config.vocab_size);
-  printf("[DBG] build_tokenizer done\r\n");
 
   // build the Sampler
   Sampler sampler;
-  printf("[DBG] calling build_sampler...\r\n");
   build_sampler(&sampler, p_tfm->config.vocab_size, temperature, topp, rng_seed);
-  printf("[DBG] build_sampler done\r\n");
 
 #ifdef PREFILL_MULTICORE
   // Signal hart 1 that initialization is complete and it's safe to poll
   asm volatile("fence" ::: "memory");
   _mc_init_done = 1;
   asm volatile("fence" ::: "memory");
-  printf("[DBG] hart 1 init gate released\r\n");
 #endif
 
   while (1) {
-    // Disabled for testing. Should uncomment when ready for random stuff each run
     sampler.rng_state = CLINT->MTIME;
-    printf("\r\nMTIME RNG State: %llu\r\n\r\n", sampler.rng_state);
 
     // run!
     if (mode == GENERATE) {

@@ -15,6 +15,9 @@ add_executable(mfcc-bmarks-mc
 target_include_directories(mfcc-bmarks-mc PUBLIC include)
 target_include_directories(mfcc-bmarks-mc PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
+# Increase per-hart stack to 64KB for MFCC's FFT buffers (default 4KB is too small for multicore).
+target_link_options(mfcc-bmarks-mc PRIVATE -Wl,--defsym,__stack_size=0x10000)
+
 target_link_libraries(mfcc-bmarks-mc PRIVATE
   mfcclib
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive

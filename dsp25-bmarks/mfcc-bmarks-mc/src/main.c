@@ -11,9 +11,76 @@
 #include "mfcc_reference_data.h"
 #include "simple_setup.h"
 
+#include "dsp/transform_functions.h"
+
 #ifndef MFCC_REF_FFT_LEN
 #define MFCC_REF_FFT_LEN MFCC_DRIVER_FFT_LEN
 #endif
+
+/* ---- Scratchpad-resident f32 context for core 1 ---- */
+#define SCRATCHPAD_BASE 0x08000000UL
+
+typedef struct {
+  riscv_mfcc_instance_f32 mfcc_f32;
+  uint32_t initialized;
+  uint32_t filter_pos[MFCC_DRIVER_NUM_MEL];
+  uint32_t filter_lengths[MFCC_DRIVER_NUM_MEL];
+  float32_t dct_f32[MFCC_DRIVER_NUM_DCT * MFCC_DRIVER_NUM_MEL];
+  float32_t window_f32[MFCC_DRIVER_FFT_LEN];
+  float32_t filter_f32[MFCC_DRIVER_MAX_FILTER_COEFS];
+  float32_t input_f32[MFCC_DRIVER_FFT_LEN];
+  float32_t tmp_f32[2 * MFCC_DRIVER_FFT_LEN];
+} spad_f32_ctx_t;
+
+_Static_assert(sizeof(spad_f32_ctx_t) <= 64u * 1024u,
+               "spad_f32_ctx_t exceeds 64 KB scratchpad");
+
+#define SPAD_F32 ((volatile spad_f32_ctx_t *)SCRATCHPAD_BASE)
+
+static void spad_init_f32(const mfcc_driver_t *src) {
+  spad_f32_ctx_t *sp = (spad_f32_ctx_t *)SCRATCHPAD_BASE;
+  memcpy(sp->window_f32,      src->window_f32,      sizeof(sp->window_f32));
+  memcpy(sp->dct_f32,         src->dct_f32,         sizeof(sp->dct_f32));
+  memcpy(sp->filter_pos,      src->filter_pos,      sizeof(sp->filter_pos));
+  memcpy(sp->filter_lengths,  src->filter_lengths,   sizeof(sp->filter_lengths));
+  memcpy(sp->filter_f32,      src->filter_f32,      sizeof(sp->filter_f32));
+
+  riscv_mfcc_init_1024_f32(&sp->mfcc_f32,
+      MFCC_DRIVER_NUM_MEL, MFCC_DRIVER_NUM_DCT,
+      sp->dct_f32, sp->filter_pos, sp->filter_lengths,
+      sp->filter_f32, sp->window_f32);
+  sp->initialized = 1U;
+}
+
+static mfcc_driver_status_t spad_run_f32(const float32_t *input,
+                                         float32_t *output,
+                                         uint64_t *cycles) {
+  spad_f32_ctx_t *sp = (spad_f32_ctx_t *)SCRATCHPAD_BASE;
+  if (!sp->initialized) return MFCC_DRIVER_ERR_BAD_ARG;
+
+  memcpy(sp->input_f32, input, sizeof(sp->input_f32));
+  uint64_t t0, t1;
+  asm volatile("rdcycle %0" : "=r"(t0));
+  riscv_mfcc_f32(&sp->mfcc_f32, sp->input_f32, output, sp->tmp_f32);
+  asm volatile("rdcycle %0" : "=r"(t1));
+  if (cycles) *cycles = t1 - t0;
+  return MFCC_DRIVER_OK;
+}
+
+static mfcc_driver_status_t spad_run_sp_f32(const float32_t *input,
+                                            float32_t *output,
+                                            uint64_t *cycles) {
+  spad_f32_ctx_t *sp = (spad_f32_ctx_t *)SCRATCHPAD_BASE;
+  if (!sp->initialized) return MFCC_DRIVER_ERR_BAD_ARG;
+
+  memcpy(sp->input_f32, input, sizeof(sp->input_f32));
+  uint64_t t0, t1;
+  asm volatile("rdcycle %0" : "=r"(t0));
+  mfcc_tinyspeech_1024_23_12_f32(&sp->mfcc_f32, sp->input_f32, output, sp->tmp_f32);
+  asm volatile("rdcycle %0" : "=r"(t1));
+  if (cycles) *cycles = t1 - t0;
+  return MFCC_DRIVER_OK;
+}
 
 typedef enum {
   MFCC_VAR_F32 = 0,
@@ -66,6 +133,7 @@ typedef struct {
   uint32_t case_start;
   uint32_t case_end;
   uint32_t hart_id;
+  uint8_t use_spad;  /* 1 = run f32/sp_f32 from scratchpad */
 } hart_state_t;
 
 static uint64_t target_frequency = MFCC_BENCH_TARGET_FREQUENCY_HZ;
@@ -189,10 +257,11 @@ static int run_f32_mode(hart_state_t *hs,
 
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
-    if (is_cold) {
+    if (is_cold && !hs->use_spad) {
       bench_cache_flush(hs->hart_id);
     }
-    st = mfcc_driver_run_f32(&hs->driver, input, output, &cycles);
+    st = hs->use_spad ? spad_run_f32(input, output, &cycles)
+                       : mfcc_driver_run_f32(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      f32 run failed: %s\n", mfcc_driver_status_str(st));
@@ -347,10 +416,11 @@ static int run_sp_f32_mode(hart_state_t *hs,
 
   for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
     uint64_t cycles = 0U;
-    if (is_cold) {
+    if (is_cold && !hs->use_spad) {
       bench_cache_flush(hs->hart_id);
     }
-    st = mfcc_driver_run_sp1024x23x12_f32(&hs->driver, input, output, &cycles);
+    st = hs->use_spad ? spad_run_sp_f32(input, output, &cycles)
+                       : mfcc_driver_run_sp1024x23x12_f32(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f32 run failed: %s\n", mfcc_driver_status_str(st));
@@ -751,6 +821,9 @@ static void run_case(hart_state_t *hs, const mfcc_bench_case_t *cs, uint32_t cas
 #endif
 #endif
 
+  /* Scratchpad hart only runs f32/sp_f32 — skip DRAM-based variants to avoid L2 pollution. */
+  if (!hs->use_spad) {
+
 #if MFCC_BENCH_ENABLE_Q31
 #if MFCC_BENCH_RUN_COLD
   if (run_q31_mode(hs, cs->samples, out.out_q31, "cold", 1U, &hs->total_cold[MFCC_VAR_Q31]) == 0) {
@@ -796,6 +869,8 @@ static void run_case(hart_state_t *hs, const mfcc_bench_case_t *cs, uint32_t cas
 #endif
 #endif
 
+  } /* end !use_spad */
+
 #if MFCC_BENCH_ENABLE_SP1024X23X12_F32
 #if MFCC_BENCH_RUN_COLD
   if (run_sp_f32_mode(hs, cs->samples,
@@ -817,6 +892,7 @@ static void run_case(hart_state_t *hs, const mfcc_bench_case_t *cs, uint32_t cas
 #endif
 #endif
 
+  if (!hs->use_spad) {
 #if MFCC_BENCH_ENABLE_SP1024X23X12_F16
 #if defined(RISCV_FLOAT16_SUPPORTED)
 #if MFCC_BENCH_RUN_COLD
@@ -843,6 +919,7 @@ static void run_case(hart_state_t *hs, const mfcc_bench_case_t *cs, uint32_t cas
   }
 #endif
 #endif
+  } /* end !use_spad */
 
   run_correctness_checks(hs, case_idx, &out);
 }
@@ -922,7 +999,9 @@ static int setup_once(void) {
   mfcc_bench_prepare_cases(g_cases, MFCC_BENCH_NUM_CASES);
 
   g_hart[0].hart_id = 0U;
+  g_hart[0].use_spad = 0U;
   g_hart[1].hart_id = 1U;
+  g_hart[1].use_spad = 1U;  /* hart 1 runs f32 from scratchpad */
 
   /* Initialize both driver instances. */
   if (mfcc_driver_init(&g_hart[0].driver) != MFCC_DRIVER_OK) {
@@ -938,6 +1017,9 @@ static int setup_once(void) {
     return -1;
   }
 
+  /* Copy hart 1's f32 working set into scratchpad so it doesn't pollute L2. */
+  spad_init_f32(&g_hart[1].driver);
+
   reset_hart_stats(&g_hart[0]);
   reset_hart_stats(&g_hart[1]);
 
@@ -952,9 +1034,9 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
   /* Split cases between the two harts: hart 0 gets the first half, hart 1 gets the second. */
   const uint32_t half = MFCC_BENCH_NUM_CASES / 2U;
   g_hart[0].case_start = 0U;
-  g_hart[0].case_end = MFCC_BENCH_NUM_CASES;  /* DEBUG: all cases on hart 0 */
-  g_hart[1].case_start = MFCC_BENCH_NUM_CASES;
-  g_hart[1].case_end = MFCC_BENCH_NUM_CASES;   /* DEBUG: no cases on hart 1 */
+  g_hart[0].case_end = half;
+  g_hart[1].case_start = half;
+  g_hart[1].case_end = MFCC_BENCH_NUM_CASES;
 
   if (mfcc_bench_is_print_hart()) {
     printf("\n=== MFCC Driver Benchmark (Multicore) @ %llu Hz ===\n",

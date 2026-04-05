@@ -905,8 +905,17 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            MFCC_BENCH_ENABLE_SP1024X23X12_F16);
   }
 
+  uint64_t wall_t0, wall_t1;
+  asm volatile("rdcycle %0" : "=r"(wall_t0));
+
   for (uint32_t tc = 0; tc < MFCC_BENCH_NUM_CASES; tc++) {
     run_case(&g_cases[tc], tc);
+  }
+
+  asm volatile("rdcycle %0" : "=r"(wall_t1));
+  if (mfcc_bench_is_print_hart()) {
+    printf("\n  wall-clock cycles (all cases): %llu\n",
+           (unsigned long long)(wall_t1 - wall_t0));
   }
 
   print_global_cycle_summary();

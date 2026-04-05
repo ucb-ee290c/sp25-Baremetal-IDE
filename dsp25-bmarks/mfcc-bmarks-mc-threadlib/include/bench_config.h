@@ -68,10 +68,6 @@
 #define MFCC_BENCH_ENABLE_SP1024X23X12_F16 MFCC_BENCH_ENABLE_F16
 #endif
 
-#ifndef MFCC_BENCH_ENABLE_SP_INTRA_OP_MC
-#define MFCC_BENCH_ENABLE_SP_INTRA_OP_MC 1
-#endif
-
 // Correctness tolerances against floating reference (generic f32 preferred).
 #ifndef MFCC_BENCH_TOL_F32
 #define MFCC_BENCH_TOL_F32 0.250f

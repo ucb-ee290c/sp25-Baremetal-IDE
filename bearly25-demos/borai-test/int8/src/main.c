@@ -525,7 +525,7 @@ void softmax(float* x, int size) {
 static inline void softmax_attn(float *att, int len) {
 #ifdef VEC_SOFTMAX
     if (len >= ATTN_VEC_SOFTMAX_MIN) {
-        softmax_vec(att, att, 1, (size_t)len);
+        softmax_vec(att, att, (size_t)len, 1);
     } else {
         softmax(att, len);
     }
@@ -1082,6 +1082,11 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
         float* logits = forward_mc(transformer, token, pos, 0);
         while (_mc_fwd_done == 0) {}
         __sync_synchronize();
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (!borai_debug_check_finite_vec("logits(mc-forward)", logits, transformer->config.vocab_size, pos)) {
+            break;
+        }
+#endif
 
         if (pos < num_prompt_tokens - 1) {
             next = prompt_tokens[pos + 1];
@@ -1093,6 +1098,11 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
                    next, transformer->config.vocab_size, pos);
             next = 1;
         }
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (pos < 16 || (pos % 64) == 0) {
+            printf("DEBUG: mc pos=%d token=%d next=%d\r\n", pos, token, next);
+        }
+#endif
         pos++;
 
         if (next == 1) { break; }
@@ -1753,9 +1763,48 @@ float random_f32(unsigned long long *state) { // random float32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
+#ifdef BORAIQ_DEBUG_NUMERIC
+static int borai_debug_check_finite_vec(const char* tag, const float* v, int n, int pos) {
+    for (int i = 0; i < n; i++) {
+        float x = v[i];
+        if (!isfinite(x)) {
+            printf("STDERR: DEBUG non-finite %s at pos=%d idx=%d val=%f\r\n", tag, pos, i, x);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int borai_debug_check_probs(const char* tag, const float* p, int n) {
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float x = p[i];
+        if (!isfinite(x) || x < 0.0f) {
+            printf("STDERR: DEBUG bad prob in %s idx=%d val=%f\r\n", tag, i, x);
+            return 0;
+        }
+        sum += x;
+    }
+    if (!isfinite(sum) || sum <= 0.0f) {
+        printf("STDERR: DEBUG bad prob sum in %s sum=%f\r\n", tag, sum);
+        return 0;
+    }
+    if (sum < 0.90f || sum > 1.10f) {
+        printf("STDERR: DEBUG prob sum out-of-range in %s sum=%f\r\n", tag, sum);
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 int sample(Sampler* sampler, float* logits) {
     // sample the token given the logits and some hyperparameters
     int next;
+#ifdef BORAIQ_DEBUG_NUMERIC
+    if (!borai_debug_check_finite_vec("logits(pre-sample)", logits, sampler->vocab_size, -1)) {
+        return 1;
+    }
+#endif
     if (sampler->temperature == 0.0f) {
         // greedy argmax sampling: take the token with the highest probability
         next = sample_argmax(logits, sampler->vocab_size);
@@ -1765,10 +1814,11 @@ int sample(Sampler* sampler, float* logits) {
             if (sampler->inv_temperature != 1.0f) {
                 scale_logits_temp_inplace(logits, 512, sampler->inv_temperature);
             }
-#if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
-            softmax_vec(logits, logits, 1, (size_t)512);
-#else
             softmax(logits, 512);
+#ifdef BORAIQ_DEBUG_NUMERIC
+            if (!borai_debug_check_probs("probs(fast512)", logits, 512)) {
+                return sample_argmax(logits, 512);
+            }
 #endif
             float coin = random_f32(&sampler->rng_state);
             if (sampler->topp <= 0 || sampler->topp >= 1) {
@@ -1785,6 +1835,11 @@ int sample(Sampler* sampler, float* logits) {
         }
         // apply softmax to the logits to get the probabilities for next token
         softmax(logits, sampler->vocab_size);
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (!borai_debug_check_probs("probs(generic)", logits, sampler->vocab_size)) {
+            return sample_argmax(logits, sampler->vocab_size);
+        }
+#endif
         // flip a (float) coin (this is our source of entropy for sampling)
         float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token
@@ -1839,6 +1894,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (!borai_debug_check_finite_vec("logits(forward)", logits, transformer->config.vocab_size, pos)) {
+            break;
+        }
+#endif
 
         // advance the state machine
         if (pos < num_prompt_tokens - 1) {
@@ -1848,6 +1908,16 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             // otherwise sample the next token from the logits
             next = sample(sampler, logits);
         }
+        if (next < 0 || next >= transformer->config.vocab_size) {
+            printf("STDERR: sampled token out of range (%d), vocab=%d at pos=%d\r\n",
+                   next, transformer->config.vocab_size, pos);
+            next = 1;
+        }
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (pos < 16 || (pos % 64) == 0) {
+            printf("DEBUG: sc pos=%d token=%d next=%d\r\n", pos, token, next);
+        }
+#endif
         pos++;
 
         // data-dependent terminating condition: the BOS (=1) token delimits sequences
@@ -2098,11 +2168,16 @@ void app_main() {
 #else
   printf("Build flags: BORAIQ_FAST_SWIGLU_EXP OFF\r\n");
 #endif
+#if defined(BORAIQ_DEBUG_NUMERIC)
+  printf("Build flags: BORAIQ_DEBUG_NUMERIC ON\r\n");
+#else
+  printf("Build flags: BORAIQ_DEBUG_NUMERIC OFF\r\n");
+#endif
 
   // Parameters //
   float temperature = 0.8f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
   float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-  int steps = 4;            // number of steps to run for (default 512)
+  int steps = 512;            // number of steps to run for (default 512)
   char *prompt = NULL;        // prompt string
   unsigned long long rng_seed = CLINT->MTIME; // seed rng with time by default
   GenMode mode = GENERATE;    // generate|chat

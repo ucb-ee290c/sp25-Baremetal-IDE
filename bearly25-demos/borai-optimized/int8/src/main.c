@@ -36,8 +36,19 @@
 #if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
 #include "layers.h"
 #endif
+#ifdef BORAIQ_TINY_SHAPE_GEMM
+#include "tiny_gemm_i8_rvv.h"
+#endif
+#include "tiny_vec_ops_rvv.h"
+#if defined(__riscv_vector)
+#include <riscv_vector.h>
+#endif
 #ifdef PREFILL_MULTICORE
 #include <thread-lib/hthread.h>
+#endif
+
+#ifndef BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS
+#define BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS 8
 #endif
 
 /* Private includes ----------------------------------------------------------*/
@@ -148,6 +159,9 @@ typedef struct {
     float *v; // value (dim,)
     float *att; // buffer for scores/attention values (n_heads, seq_len)
     float *logits; // output logits
+    float *rope_freq; // RoPE inverse frequencies per (head_dim/2,)
+    float *rope_cos;  // RoPE cos cache for current position
+    float *rope_sin;  // RoPE sin cache for current position
     // kv cache
     float* key_cache;   // (layer, seq_len, dim)
     float* value_cache; // (layer, seq_len, dim)
@@ -169,6 +183,8 @@ typedef struct {
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int head_size = p->dim / p->n_heads;
+    int rope_terms = head_size / 2;
     s->x = calloc(p->dim, sizeof(float));
     s->xb = calloc(p->dim, sizeof(float));
     s->xb2 = calloc(p->dim, sizeof(float));
@@ -181,12 +197,21 @@ void malloc_run_state(RunState* s, Config* p) {
     s->v = calloc(kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
+    s->rope_freq = rope_terms > 0 ? calloc((size_t)rope_terms, sizeof(float)) : NULL;
+    s->rope_cos = rope_terms > 0 ? calloc((size_t)rope_terms, sizeof(float)) : NULL;
+    s->rope_sin = rope_terms > 0 ? calloc((size_t)rope_terms, sizeof(float)) : NULL;
     s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    if (rope_terms > 0 && s->rope_freq != NULL) {
+        for (int i = 0; i < rope_terms; i++) {
+            int head_dim = i * 2;
+            s->rope_freq[i] = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+        }
+    }
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->k || !s->v || !s->att || !s->logits || !s->key_cache
-     || !s->value_cache) {
+     || !s->value_cache || (rope_terms > 0 && (!s->rope_freq || !s->rope_cos || !s->rope_sin))) {
         printf("STDERR: malloc failed!\r\n");
         printf("size: %d\r\n", p->n_layers * p->seq_len * kv_dim * sizeof(float));
         printf("s->q: %x\r\n", s->q);
@@ -209,6 +234,9 @@ void free_run_state(RunState* s) {
     free(s->v);
     free(s->att);
     free(s->logits);
+    free(s->rope_freq);
+    free(s->rope_cos);
+    free(s->rope_sin);
     free(s->key_cache);
     free(s->value_cache);
 }
@@ -223,6 +251,11 @@ void dequantize(QuantizedTensor *qx, float* x, int n) {
 }
 
 void quantize(QuantizedTensor *qx, float* x, int n) {
+#ifdef BORAIQ_TINY_VEC_OPS
+    if (borai_tiny_quantize_i8(&qx->s, qx->q, x, n)) {
+        return;
+    }
+#endif
     float Q_MAX = 127.0f;
 
     // find the max absolute value
@@ -234,15 +267,23 @@ void quantize(QuantizedTensor *qx, float* x, int n) {
         }
     }
 
+    if (wmax == 0.0f) {
+        qx->s = 1.0f;
+        memset(qx->q, 0, (size_t)n * sizeof(int8_t));
+        return;
+    }
+
     // calculate and write the scaling factor
     float scale = wmax / Q_MAX;
+    float inv_scale = 1.0f / scale;
     qx->s = scale;
 
     // calculate and write the quantized values
     for (int i = 0; i < n; i++) {
-        float quant_value = x[i] / scale; // scale
-        int8_t quantized = (int8_t) round(quant_value); // round and clamp
-        qx->q[i] = quantized;
+        int q = (int)roundf(x[i] * inv_scale);
+        if (q > 127) q = 127;
+        if (q < -127) q = -127;
+        qx->q[i] = (int8_t)q;
     }
 }
 
@@ -437,6 +478,11 @@ void free_transformer(Transformer* t) {
 // neural net blocks; the dynamics of the Transformer
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
+#ifdef BORAIQ_TINY_VEC_OPS
+    if (borai_tiny_rmsnorm_f32(o, x, weight, size)) {
+        return;
+    }
+#endif
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -466,9 +512,73 @@ void softmax(float* x, int size) {
         sum += x[i];
     }
     // normalize
+    float inv_sum = 1.0f / sum;
     for (int i = 0; i < size; i++) {
-        x[i] /= sum;
+        x[i] *= inv_sum;
     }
+}
+
+#ifndef ATTN_VEC_SOFTMAX_MIN
+#define ATTN_VEC_SOFTMAX_MIN 48
+#endif
+
+static inline void softmax_attn(float *att, int len) {
+#ifdef VEC_SOFTMAX
+    if (len >= ATTN_VEC_SOFTMAX_MIN) {
+        softmax_vec(att, att, (size_t)len, 1);
+    } else {
+        softmax(att, len);
+    }
+#else
+    softmax(att, len);
+#endif
+}
+
+static inline float dot_qk_head(const float *q, const float *k, int n) {
+#ifdef BORAIQ_TINY_ATTN_H8
+    float out = 0.0f;
+    if (borai_tiny_dot_qk_head_f32(&out, q, k, n)) {
+        return out;
+    }
+#endif
+#if defined(__riscv_vector)
+    int i = 0;
+    vfloat32m1_t acc = __riscv_vfmv_v_f_f32m1(0.0f, 1);
+    while (i < n) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vfloat32m4_t vq = __riscv_vle32_v_f32m4(q + i, vl);
+        vfloat32m4_t vk = __riscv_vle32_v_f32m4(k + i, vl);
+        vfloat32m4_t vm = __riscv_vfmul_vv_f32m4(vq, vk, vl);
+        acc = __riscv_vfredusum_vs_f32m4_f32m1(vm, acc, vl);
+        i += (int)vl;
+    }
+    return __riscv_vfmv_f_s_f32m1_f32(acc);
+#else
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) sum += q[i] * k[i];
+    return sum;
+#endif
+}
+
+static inline void axpy_v_head(float *dst, const float *v, float a, int n) {
+#ifdef BORAIQ_TINY_ATTN_H8
+    if (borai_tiny_axpy_head_f32(dst, v, a, n)) {
+        return;
+    }
+#endif
+#if defined(__riscv_vector)
+    int i = 0;
+    while (i < n) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vfloat32m4_t vd = __riscv_vle32_v_f32m4(dst + i, vl);
+        vfloat32m4_t vv = __riscv_vle32_v_f32m4(v + i, vl);
+        vd = __riscv_vfmacc_vf_f32m4(vd, a, vv, vl);
+        __riscv_vse32_v_f32m4(dst + i, vd, vl);
+        i += (int)vl;
+    }
+#else
+    for (int i = 0; i < n; i++) dst[i] += a * v[i];
+#endif
 }
 
 void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
@@ -575,9 +685,21 @@ void alloc_and_transpose_weights_i8(
         make_b_pack_i8(wt->w3_T + l * (size_t)(dim + 1) * hidden_dim,
                        w->w3[l].q, hidden_dim, dim);
 
-    /* wcls: W[vocab_size × dim], B_pack [(dim+1) × vocab_size] */
-    wt->wcls_T = (unsigned char*)malloc((size_t)(dim + 1) * p->vocab_size);
-    make_b_pack_i8(wt->wcls_T, w->wcls[0].q, p->vocab_size, dim);
+    /* wcls split for multicore-friendly logits: both halves keep B_pack layout */
+    wt->wcls0_n = p->vocab_size / 2;
+    wt->wcls1_n = p->vocab_size - wt->wcls0_n;
+    wt->wcls0_T = wt->wcls0_n > 0 ? (unsigned char*)malloc((size_t)(dim + 1) * wt->wcls0_n) : NULL;
+    wt->wcls1_T = wt->wcls1_n > 0 ? (unsigned char*)malloc((size_t)(dim + 1) * wt->wcls1_n) : NULL;
+    if (wt->wcls0_n > 0) {
+        make_b_pack_i8(wt->wcls0_T, w->wcls[0].q, wt->wcls0_n, dim);
+    }
+    if (wt->wcls1_n > 0) {
+        make_b_pack_i8(
+            wt->wcls1_T,
+            w->wcls[0].q + (size_t)wt->wcls0_n * dim,
+            wt->wcls1_n,
+            dim);
+    }
 }
 
 void free_transposed_weights_i8(TransformerWeightsT* wt) {
@@ -588,7 +710,8 @@ void free_transposed_weights_i8(TransformerWeightsT* wt) {
     free(wt->w1_T);
     free(wt->w2_T);
     free(wt->w3_T);
-    free(wt->wcls_T);
+    free(wt->wcls0_T);
+    free(wt->wcls1_T);
 }
 
 /* ---------------------------------------------------------------------------
@@ -608,6 +731,17 @@ static void matmul_t(
     int n_in, int n_out)
 {
     float scale = xq->s * w_scale;
+#ifdef BORAIQ_TINY_SHAPE_GEMM
+    if (borai_tiny_matmul_t_i8_fout(
+            xq->q,
+            (const int8_t*)w_t_pack,
+            xout,
+            n_in,
+            n_out,
+            scale)) {
+        return;
+    }
+#endif
     quant_fully_connected_int8_t(
         (size_t)n_in, (size_t)n_out, 1,
         xq->q, w_t_pack, xout, scale);
@@ -620,11 +754,12 @@ static void matmul_t(
 
 static Transformer  _mc_transformer;   /* shared transformer, built by hart 0 */
 
-typedef struct {
-    Transformer *transformer;
-    int token;
-    int pos;
-} mc_forward_job_t;
+static volatile int _mc_token_val    = 0;
+static volatile int _mc_pos_val      = 0;
+static volatile int _mc_fwd_req      = 0;
+static volatile int _mc_fwd_done     = 0;
+static volatile int _mc_worker_ready = 0;
+static volatile int _mc_swiglu_h1_done = 0;
 
 static float* forward_mc(Transformer* transformer, int token, int pos, int hartid);
 
@@ -665,13 +800,31 @@ static void matmul_rows(float* xout, QuantizedTensor* x, QuantizedTensor* w,
     }
 }
 
-static void mc_nop_worker(void *arg) {
-    (void)arg;
+static void mc_forward_worker(void *arg) {
+    Transformer *transformer = (Transformer *)arg;
+    _mc_worker_ready = 1;
+    __sync_synchronize();
+    while (1) {
+        while (_mc_fwd_req == 0) {}
+        __sync_synchronize();
+        _mc_fwd_req = 0;
+        int token = _mc_token_val;
+        int pos   = _mc_pos_val;
+        forward_mc(transformer, token, pos, 1);
+        __sync_synchronize();
+        _mc_fwd_done = 1;
+    }
 }
 
-static void mc_forward_worker(void *arg) {
-    mc_forward_job_t *job = (mc_forward_job_t *)arg;
-    forward_mc(job->transformer, job->token, job->pos, 1);
+static void mc_start_worker(Transformer *transformer) {
+    _mc_fwd_req = 0;
+    _mc_fwd_done = 0;
+    _mc_worker_ready = 0;
+    _mc_swiglu_h1_done = 0;
+    __sync_synchronize();
+    hthread_issue(1, mc_forward_worker, transformer);
+    while (_mc_worker_ready == 0) {}
+    __sync_synchronize();
 }
 
 /* forward_mc — parallel forward pass for two harts.
@@ -684,10 +837,11 @@ static void mc_forward_worker(void *arg) {
  *   QKV  : hart 0 → wq + wk  |  hart 1 → wv
  *   Attn : both — each handles n_heads/2 heads
  *   FFN  : hart 0 → w1       |  hart 1 → w3  (key parallelism win)
- *   wcls : hart 0 vectorized (TRANSPOSED_WEIGHTS) or both split rows (scalar)
+ *   wcls : both harts split vocab work (TRANSPOSED_WEIGHTS split packs,
+ *          or scalar row split)
  *
- * All sequential work (rmsnorm, RoPE, kv-store, residual, SwiGLU, w2, wcls
- * when transposed) is done by hart 0; hart 1 spins at barriers.
+ * Mostly-sequential work (rmsnorm, RoPE, kv-store, residual, w2) stays on
+ * hart 0; hart 1 additionally handles half of SwiGLU between FFN matmuls.
  *
  * When TRANSPOSED_WEIGHTS is also defined, w1/w3/wq/wk/wv/wo all use the
  * vectorized matmul_t kernel on their full matrices.
@@ -706,10 +860,17 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     int kv_mul      = p->n_heads / p->n_kv_heads;
     int hidden_dim  = p->hidden_dim;
     int head_size   = dim / p->n_heads;
+    int rope_terms  = head_size / 2;
+    float inv_sqrt_head_size = 1.0f / sqrtf((float)head_size);
 
     /* embedding copy (hart 0 only; hart 1 waits at first barrier in the loop) */
     if (hartid == 0) {
         memcpy(x, w->token_embedding_table + token * dim, dim * sizeof(float));
+        for (int i = 0; i < rope_terms; i++) {
+            float val = pos * s->rope_freq[i];
+            s->rope_cos[i] = cosf(val);
+            s->rope_sin[i] = sinf(val);
+        }
     }
 
     for (int l = 0; l < p->n_layers; l++) {
@@ -744,11 +905,9 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         /* RoPE relative positional encoding + KV cache store (hart 0) */
         if (hartid == 0) {
             for (int i = 0; i < dim; i += 2) {
-                int head_dim = i % head_size;
-                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-                float val  = pos * freq;
-                float fcr  = cosf(val);
-                float fci  = sinf(val);
+                int rope_idx = (i % head_size) >> 1;
+                float fcr = s->rope_cos[rope_idx];
+                float fci = s->rope_sin[rope_idx];
                 int rotn = i < kv_dim ? 2 : 1;
                 for (int v = 0; v < rotn; v++) {
                     float* vec = v == 0 ? s->q : s->k;
@@ -772,23 +931,19 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             for (int h = h_start; h < h_end; h++) {
                 float* q   = s->q   + h * head_size;
                 float* att = s->att + h * p->seq_len;
+                int kv_head_off = (h / kv_mul) * head_size;
                 for (int t = 0; t <= pos; t++) {
-                    float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                    float score = 0.0f;
-                    for (int i = 0; i < head_size; i++) score += q[i] * k[i];
-                    att[t] = score / sqrtf(head_size);
+                    float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
+                    float score = dot_qk_head(q, k, head_size);
+                    att[t] = score * inv_sqrt_head_size;
                 }
-#ifdef VEC_SOFTMAX
-                softmax_vec(att, att, 1, (size_t)(pos + 1));
-#else
-                softmax(att, pos + 1);
-#endif
+                softmax_attn(att, pos + 1);
                 float* xb = s->xb + h * head_size;
                 memset(xb, 0, head_size * sizeof(float));
                 for (int t = 0; t <= pos; t++) {
-                    float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                    float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
                     float a  = att[t];
-                    for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
+                    axpy_v_head(xb, v, a, head_size);
                 }
             }
         }
@@ -826,14 +981,14 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
         }
         barrier2(hartid);
 
-        /* SwiGLU + quantize hq + w2 matmul + residual (hart 0) */
+        /* SwiGLU split: both harts process disjoint hidden ranges, then hart 0
+         * runs quantize + w2 + residual to avoid extra barriers on matmul. */
         if (hartid == 0) {
-            for (int i = 0; i < hidden_dim; i++) {
-                float val = s->hb[i];
-                val *= 1.0f / (1.0f + expf(-val));
-                val *= s->hb2[i];
-                s->hb[i] = val;
-            }
+            int h_half = hidden_dim / 2;
+            borai_swiglu_apply_range(s->hb, s->hb2, 0, h_half);
+            while (_mc_swiglu_h1_done == 0) {}
+            __sync_synchronize();
+            _mc_swiglu_h1_done = 0;
             quantize(&s->hq, s->hb, hidden_dim);
 #ifdef TRANSPOSED_WEIGHTS
             matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
@@ -841,6 +996,11 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
             matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
 #endif
             for (int i = 0; i < dim; i++) x[i] += s->xb[i];
+        } else {
+            int h_half = hidden_dim / 2;
+            borai_swiglu_apply_range(s->hb, s->hb2, h_half, hidden_dim);
+            __sync_synchronize();
+            _mc_swiglu_h1_done = 1;
         }
         barrier2(hartid);
     }
@@ -853,12 +1013,25 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     barrier2(hartid);
 
     /* wcls:
-     *   TRANSPOSED_WEIGHTS → hart 0 runs full vectorized matmul_t; hart 1 idles.
+     *   TRANSPOSED_WEIGHTS → both harts compute disjoint vocab slices with
+     *                        split B_pack buffers (wcls0_T/wcls1_T).
      *   scalar             → both harts split vocab_size rows (mutual exclusion
      *                        via non-overlapping [0, vs_half) / [vs_half, end)). */
 #ifdef TRANSPOSED_WEIGHTS
     if (hartid == 0) {
-        matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
+        if (wt->wcls0_n > 0) {
+            matmul_t(s->logits, &s->xq, wt->wcls0_T, w->wcls[0].s, dim, wt->wcls0_n);
+        }
+    } else {
+        if (wt->wcls1_n > 0) {
+            matmul_t(
+                s->logits + wt->wcls0_n,
+                &s->xq,
+                wt->wcls1_T,
+                w->wcls[0].s,
+                dim,
+                wt->wcls1_n);
+        }
     }
 #else
     {
@@ -873,8 +1046,8 @@ static float* forward_mc(Transformer* transformer, int token, int pos, int harti
     return hartid == 0 ? s->logits : NULL;
 }
 
-/* generate_mc — same as generate() but dispatches hart 1 work via threadlib
- * (hthread_issue/hthread_join) each token while hart 0 runs forward_mc(). */
+/* generate_mc — same as generate() but uses a persistent hart 1 worker issued
+ * once through threadlib; each token is handed off via shared flags. */
 void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
                  char *prompt, int steps) {
     char *empty_prompt = "";
@@ -891,17 +1064,29 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
     int next;
     int token = prompt_tokens[0];
     int pos   = 0;
+#if defined(BORAIQ_BENCH_SUPPRESS_TOKEN_IO)
+    int emit_tokens = (steps > BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS);
+#else
+    int emit_tokens = 1;
+#endif
     _bar_h1_arrived = 0;
     _bar_sense = 0;
+    _mc_swiglu_h1_done = 0;
     while (pos < steps) {
-        mc_forward_job_t job = {
-            .transformer = transformer,
-            .token = token,
-            .pos = pos
-        };
-        hthread_issue(1, mc_forward_worker, &job);
+        _mc_token_val = token;
+        _mc_pos_val = pos;
+        _mc_fwd_done = 0;
+        __sync_synchronize();
+        _mc_fwd_req = 1;
+        __sync_synchronize();
         float* logits = forward_mc(transformer, token, pos, 0);
-        hthread_join(1);
+        while (_mc_fwd_done == 0) {}
+        __sync_synchronize();
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (!borai_debug_check_finite_vec("logits(mc-forward)", logits, transformer->config.vocab_size, pos)) {
+            break;
+        }
+#endif
 
         if (pos < num_prompt_tokens - 1) {
             next = prompt_tokens[pos + 1];
@@ -913,13 +1098,22 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
                    next, transformer->config.vocab_size, pos);
             next = 1;
         }
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (pos < 16 || (pos % 64) == 0) {
+            printf("DEBUG: mc pos=%d token=%d next=%d\r\n", pos, token, next);
+        }
+#endif
         pos++;
 
         if (next == 1) { break; }
 
-        char* piece = decode(tokenizer, token, next);
-        safe_printf(piece);
-        fflush(stdout);
+        if (emit_tokens) {
+            char* piece = decode(tokenizer, token, next);
+            safe_printf(piece);
+#ifndef BORAIQ_BENCH_NO_TOKEN_FLUSH
+            fflush(stdout);
+#endif
+        }
         token = next;
 
         if (start == 0) { start = READ_CSR("mcycle"); }
@@ -957,9 +1151,16 @@ float* forward(Transformer* transformer, int token, int pos) {
     int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
+    int rope_terms = head_size / 2;
+    float inv_sqrt_head_size = 1.0f / sqrtf((float)head_size);
 
     // copy the token embedding into x
     memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
+    for (int i = 0; i < rope_terms; i++) {
+        float val = pos * s->rope_freq[i];
+        s->rope_cos[i] = cosf(val);
+        s->rope_sin[i] = sinf(val);
+    }
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {
@@ -981,11 +1182,9 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
+            int rope_idx = (i % head_size) >> 1;
+            float fcr = s->rope_cos[rope_idx];
+            float fci = s->rope_sin[rope_idx];
             int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
             for (int v = 0; v < rotn; v++) {
                 float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
@@ -1013,39 +1212,31 @@ float* forward(Transformer* transformer, int token, int pos) {
             float* q = s->q + h * head_size;
             // attention scores for this head
             float* att = s->att + h * p->seq_len;
+            int kv_head_off = (h / kv_mul) * head_size;
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* k = s->key_cache + loff + t * kv_dim + kv_head_off;
                 // calculate the attention score as the dot product of q and k
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
-                }
-                score /= sqrtf(head_size);
+                float score = dot_qk_head(q, k, head_size);
+                score *= inv_sqrt_head_size;
                 // save the score to the attention buffer
                 att[t] = score;
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
-#ifdef VEC_SOFTMAX
-            softmax_vec(att, att, 1, (size_t)(pos + 1));
-#else
-            softmax(att, pos + 1);
-#endif
+            softmax_attn(att, pos + 1);
 
             // weighted sum of the values, store back into xb
             float* xb = s->xb + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* v = s->value_cache + loff + t * kv_dim + kv_head_off;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
-                for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
-                }
+                axpy_v_head(xb, v, a, head_size);
             }
         }
 
@@ -1077,14 +1268,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 #endif
 
         // SwiGLU non-linearity
-        for (int i = 0; i < hidden_dim; i++) {
-            float val = s->hb[i];
-            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            val *= (1.0f / (1.0f + expf(-val)));
-            // elementwise multiply with w3(x)
-            val *= s->hb2[i];
-            s->hb[i] = val;
-        }
+        borai_swiglu_apply(s->hb, s->hb2, hidden_dim);
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
@@ -1106,7 +1290,18 @@ float* forward(Transformer* transformer, int token, int pos) {
     // classifier into logits
     quantize(&s->xq, x, dim);
 #ifdef TRANSPOSED_WEIGHTS
-    matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
+    if (wt->wcls0_n > 0) {
+        matmul_t(s->logits, &s->xq, wt->wcls0_T, w->wcls[0].s, dim, wt->wcls0_n);
+    }
+    if (wt->wcls1_n > 0) {
+        matmul_t(
+            s->logits + wt->wcls0_n,
+            &s->xq,
+            wt->wcls1_T,
+            w->wcls[0].s,
+            dim,
+            wt->wcls1_n);
+    }
 #else
     matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
 #endif
@@ -1356,7 +1551,9 @@ typedef struct Sampler {
     int vocab_size;
     ProbIndex* probindex; // buffer used in top-p sampling
     float temperature;
+    float inv_temperature;
     float topp;
+    int fast_vocab512;
     unsigned long long rng_state;
 } Sampler;
 
@@ -1386,12 +1583,63 @@ int sample_mult(float* probabilities, int n, float coin) {
     return n - 1; // in case of rounding errors
 }
 
-int compare(const void* a, const void* b) {
-    ProbIndex* a_ = (ProbIndex*) a;
-    ProbIndex* b_ = (ProbIndex*) b;
-    if (a_->prob > b_->prob) return -1;
-    if (a_->prob < b_->prob) return 1;
-    return 0;
+static inline void scale_logits_temp_inplace(float* logits, int n, float inv_temp) {
+#if defined(__riscv_vector)
+    int i = 0;
+    while (i < n) {
+        size_t vl = __riscv_vsetvl_e32m4((size_t)(n - i));
+        vfloat32m4_t v = __riscv_vle32_v_f32m4(logits + i, vl);
+        v = __riscv_vfmul_vf_f32m4(v, inv_temp, vl);
+        __riscv_vse32_v_f32m4(logits + i, v, vl);
+        i += (int)vl;
+    }
+#else
+    for (int i = 0; i < n; i++) {
+        logits[i] *= inv_temp;
+    }
+#endif
+}
+
+static inline int sample_mult_512(float* probabilities, float coin) {
+    float cdf = 0.0f;
+    for (int i = 0; i < 512; i++) {
+        cdf += probabilities[i];
+        if (coin < cdf) {
+            return i;
+        }
+    }
+    return 511;
+}
+
+static inline void heap_swap_probindex(ProbIndex* a, ProbIndex* b) {
+    ProbIndex t = *a;
+    *a = *b;
+    *b = t;
+}
+
+/* max-heapify at index i for ProbIndex.prob */
+static inline void heapify_down_probindex(ProbIndex* heap, int size, int i) {
+    while (1) {
+        int left = (i << 1) + 1;
+        int right = left + 1;
+        int largest = i;
+        if (left < size && heap[left].prob > heap[largest].prob) largest = left;
+        if (right < size && heap[right].prob > heap[largest].prob) largest = right;
+        if (largest == i) break;
+        heap_swap_probindex(&heap[i], &heap[largest]);
+        i = largest;
+    }
+}
+
+/* pop max element from heap[0..*size-1], decrements *size */
+static inline ProbIndex heap_pop_max_probindex(ProbIndex* heap, int* size) {
+    ProbIndex out = heap[0];
+    (*size)--;
+    if (*size > 0) {
+        heap[0] = heap[*size];
+        heapify_down_probindex(heap, *size, 0);
+    }
+    return out;
 }
 
 int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, float coin) {
@@ -1400,47 +1648,101 @@ int sample_topp(float* probabilities, int n, float topp, ProbIndex* probindex, f
     // have very low probabilities and are less likely to go "off the rails".
     // coin is a random number in [0, 1), usually from random_f32()
 
+    if (n <= 1) return 0;
+
     int n0 = 0;
-    // quicksort indices in descending order of probabilities
     // values smaller than (1 - topp) / (n - 1) cannot be part of the result
-    // so for efficiency we crop these out as candidates before sorting
+    // so for efficiency we crop these out as candidates before heap building
     const float cutoff = (1.0f - topp) / (n - 1);
     for (int i = 0; i < n; i++) {
-        if (probabilities[i] >= cutoff) {
+        float p = probabilities[i];
+        if (p >= cutoff) {
             probindex[n0].index = i;
-            probindex[n0].prob = probabilities[i];
+            probindex[n0].prob = p;
             n0++;
         }
     }
-    qsort(probindex, n0, sizeof(ProbIndex), compare);
-
-    // truncate the list where cumulative probability exceeds topp
-    float cumulative_prob = 0.0f;
-    int last_idx = n0 - 1; // in case of rounding errors consider all elements
-    for (int i = 0; i < n0; i++) {
-        cumulative_prob += probindex[i].prob;
-        if (cumulative_prob > topp) {
-            last_idx = i;
-            break; // we've exceeded topp by including last_idx
-        }
+    if (n0 <= 0) {
+        return sample_argmax(probabilities, n);
     }
 
-    // sample from the truncated list
+    // Build max-heap in-place: O(n0)
+    for (int i = (n0 / 2) - 1; i >= 0; i--) {
+        heapify_down_probindex(probindex, n0, i);
+    }
+
+    // Pop only as many top tokens as needed to exceed topp cumulative mass.
+    // Store popped candidates at the tail [selected_start, n0) for sampling.
+    int heap_size = n0;
+    int selected_start = n0;
+    float cumulative_prob = 0.0f;
+    while (heap_size > 0) {
+        ProbIndex top = heap_pop_max_probindex(probindex, &heap_size);
+        probindex[--selected_start] = top;
+        cumulative_prob += top.prob;
+        if (cumulative_prob > topp) break;
+    }
+
+    // sample from the selected candidates
     float r = coin * cumulative_prob;
     float cdf = 0.0f;
-    for (int i = 0; i <= last_idx; i++) {
+    for (int i = selected_start; i < n0; i++) {
         cdf += probindex[i].prob;
         if (r < cdf) {
             return probindex[i].index;
         }
     }
-    return probindex[last_idx].index; // in case of rounding errors
+    return probindex[n0 - 1].index; // in case of rounding errors
+}
+
+static inline int sample_topp_512(float* probabilities, float topp, ProbIndex* probindex, float coin) {
+    int n0 = 0;
+    const float cutoff = (1.0f - topp) / 511.0f;
+    for (int i = 0; i < 512; i++) {
+        float p = probabilities[i];
+        if (p >= cutoff) {
+            probindex[n0].index = i;
+            probindex[n0].prob = p;
+            n0++;
+        }
+    }
+    if (n0 <= 0) {
+        return sample_argmax(probabilities, 512);
+    }
+
+    for (int i = (n0 / 2) - 1; i >= 0; i--) {
+        heapify_down_probindex(probindex, n0, i);
+    }
+
+    int heap_size = n0;
+    int selected_start = n0;
+    float cumulative_prob = 0.0f;
+    while (heap_size > 0) {
+        ProbIndex top = heap_pop_max_probindex(probindex, &heap_size);
+        probindex[--selected_start] = top;
+        cumulative_prob += top.prob;
+        if (cumulative_prob > topp) {
+            break;
+        }
+    }
+
+    float r = coin * cumulative_prob;
+    float cdf = 0.0f;
+    for (int i = selected_start; i < n0; i++) {
+        cdf += probindex[i].prob;
+        if (r < cdf) {
+            return probindex[i].index;
+        }
+    }
+    return probindex[n0 - 1].index;
 }
 
 void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed) {
     sampler->vocab_size = vocab_size;
     sampler->temperature = temperature;
+    sampler->inv_temperature = (temperature > 0.0f) ? (1.0f / temperature) : 0.0f;
     sampler->topp = topp;
+    sampler->fast_vocab512 = (vocab_size == 512);
     sampler->rng_state = rng_seed;
     // buffer only used with nucleus sampling; may not need but it's ~small
     sampler->probindex = malloc(sampler->vocab_size * sizeof(ProbIndex));
@@ -1461,17 +1763,83 @@ float random_f32(unsigned long long *state) { // random float32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
+#ifdef BORAIQ_DEBUG_NUMERIC
+static int borai_debug_check_finite_vec(const char* tag, const float* v, int n, int pos) {
+    for (int i = 0; i < n; i++) {
+        float x = v[i];
+        if (!isfinite(x)) {
+            printf("STDERR: DEBUG non-finite %s at pos=%d idx=%d val=%f\r\n", tag, pos, i, x);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int borai_debug_check_probs(const char* tag, const float* p, int n) {
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float x = p[i];
+        if (!isfinite(x) || x < 0.0f) {
+            printf("STDERR: DEBUG bad prob in %s idx=%d val=%f\r\n", tag, i, x);
+            return 0;
+        }
+        sum += x;
+    }
+    if (!isfinite(sum) || sum <= 0.0f) {
+        printf("STDERR: DEBUG bad prob sum in %s sum=%f\r\n", tag, sum);
+        return 0;
+    }
+    if (sum < 0.90f || sum > 1.10f) {
+        printf("STDERR: DEBUG prob sum out-of-range in %s sum=%f\r\n", tag, sum);
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 int sample(Sampler* sampler, float* logits) {
     // sample the token given the logits and some hyperparameters
     int next;
+#ifdef BORAIQ_DEBUG_NUMERIC
+    if (!borai_debug_check_finite_vec("logits(pre-sample)", logits, sampler->vocab_size, -1)) {
+        return 1;
+    }
+#endif
     if (sampler->temperature == 0.0f) {
         // greedy argmax sampling: take the token with the highest probability
         next = sample_argmax(logits, sampler->vocab_size);
     } else {
+#ifdef BORAIQ_FAST_SAMPLER_512
+        if (sampler->fast_vocab512) {
+            if (sampler->inv_temperature != 1.0f) {
+                scale_logits_temp_inplace(logits, 512, sampler->inv_temperature);
+            }
+            softmax(logits, 512);
+#ifdef BORAIQ_DEBUG_NUMERIC
+            if (!borai_debug_check_probs("probs(fast512)", logits, 512)) {
+                return sample_argmax(logits, 512);
+            }
+#endif
+            float coin = random_f32(&sampler->rng_state);
+            if (sampler->topp <= 0 || sampler->topp >= 1) {
+                next = sample_mult_512(logits, coin);
+            } else {
+                next = sample_topp_512(logits, sampler->topp, sampler->probindex, coin);
+            }
+            return next;
+        }
+#endif
         // apply the temperature to the logits
-        for (int q=0; q<sampler->vocab_size; q++) { logits[q] /= sampler->temperature; }
+        if (sampler->inv_temperature != 1.0f) {
+            scale_logits_temp_inplace(logits, sampler->vocab_size, sampler->inv_temperature);
+        }
         // apply softmax to the logits to get the probabilities for next token
         softmax(logits, sampler->vocab_size);
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (!borai_debug_check_probs("probs(generic)", logits, sampler->vocab_size)) {
+            return sample_argmax(logits, sampler->vocab_size);
+        }
+#endif
         // flip a (float) coin (this is our source of entropy for sampling)
         float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token
@@ -1517,10 +1885,20 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
+#if defined(BORAIQ_BENCH_SUPPRESS_TOKEN_IO)
+    int emit_tokens = (steps > BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS);
+#else
+    int emit_tokens = 1;
+#endif
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (!borai_debug_check_finite_vec("logits(forward)", logits, transformer->config.vocab_size, pos)) {
+            break;
+        }
+#endif
 
         // advance the state machine
         if (pos < num_prompt_tokens - 1) {
@@ -1530,15 +1908,29 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             // otherwise sample the next token from the logits
             next = sample(sampler, logits);
         }
+        if (next < 0 || next >= transformer->config.vocab_size) {
+            printf("STDERR: sampled token out of range (%d), vocab=%d at pos=%d\r\n",
+                   next, transformer->config.vocab_size, pos);
+            next = 1;
+        }
+#ifdef BORAIQ_DEBUG_NUMERIC
+        if (pos < 16 || (pos % 64) == 0) {
+            printf("DEBUG: sc pos=%d token=%d next=%d\r\n", pos, token, next);
+        }
+#endif
         pos++;
 
         // data-dependent terminating condition: the BOS (=1) token delimits sequences
         if (next == 1) { break; }
 
-        // print the token as string, decode it with the Tokenizer object
-        char* piece = decode(tokenizer, token, next);
-        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-        fflush(stdout);
+        if (emit_tokens) {
+            // print the token as string, decode it with the Tokenizer object
+            char* piece = decode(tokenizer, token, next);
+            safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+#ifndef BORAIQ_BENCH_NO_TOKEN_FLUSH
+            fflush(stdout);
+#endif
+        }
         token = next;
 
         // init the timer here because the first iteration can be slower
@@ -1721,11 +2113,71 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
   printf("Started BorAIq (Int8 Quantized) Inference Engine on hart ID %lu\r\n", mhartid);
+#if defined(__riscv_vector)
+  printf("Build flags: RVV attention kernels ON (__riscv_vector=1)\r\n");
+#else
+  printf("Build flags: RVV attention kernels OFF (__riscv_vector=0)\r\n");
+#endif
+#if defined(PREFILL_MULTICORE)
+  printf("Build flags: PREFILL_MULTICORE ON\r\n");
+#else
+  printf("Build flags: PREFILL_MULTICORE OFF\r\n");
+#endif
+#if defined(VEC_SOFTMAX)
+  printf("Build flags: VEC_SOFTMAX ON\r\n");
+#else
+  printf("Build flags: VEC_SOFTMAX OFF\r\n");
+#endif
+#if defined(TRANSPOSED_WEIGHTS)
+  printf("Build flags: TRANSPOSED_WEIGHTS ON\r\n");
+#else
+  printf("Build flags: TRANSPOSED_WEIGHTS OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_SHAPE_GEMM)
+  printf("Build flags: BORAIQ_TINY_SHAPE_GEMM ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_SHAPE_GEMM OFF\r\n");
+#endif
+#if defined(BORAIQ_FAST_SAMPLER_512)
+  printf("Build flags: BORAIQ_FAST_SAMPLER_512 ON\r\n");
+#else
+  printf("Build flags: BORAIQ_FAST_SAMPLER_512 OFF\r\n");
+#endif
+#if defined(BORAIQ_BENCH_SUPPRESS_TOKEN_IO)
+  printf("Build flags: BORAIQ_BENCH_SUPPRESS_TOKEN_IO ON (min steps=%d)\r\n", BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS);
+#else
+  printf("Build flags: BORAIQ_BENCH_SUPPRESS_TOKEN_IO OFF\r\n");
+#endif
+#if defined(BORAIQ_BENCH_NO_TOKEN_FLUSH)
+  printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH ON\r\n");
+#else
+  printf("Build flags: BORAIQ_BENCH_NO_TOKEN_FLUSH OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_VEC_OPS)
+  printf("Build flags: BORAIQ_TINY_VEC_OPS ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_VEC_OPS OFF\r\n");
+#endif
+#if defined(BORAIQ_TINY_ATTN_H8)
+  printf("Build flags: BORAIQ_TINY_ATTN_H8 ON\r\n");
+#else
+  printf("Build flags: BORAIQ_TINY_ATTN_H8 OFF\r\n");
+#endif
+#if defined(BORAIQ_FAST_SWIGLU_EXP)
+  printf("Build flags: BORAIQ_FAST_SWIGLU_EXP ON\r\n");
+#else
+  printf("Build flags: BORAIQ_FAST_SWIGLU_EXP OFF\r\n");
+#endif
+#if defined(BORAIQ_DEBUG_NUMERIC)
+  printf("Build flags: BORAIQ_DEBUG_NUMERIC ON\r\n");
+#else
+  printf("Build flags: BORAIQ_DEBUG_NUMERIC OFF\r\n");
+#endif
 
   // Parameters //
   float temperature = 0.8f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
   float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-  int steps = 4;            // number of steps to run for (default 512)
+  int steps = 512;            // number of steps to run for (default 512)
   char *prompt = NULL;        // prompt string
   unsigned long long rng_seed = CLINT->MTIME; // seed rng with time by default
   GenMode mode = GENERATE;    // generate|chat
@@ -1757,8 +2209,7 @@ void app_main() {
 
 #ifdef PREFILL_MULTICORE
   hthread_init();
-  hthread_issue(1, mc_nop_worker, NULL);
-  hthread_join(1);
+  mc_start_worker(p_tfm);
 #endif
 
   while (1) {

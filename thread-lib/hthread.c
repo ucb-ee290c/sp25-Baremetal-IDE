@@ -9,11 +9,10 @@
 #include "chip_config.h"
 
 static wsdeque_t deques[N_HARTS];
-static volatile uint32_t deque_locks[N_HARTS];
-static volatile uint32_t pending_tasks[N_HARTS];
-static volatile uint8_t hart_busy[N_HARTS];
-static volatile uint32_t dispatch_rr = 0;
-static volatile uint32_t runtime_cookie = 0;
+static volatile uint32_t deque_locks[N_HARTS] __attribute__((aligned(64)));
+static volatile uint32_t pending_tasks[N_HARTS] __attribute__((aligned(64)));
+static volatile uint32_t dispatch_rr __attribute__((aligned(64))) = 0;
+static volatile uint32_t runtime_cookie __attribute__((aligned(64))) = 0;
 
 static volatile uint32_t barrier_count = 0;
 static volatile uint32_t barrier_epoch = 0;
@@ -34,6 +33,7 @@ static inline void unlock_deque(uint32_t hartid) {
 
 static inline void run_task(const htask_t *task) {
     task->fn(task->arg);
+    __sync_synchronize();
     __sync_fetch_and_sub(&pending_tasks[task->owner], 1u);
 }
 
@@ -61,6 +61,7 @@ static inline void ws_push(uint32_t hartid, const htask_t *task) {
         uint32_t b = dq->bottom;
         if ((b - t) < WSQ_SIZE) {
             dq->tasks[b & (WSQ_SIZE - 1)] = *task;
+            __sync_synchronize();
             __sync_fetch_and_add(&pending_tasks[task->owner], 1u);
             dq->bottom = b + 1u;
             unlock_deque(hartid);
@@ -70,8 +71,6 @@ static inline void ws_push(uint32_t hartid, const htask_t *task) {
         unlock_deque(hartid);
         asm volatile("nop");
     }
-
-    hart_busy[hartid] = 1u;
 }
 
 // Pop a local task from the bottom of the hart’s deque
@@ -172,7 +171,7 @@ void hthread_join(uint32_t hartid) {
     uint32_t self = (uint32_t)READ_CSR("mhartid");
     htask_t task;
 
-    while (pending_tasks[hartid] != 0u) {
+    while (__atomic_load_n(&pending_tasks[hartid], __ATOMIC_ACQUIRE) != 0u) {
         // If we're waiting on our own queue, make forward progress locally
         if (self == hartid) {
             if (ws_pop(hartid, &task)) {
@@ -222,7 +221,6 @@ void hthread_init() {
         deques[i].bottom = 0;
         pending_tasks[i] = 0;
         deque_locks[i] = 0;
-        hart_busy[i] = 0u;
         CLINT->MSIP[i] = 0u;
     }
 
@@ -239,7 +237,7 @@ void __main(void) {
     while (1) {
         // Secondary harts can reach __main before hart0 finishes runtime init.
         // Ignore scheduler work until hthread_init publishes a valid cookie.
-        if (runtime_cookie != HTHREAD_RUNTIME_COOKIE) {
+        if (__atomic_load_n(&runtime_cookie, __ATOMIC_ACQUIRE) != HTHREAD_RUNTIME_COOKIE) {
             asm volatile("nop");
             continue;
         }
@@ -247,7 +245,6 @@ void __main(void) {
         int did_work = 0;
 
         if (ws_pop(mhartid, &task)) {
-            hart_busy[mhartid] = 1u;
             run_task(&task);
             did_work = 1;
         } else {
@@ -256,7 +253,6 @@ void __main(void) {
                     continue;
                 }
                 if (ws_steal(victim, &task)) {
-                    hart_busy[mhartid] = 1u;
                     run_task(&task);
                     did_work = 1;
                     break;
@@ -265,7 +261,6 @@ void __main(void) {
         }
 
         if (!did_work) {
-            hart_busy[mhartid] = 0u;
             asm volatile("nop");
         }
     }

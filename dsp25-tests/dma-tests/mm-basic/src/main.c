@@ -5,8 +5,10 @@
 
 #include "hal_dma.h"
 #include "dma_test_utils.h"
+#include "simple_setup.h"
 
 #define TEST_NAME "dma-mm-basic"
+uint64_t target_frequency = 150000000l;
 
 int main(int argc, char **argv) {
   const size_t words = 256;
@@ -17,6 +19,19 @@ int main(int argc, char **argv) {
 
   (void)argc;
   (void)argv;
+
+  // Initialize UART0 for Serial Monitor
+  // UART_InitType UART0_init_config;
+  // UART0_init_config.baudrate = 115200;
+  // UART0_init_config.mode = UART_MODE_TX_RX;
+  // UART0_init_config.stopbits = UART_STOPBITS_2;
+  // uart_init(UART0, &UART0_init_config);
+  init_test(target_frequency);
+  // UART_InitType UART0_init_config;
+  // UART0_init_config.baudrate = 115200;
+  // UART0_init_config.mode = UART_MODE_TX_RX;
+  // UART0_init_config.stopbits = UART_STOPBITS_2;
+  // uart_init(UART0, &UART0_init_config);
 
   printf("[%s] start\n", TEST_NAME);
 

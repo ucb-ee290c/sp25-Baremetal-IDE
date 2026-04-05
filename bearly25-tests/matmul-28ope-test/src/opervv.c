@@ -363,24 +363,30 @@ void gemm_ope_16rows(
  * B_rvv: (K+1) × N, row 0 = zero bias (same format as OPE+RVV path)
  * C:     output [32 × ldc] int32
  * ==================================================================== */
-void gemm_rvv_32rows(const int8_t *A_rvv, const int8_t *B_rvv,
-                     int32_t *C, int N, int K, int ldc)
+void gemm_rvv_rows(const int8_t *A_rvv, const int8_t *B_rvv,
+                   int32_t *C, int N, int K, int ldc, int num_rows)
 {
     size_t cm_stride = (size_t)ldc * sizeof(int32_t);
     int r = 0;
-    while (r + 7 <= 32) {
+    while (r + 7 <= num_rows) {
         gemm_i8_i32_7xm4(7, N, K,
                           A_rvv + (size_t)r * K, K,
                           B_rvv,
                           C + r * ldc, cm_stride, 0);
         r += 7;
     }
-    while (r < 32) {
+    while (r < num_rows) {
         gemm_i8_i32_1xm4(1, N, K,
                           A_rvv + (size_t)r * K, K,
                           B_rvv,
                           C + r * ldc, cm_stride, 0);
         r++;
     }
+}
+
+void gemm_rvv_32rows(const int8_t *A_rvv, const int8_t *B_rvv,
+                     int32_t *C, int N, int K, int ldc)
+{
+    gemm_rvv_rows(A_rvv, B_rvv, C, N, K, ldc, 32);
 }
 

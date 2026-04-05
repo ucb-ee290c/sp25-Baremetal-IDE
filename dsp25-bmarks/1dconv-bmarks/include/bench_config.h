@@ -116,6 +116,13 @@
 #define CONV_BENCH_L2_BYTES (256u * 1024u)
 #endif
 
+// DRAM placement mode:
+// 0 -> use local static benchmark buffers (safer default on real chips)
+// 1 -> use fixed absolute addresses below
+#ifndef CONV_BENCH_DRAM_USE_ABSOLUTE_ADDR
+#define CONV_BENCH_DRAM_USE_ABSOLUTE_ADDR 0
+#endif
+
 // Memory-map defaults for buffer placement.
 #ifndef CONV_BENCH_DRAM_INPUT_BASE
 #define CONV_BENCH_DRAM_INPUT_BASE 0x8FFA0000UL

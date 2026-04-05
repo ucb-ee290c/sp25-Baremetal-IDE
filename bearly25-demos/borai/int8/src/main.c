@@ -64,7 +64,7 @@ const unsigned char *ASCII_BEL = (const unsigned char *) "\a";
 
 // int32_t GS = 64; // group size global for quantization of the weights
 
-uint64_t target_frequency = 500000000l;
+uint64_t target_frequency = 1000000000l;
 
 // #ifdef ENABLE_DMA_MATVEC
 // int32_t GS_MATVEC_BOUND = 0;
@@ -306,69 +306,29 @@ void memory_map_weights(TransformerWeights *w, Config* p, void* ptr, uint8_t sha
 
 void read_checkpoint_from_header(Config* config, TransformerWeights* weights, float** data, size_t* file_size) {
   size_t cumulative_offset = 0;
-  printf("Loading checkpoint data...\r\n");
   // Check magic number
   uint32_t magic = *((uint32_t*)(WEIGHTS + cumulative_offset));
   if (magic != MODEL_MAGIC_NUMBER) {
-    printf("Model magic number does not match! Please preprocess with export.py.\r\n");
+    printf("ERROR: Model magic number mismatch!\r\n");
   }
-  printf("Magic number verified\r\n");
   cumulative_offset += sizeof(uint32_t);
 
   uint32_t version = *((uint32_t*)(WEIGHTS + cumulative_offset));
   if (version != MODEL_VERSION_INT8) {
-    printf("Model version is not an Int8 Quantized model. Version (hex) = %x", version);
+    printf("ERROR: Model version is not Int8 Quantized. Version (hex) = %x\r\n", version);
   }
-  printf("Model is properly formatted as Int8 Quantized (Version 2).\r\n");
   cumulative_offset += sizeof(uint32_t);
-  
+
   // load from weights.h WEIGHTS
   memcpy(config, (WEIGHTS + cumulative_offset), sizeof(Config));
   cumulative_offset += sizeof(Config);
-  printf("Successfully loaded configuration structure.\r\n");
-  printf("\tTransformer Dimension:\t%d\r\n", config->dim);
-  printf("\tFFN Layer Dimension:\t%d\r\n", config->hidden_dim);
-  printf("\tLayer Count:\t%d\r\n", config->n_layers);
-  printf("\tQuery Head Count:\t%d\r\n", config->n_heads);
-  printf("\tKey/Value Head Count:\t%d\r\n", config->n_kv_heads);
-  printf("\tByte-Level Vocabulary Size:\t%d\r\n", config->vocab_size);
-  printf("\tMaximum Sequence Length:\t%d\r\n", config->seq_len);
 
   // Check shared classifier byte
   uint8_t shared_classifier = *((uint8_t*)(WEIGHTS + cumulative_offset));
-  if (shared_classifier != 1) {
-    printf("Non-shared classifier detected. Shared classifier byte value = %x", shared_classifier);
-  }
-  printf("Proper shared classifier detected.\r\n");
   cumulative_offset += sizeof(uint8_t);
 
-  // Read group size
-  //int32_t group_size = *((int32_t*)(WEIGHTS + cumulative_offset));
-  //GS = group_size;
-  //cumulative_offset += sizeof(int32_t);
-  //printf("\tGroup Size:\t%d\r\n", GS);
-
-  printf("Accelerator Status:\r\n");
-  printf("\tBearly24 DMA MatVec:\t");
-#ifdef ENABLE_DMA_MATVEC
-  printf("Enabled\r\n");
-#else
-  printf("Disabled\r\n");
-#endif
-
-  printf("\tBearly24 QTrans DotProd:\t");
 #ifdef ENABLE_QT_DOTPROD
   GS_QTDP_BOUND = GS / 8 * 8;
-  printf("Enabled\r\n");
-#else
-  printf("Disabled\r\n");
-#endif
-
-  printf("\tDSP'24 Saturn-V Vector:\t");
-#ifdef ENABLE_SATURNV_VEC
-  printf("Enabled\r\n");
-#else
-  printf("Disabled\r\n");
 #endif
 
   // int shared_weights = config->vocab_size > 0 ? 1 : 0;
@@ -382,12 +342,9 @@ void read_checkpoint_from_header(Config* config, TransformerWeights* weights, fl
 }
 
 void build_transformer(Transformer *t) {
-    // read in the Config and the Weights from the checkpoint
     read_checkpoint_from_header(&t->config, &t->weights, &t->data, &t->file_size);
-    // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
 #ifdef TRANSPOSED_WEIGHTS
-    // transpose all weight matrices once; forward() will use weights_t exclusively
     alloc_and_transpose_weights_i8(&t->weights_t, &t->weights, &t->config);
 #endif
 }
@@ -504,6 +461,15 @@ static void make_b_pack_i8(
  * alloc_and_transpose_weights_i8 — allocate and fill transposed B_packs.
  * Called once in build_transformer().
  * ------------------------------------------------------------------------- */
+static void* checked_malloc(size_t size, const char* name) {
+    void* ptr = malloc(size);
+    if (!ptr) {
+        printf("FATAL: malloc failed for %s (%u bytes)\r\n", name, (unsigned)size);
+        while (1) {}
+    }
+    return ptr;
+}
+
 void alloc_and_transpose_weights_i8(
     TransformerWeightsT* wt,
     const TransformerWeights* w,
@@ -515,49 +481,49 @@ void alloc_and_transpose_weights_i8(
     int kv_dim     = (p->dim * p->n_kv_heads) / p->n_heads;
 
     /* wq: W[dim × dim], B_pack [(dim+1) × dim] per layer */
-    wt->wq_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * dim);
+    wt->wq_T = (unsigned char*)checked_malloc(n_layers * (size_t)(dim + 1) * dim, "wq_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wq_T + l * (size_t)(dim + 1) * dim,
                        w->wq[l].q, dim, dim);
 
     /* wk: W[kv_dim × dim], B_pack [(dim+1) × kv_dim] per layer */
-    wt->wk_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * kv_dim);
+    wt->wk_T = (unsigned char*)checked_malloc(n_layers * (size_t)(dim + 1) * kv_dim, "wk_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wk_T + l * (size_t)(dim + 1) * kv_dim,
                        w->wk[l].q, kv_dim, dim);
 
     /* wv: same layout as wk */
-    wt->wv_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * kv_dim);
+    wt->wv_T = (unsigned char*)checked_malloc(n_layers * (size_t)(dim + 1) * kv_dim, "wv_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wv_T + l * (size_t)(dim + 1) * kv_dim,
                        w->wv[l].q, kv_dim, dim);
 
     /* wo: W[dim × dim], same layout as wq */
-    wt->wo_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * dim);
+    wt->wo_T = (unsigned char*)checked_malloc(n_layers * (size_t)(dim + 1) * dim, "wo_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wo_T + l * (size_t)(dim + 1) * dim,
                        w->wo[l].q, dim, dim);
 
     /* w1: W[hidden_dim × dim], B_pack [(dim+1) × hidden_dim] per layer */
-    wt->w1_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
+    wt->w1_T = (unsigned char*)checked_malloc(n_layers * (size_t)(dim + 1) * hidden_dim, "w1_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->w1_T + l * (size_t)(dim + 1) * hidden_dim,
                        w->w1[l].q, hidden_dim, dim);
 
     /* w2: W[dim × hidden_dim], B_pack [(hidden_dim+1) × dim] per layer */
-    wt->w2_T = (unsigned char*)malloc(n_layers * (size_t)(hidden_dim + 1) * dim);
+    wt->w2_T = (unsigned char*)checked_malloc(n_layers * (size_t)(hidden_dim + 1) * dim, "w2_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->w2_T + l * (size_t)(hidden_dim + 1) * dim,
                        w->w2[l].q, dim, hidden_dim);
 
     /* w3: same layout as w1 */
-    wt->w3_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * hidden_dim);
+    wt->w3_T = (unsigned char*)checked_malloc(n_layers * (size_t)(dim + 1) * hidden_dim, "w3_T");
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->w3_T + l * (size_t)(dim + 1) * hidden_dim,
                        w->w3[l].q, hidden_dim, dim);
 
     /* wcls: W[vocab_size × dim], B_pack [(dim+1) × vocab_size] */
-    wt->wcls_T = (unsigned char*)malloc((size_t)(dim + 1) * p->vocab_size);
+    wt->wcls_T = (unsigned char*)checked_malloc((size_t)(dim + 1) * p->vocab_size, "wcls_T");
     make_b_pack_i8(wt->wcls_T, w->wcls[0].q, p->vocab_size, dim);
 }
 
@@ -596,6 +562,41 @@ static void matmul_t(
 #endif /* TRANSPOSED_WEIGHTS */
 
 // ----------------------------------------------------------------------------
+// Types needed by both single-core and multicore paths
+
+typedef struct {
+    char *str;
+    int id;
+} TokenIndex;
+
+typedef struct {
+    char** vocab;
+    float* vocab_scores;
+    TokenIndex *sorted_vocab;
+    int vocab_size;
+    unsigned int max_token_length;
+    unsigned char byte_pieces[512];
+} Tokenizer;
+
+typedef struct {
+    float prob;
+    int index;
+} ProbIndex;
+
+typedef struct {
+    int vocab_size;
+    ProbIndex* probindex;
+    float temperature;
+    float topp;
+    unsigned long long rng_state;
+} Sampler;
+
+// Forward declarations of functions used by generate paths
+void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens);
+char* decode(Tokenizer* t, int prev_token, int token);
+int sample(Sampler* sampler, float* logits);
+
+// ----------------------------------------------------------------------------
 // Multicore prefill support
 #ifdef PREFILL_MULTICORE
 
@@ -604,22 +605,28 @@ static volatile int _mc_token_val = 0;
 static volatile int _mc_pos_val   = 0;
 static volatile int _mc_fwd_rdy   = 0; /* hart 0 sets → hart 1 starts forward */
 static volatile int _mc_all_done  = 0; /* hart 0 sets → hart 1 exits worker  */
+static volatile int _mc_init_done = 0; /* hart 0 sets after init; hart 1 waits */
 
 /* 2-hart sense-reversing barrier.
  * Hart 0: waits for hart 1 to arrive, then flips the shared sense to release.
- * Hart 1: signals arrival, then waits for sense to flip. */
+ * Hart 1: signals arrival, then waits for sense to flip.
+ *
+ * fence instructions ensure cross-hart visibility on RISC-V RVWMO. */
 static volatile int _bar_h1_arrived = 0;
 static volatile int _bar_sense      = 0;
 
 static void barrier2(int hartid) {
     int s = _bar_sense;
     if (hartid == 0) {
-        while (!_bar_h1_arrived) {}
+        while (!_bar_h1_arrived) { asm volatile("fence" ::: "memory"); }
         _bar_h1_arrived = 0;
+        asm volatile("fence" ::: "memory");
         _bar_sense = !s;
+        asm volatile("fence" ::: "memory");
     } else {
         _bar_h1_arrived = 1;
-        while (_bar_sense == s) {}
+        asm volatile("fence" ::: "memory");
+        while (_bar_sense == s) { asm volatile("fence" ::: "memory"); }
     }
 }
 
@@ -859,7 +866,9 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
         /* publish token/pos, then signal hart 1 to start its half */
         _mc_token_val = token;
         _mc_pos_val   = pos;
+        asm volatile("fence" ::: "memory");
         _mc_fwd_rdy   = 1;
+        asm volatile("fence" ::: "memory");
         float* logits = forward_mc(transformer, token, pos, 0);
 
         if (pos < num_prompt_tokens - 1) {
@@ -884,13 +893,12 @@ void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sample
 
     if (pos > 1) {
         unsigned long end = READ_CSR("mcycle");
-        printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end - start);
-        printf("BENCHMARK: Total tokens:\t%d\r\n", pos - 1);
-        printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end - start) / (pos - 1));
-        printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end - start) / target_frequency) / (pos - 1));
-        printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end - start) / (float)target_frequency) / (float)(pos - 1));
-        printf("BENCHMARK: CLOCK Frequency:\t%u\r\n", target_frequency);
-        printf("STDERR: achieved tok/s: %f\r\n", (pos - 1) / (((double)(end - start)) / target_frequency));
+        unsigned long elapsed = end - start;
+        int toks = pos - 1;
+        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
+               toks, elapsed,
+               (double)toks / ((double)elapsed / target_frequency),
+               target_frequency);
     }
 
     free(prompt_tokens);
@@ -1069,20 +1077,6 @@ float* forward(Transformer* transformer, int token, int pos) {
 
 // ----------------------------------------------------------------------------
 // The Byte Pair Encoding (BPE) Tokenizer that translates strings <-> tokens
-
-typedef struct {
-    char *str;
-    int id;
-} TokenIndex;
-
-typedef struct {
-    char** vocab;
-    float* vocab_scores;
-    TokenIndex *sorted_vocab;
-    int vocab_size;
-    unsigned int max_token_length;
-    unsigned char byte_pieces[512]; // stores all single-byte strings
-} Tokenizer;
 
 int compare_tokens(const void *a, const void *b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
@@ -1295,19 +1289,6 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
 // The Sampler, which takes logits and returns a sampled token
 // sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
 
-typedef struct {
-    float prob;
-    int index;
-} ProbIndex; // struct used when sorting probabilities during top-p sampling
-
-typedef struct {
-    int vocab_size;
-    ProbIndex* probindex; // buffer used in top-p sampling
-    float temperature;
-    float topp;
-    unsigned long long rng_state;
-} Sampler;
-
 int sample_argmax(float* probabilities, int n) {
     // return the index that has the highest probability
     int max_i = 0;
@@ -1497,14 +1478,12 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1) {
         unsigned long end = READ_CSR("mcycle");
-        printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end-start);
-        printf("BENCHMARK: Total tokens:\t%d\r\n", pos-1);
-        printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end-start)/(pos-1));
-        printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end-start)/target_frequency)/(pos-1));
-        printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end-start)/(float)target_frequency)/(float)(pos-1));
-
-        printf("BENCHMARK: CLOCK Frequency:\t%u\r\n", target_frequency);
-        printf("STDERR: achieved tok/s: %f\r\n", (pos-1) / (((double)(end-start))/target_frequency));
+        unsigned long elapsed = end - start;
+        int toks = pos - 1;
+        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
+               toks, elapsed,
+               (double)toks / ((double)elapsed / target_frequency),
+               target_frequency);
     }
 
     free(prompt_tokens);
@@ -1652,17 +1631,15 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
         if (next == 2) { printf("\r\n"); }
     }
 
-    unsigned long end = READ_CSR("mcycle");
-    printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end-start);
-    printf("BENCHMARK: Total tokens:\t%d\r\n", pos-1);
-    printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end-start)/(pos-1));
-    printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end-start)/SYS_CLK_FREQ)/(pos-1));
-    printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end-start)/(float)SYS_CLK_FREQ)/(float)(pos-1));
-
-    printf("BENCHMARK: MTIME Frequency:\t%u\r\n", MTIME_FREQ);
-    user_turn = 1;
-    start = 0;
-    printf("\r\n");
+    if (pos > 1) {
+        unsigned long end = READ_CSR("mcycle");
+        unsigned long elapsed = end - start;
+        int toks = pos - 1;
+        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
+               toks, elapsed,
+               (double)toks / ((double)elapsed / SYS_CLK_FREQ),
+               SYS_CLK_FREQ);
+    }
     free(prompt_tokens);
 }
 
@@ -1674,7 +1651,7 @@ void app_main() {
   // Parameters //
   float temperature = 0.8f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
   float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-  int steps = 4;            // number of steps to run for (default 512)
+  int steps = 512;           // number of steps to run for
   char *prompt = NULL;        // prompt string
   unsigned long long rng_seed = CLINT->MTIME; // seed rng with time by default
   GenMode mode = GENERATE;    // generate|chat
@@ -1704,11 +1681,15 @@ void app_main() {
   Sampler sampler;
   build_sampler(&sampler, p_tfm->config.vocab_size, temperature, topp, rng_seed);
 
+#ifdef PREFILL_MULTICORE
+  // Signal hart 1 that initialization is complete and it's safe to poll
+  asm volatile("fence" ::: "memory");
+  _mc_init_done = 1;
+  asm volatile("fence" ::: "memory");
+#endif
 
   while (1) {
-    // Disabled for testing. Should uncomment when ready for random stuff each run
     sampler.rng_state = CLINT->MTIME;
-    printf("\r\nMTIME RNG State: %llu\r\n\r\n", sampler.rng_state);
 
     // run!
     if (mode == GENERATE) {
@@ -1761,13 +1742,20 @@ void __attribute__((noreturn)) __main(void) {
   unsigned long long hartid;
   asm volatile("csrr %0, mhartid" : "=r"(hartid));
   if (hartid == 1) {
+    /* Wait for hart 0 to finish BSS init and transformer setup.
+     * Without this gate, hart 1 can read _mc_fwd_rdy before BSS is
+     * zeroed, enter forward_mc with garbage, and trap-hang. */
+    while (!_mc_init_done) { asm volatile("fence" ::: "memory"); }
+
     /* Hart 1 worker: spin until hart 0 signals work, then execute the
      * hart-1 half of each forward pass alongside hart 0.
      * Outer loop re-arms after each generate_mc() round so hart 1
      * survives the app_main while(1) loop. */
     while (1) {
+      asm volatile("fence" ::: "memory");
       if (_mc_fwd_rdy) {
         _mc_fwd_rdy = 0;
+        asm volatile("fence" ::: "memory");
         forward_mc(&_mc_transformer, _mc_token_val, _mc_pos_val, 1);
       }
     }

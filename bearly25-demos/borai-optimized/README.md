@@ -2,13 +2,13 @@
 
 This is a port of the [llama2.c](https://github.com/karpathy/llama2.c/tree/master) inferencing system created by the Fall 2024 EE 194 Berkeley IC Design Project Bringup course to work with the BearlyML'24 tapeout chip from Spring 2024.
 
-## Compiling and Running BorAI (with Float32 Matmul)
+## Compiling and Running BorAI Optimized (with Float32 Matmul)
 
 ```bash
-make borai
+make borai-optimized
 ```
 
-This will produce an ELF binary file at `./build/borai/borai.elf`. A JTAG interface can then be initialized using
+This will produce an ELF binary file at `./build/borai-optimized/borai-optimized.elf`. A JTAG interface can then be initialized using
 
 ```bash
 make ocd CHIP=bearly24
@@ -16,18 +16,18 @@ make ocd CHIP=bearly24
 
 This command will automatically start an [OpenOCD](https://openocd.org/) server with the proper BearlyML'24 chip configuration. Hart IDs 0-3 will be mapped to ports 3333-3336 on your machine. We can then initialize a GDB interface with a server connection to Hart 2 using
 ```
-make gdb BINARY=./build/borai/borai.elf PORT=3335
+make gdb BINARY=./build/borai-optimized/borai-optimized.elf PORT=3335
 ```
 
 Upon running `load` in GDB, the binary will be loaded to the chip and ready for testing.
 
-## Compiling and Running BorAIq (with Int8 Matmul)
+## Compiling and Running BorAIq Optimized (with Int8 Matmul)
 
 ```bash
-make boraiq
+make boraiq-optimized
 ```
 
-This will produce an ELF binary file at `./build/borai/boraiq.elf`. A JTAG interface can then be initialized using
+This will produce an ELF binary file at `./build/boraiq-optimized/boraiq-optimized.elf`. A JTAG interface can then be initialized using
 
 ```bash
 make ocd CHIP=bearly24
@@ -35,7 +35,7 @@ make ocd CHIP=bearly24
 
 This command will automatically start an [OpenOCD](https://openocd.org/) server with the proper BearlyML'24 chip configuration. Hart IDs 0-3 will be mapped to ports 3333-3336 on your machine. We can then initialize a GDB interface with a server connection to Hart 2 using
 ```bash
-make gdb BINARY=./build/borai/boraiq.elf PORT=3335
+make gdb BINARY=./build/boraiq-optimized/boraiq-optimized.elf PORT=3335
 ```
 
 

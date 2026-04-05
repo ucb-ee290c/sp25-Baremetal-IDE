@@ -32,6 +32,10 @@ set(MFCC_LIB_DRIVER_SOURCES
   src/mfcc_specialized_f16.c
 )
 
+if(THREAD_LIB)
+  list(APPEND MFCC_LIB_DRIVER_SOURCES src/mfcc_driver_mc.c)
+endif()
+
 set(MFCC_LIB_NMSIS_BASIC_SOURCES
   src/nmsis/BasicMathFunctions/riscv_abs_q15.c
   src/nmsis/BasicMathFunctions/riscv_abs_q31.c

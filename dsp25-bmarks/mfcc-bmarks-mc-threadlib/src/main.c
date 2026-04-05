@@ -6,8 +6,14 @@
 #include "bench_cases.h"
 #include "bench_config.h"
 #include "mfcc_driver.h"
+#include "mfcc_driver_mc.h"
 #include "mfcc_reference_data.h"
 #include "simple_setup.h"
+
+/* Use explicit threadlib API declarations to avoid picking a legacy hthread.h. */
+void hthread_init(void);
+void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);
+void hthread_join(uint32_t hartid);
 
 #ifndef MFCC_REF_FFT_LEN
 #define MFCC_REF_FFT_LEN MFCC_DRIVER_FFT_LEN
@@ -323,7 +329,7 @@ static int run_sp_f32_mode(const float32_t *input,
     if (is_cold) {
       bench_cache_flush();
     }
-    st = mfcc_driver_run_sp1024x23x12_f32(&g_driver, input, output, &cycles);
+    st = mfcc_driver_run_sp1024x23x12_f32_mc(&g_driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f32 run failed: %s\n", mfcc_driver_status_str(st));
@@ -362,7 +368,7 @@ static int run_sp_f16_mode(const float32_t *input,
     if (is_cold) {
       bench_cache_flush();
     }
-    st = mfcc_driver_run_sp1024x23x12_f16(&g_driver, input, output, &cycles);
+    st = mfcc_driver_run_sp1024x23x12_f16_mc(&g_driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f16 run failed: %s\n", mfcc_driver_status_str(st));
@@ -905,25 +911,24 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            MFCC_BENCH_ENABLE_SP1024X23X12_F16);
   }
 
-  uint64_t wall_t0, wall_t1;
-  asm volatile("rdcycle %0" : "=r"(wall_t0));
-
   for (uint32_t tc = 0; tc < MFCC_BENCH_NUM_CASES; tc++) {
     run_case(&g_cases[tc], tc);
-  }
-
-  asm volatile("rdcycle %0" : "=r"(wall_t1));
-  if (mfcc_bench_is_print_hart()) {
-    printf("\n  wall-clock cycles (all cases): %llu\n",
-           (unsigned long long)(wall_t1 - wall_t0));
   }
 
   print_global_cycle_summary();
   print_global_correctness_summary();
 }
 
+static void mc_nop_worker(void *arg) {
+  (void)arg;
+}
+
 void app_init(void) {
   init_test(target_frequency);
+  hthread_init();
+  hthread_issue(1, mc_nop_worker, NULL);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
   if (setup_once() != 0) {
     if (mfcc_bench_is_print_hart()) {
       printf("MFCC benchmark setup failed\n");
@@ -936,6 +941,7 @@ void app_init(void) {
 
 void app_main(void) {
   run_suite_for_frequency(target_frequency);
+  mfcc_driver_mc_shutdown();
 }
 
 #if MFCC_BENCH_ENABLE_PLL_SWEEP
@@ -951,6 +957,10 @@ int main(void) {
 
   target_frequency = k_pll_sweep_freqs_hz[0];
   init_test(target_frequency);
+  hthread_init();
+  hthread_issue(1, mc_nop_worker, NULL);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
   if (setup_once() != 0) {
     return -1;
   }
@@ -959,8 +969,12 @@ int main(void) {
   for (size_t i = 1; i < num_freqs; ++i) {
     target_frequency = k_pll_sweep_freqs_hz[i];
     reconfigure_pll(target_frequency, MFCC_BENCH_PLL_SWEEP_SLEEP_MS);
+    hthread_issue(1, mc_nop_worker, NULL);
+    hthread_join(1);
+    asm volatile("fence rw, rw" ::: "memory");
     run_suite_for_frequency(target_frequency);
   }
+  mfcc_driver_mc_shutdown();
   return 0;
 #else
   app_init();

@@ -20,25 +20,50 @@ void handle_sigint(int sig) {
   //exit(0);
 }
 
+void c2c_write_dram_read() {
+  unsigned long addr = 0x480010000;
+  uint32_t *dram = (uint32_t*) 0x80010000;
+  *dram = 0xDEADBEEF;
+  printf("set dram to %x\n", *dram);
+  msleep(500);
+  uint32_t *c2c = (uint32_t *) addr;
+  printf("set c2c = address %lx\n", addr);
+  printf("reading: %x\n", *c2c);
+  msleep(1000);
+}
+
+void dram_write_c2c_read() {
+  unsigned long addr = 0x480000000;
+  uint32_t *dram = (uint32_t*) 0x80000000;
+  // printf("set value in dram to %x\n", *dram);
+  uint32_t *c2c = (uint32_t *) addr;
+  printf("set c2c = address %lx\n", addr);
+  *c2c = 0xDEADBEEF;
+  msleep(500);
+  printf("reading from dram: %x\n", *dram);
+  msleep(1000);  
+}
+
 void app_main() {
   printf("In app_main.\n");
   while (1) {
-    // uint32_t *c2c = (uint32_t *)0x180000000UL; 
-    uint32_t *c2c = (uint32_t *) 0x40000000UL;
-    printf("set c2c = address\n");
-    uint32_t read;
-    *c2c = 1;
-    printf("set value in c2c to 1\n");
-    read = *(uint32_t *)0x40000000UL;
-    printf("set read to value %d\n", read);
-    char *msg = "Writing 1 to C2C\n";
-    puts(msg);
-    printf("read: %d\n", read);
-    // printf("%d\n", count);
-    // count++;
-    msleep(1000);
+    c2c_write_dram_read();
+    // dram_write_c2c_read();
   }
 }
+
+// ila_0 ila (
+//   clk(_dutWrangler_auto_out_3_clock),
+
+//   probe0(serial_tl_1_in_bits_phit_IBUF),
+//   probe1(serial_tl_1_out_bits_phit_OBUF),
+//   probe2(serial_tl_1_clock_in_IBUF_BUFG),
+//   probe3(serial_tl_1_clock_out_OBUF),
+//   probe4(serial_tl_1_in_valid_IBUF),
+//   probe5(serial_tl_1_out_valid_OBUF),
+//   probe6(serial_tl_1_reset_in_IBUF),
+//   probe7(serial_tl_1_reset_in_OBUF)
+//   );
 
 int main(void) {
   UART_InitType UART0_init_config;

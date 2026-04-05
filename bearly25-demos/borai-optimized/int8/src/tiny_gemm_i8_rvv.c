@@ -161,7 +161,7 @@ static inline void qgemm_k172_m4(
     }
 }
 
-/* Exact-shape entrypoints used by borai-test (dim=64, hidden=172, vocab=512). */
+/* Exact-shape entrypoints used by borai-optimized (dim=64, hidden=172, vocab=512). */
 static inline void qgemm_k64_n32(const int8_t* a, const int8_t* w_t_pack, float* c, float scale) {
     qgemm_k64_m4(a, w_t_pack, c, 32, scale);
 }

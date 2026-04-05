@@ -17,15 +17,13 @@ add_executable(mfcc-bmarks-mc-threadlib
 
 target_include_directories(mfcc-bmarks-mc-threadlib PUBLIC include)
 target_include_directories(mfcc-bmarks-mc-threadlib PRIVATE
-  ${CMAKE_SOURCE_DIR}/thread-lib
   ${CMAKE_SOURCE_DIR}/bmark-lib
+  ${CMAKE_SOURCE_DIR}/thread-lib
 )
 
 target_link_libraries(mfcc-bmarks-mc-threadlib PRIVATE
   mfcclib
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
-  chip-config
-  rocketcore
   threadlib
 )
 

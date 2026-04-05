@@ -20,7 +20,7 @@ void handle_sigint(int sig) {
   //exit(0);
 }
 
-void c2c_write_dram_read() {
+void dram_write_c2c_read() {
   unsigned long addr = 0x480010000;
   uint32_t *dram = (uint32_t*) 0x80010000;
   *dram = 0xDEADBEEF;
@@ -32,7 +32,7 @@ void c2c_write_dram_read() {
   msleep(1000);
 }
 
-void dram_write_c2c_read() {
+void c2c_write_dram_read() {
   unsigned long addr = 0x480000000;
   uint32_t *dram = (uint32_t*) 0x80000000;
   // printf("set value in dram to %x\n", *dram);

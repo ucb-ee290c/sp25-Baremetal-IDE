@@ -291,6 +291,109 @@ static void sp_dct_worker_f16(void *arg) {
 }
 #endif
 
+typedef enum {
+  SP_STAGE_NONE = 0U,
+  SP_STAGE_WINDOW = 1U,
+  SP_STAGE_CMPLX_MAG = 2U,
+  SP_STAGE_RESCALE = 3U,
+  SP_STAGE_MEL = 4U,
+  SP_STAGE_DCT = 5U,
+  SP_STAGE_EXIT = 6U
+} sp_stage_t;
+
+typedef struct {
+  volatile uint32_t cmd;
+  volatile uint32_t ack;
+  const riscv_mfcc_instance_f32 *S;
+  float32_t *pSrc;
+  float32_t *pTmp;
+  float32_t *pDst;
+  float32_t maxValue;
+  uint32_t half;
+  uint32_t mel_mid;
+  uint32_t dct_mid;
+} sp_intra_f32_t;
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+typedef struct {
+  volatile uint32_t cmd;
+  volatile uint32_t ack;
+  const riscv_mfcc_instance_f16 *S;
+  float16_t *pSrc;
+  float16_t *pTmp;
+  float16_t *pDst;
+  float16_t maxValue;
+  uint32_t half;
+  uint32_t mel_mid;
+  uint32_t dct_mid;
+} sp_intra_f16_t;
+#endif
+
+static inline void sp_stage_launch(volatile uint32_t *cmd,
+                                   volatile uint32_t *ack,
+                                   uint32_t stage) {
+  __atomic_store_n(ack, SP_STAGE_NONE, __ATOMIC_RELEASE);
+  __sync_synchronize();
+  __atomic_store_n(cmd, stage, __ATOMIC_RELEASE);
+}
+
+static inline void sp_stage_wait(volatile uint32_t *ack, uint32_t stage) {
+  while (__atomic_load_n(ack, __ATOMIC_ACQUIRE) != stage) {
+    asm volatile("nop");
+  }
+}
+
+static void sp_intra_worker_f32(void *arg) {
+  sp_intra_f32_t *w = (sp_intra_f32_t *)arg;
+  uint32_t last = SP_STAGE_NONE;
+
+  while (1) {
+    const uint32_t stage = __atomic_load_n(&w->cmd, __ATOMIC_ACQUIRE);
+    if ((stage == SP_STAGE_NONE) || (stage == last)) {
+      asm volatile("nop");
+      continue;
+    }
+
+    if (stage == SP_STAGE_WINDOW) {
+      for (uint32_t i = w->half; i < w->S->fftLen; i++) {
+        w->pSrc[i] *= w->S->windowCoefs[i];
+      }
+    } else if (stage == SP_STAGE_CMPLX_MAG) {
+      riscv_cmplx_mag_f32(w->pTmp + (2U * w->half), w->pSrc + w->half, w->S->fftLen - w->half);
+    } else if (stage == SP_STAGE_RESCALE) {
+      if (w->maxValue != 0.0f) {
+        for (uint32_t i = w->half; i < w->S->fftLen; i++) {
+          w->pSrc[i] *= w->maxValue;
+        }
+      }
+    } else if (stage == SP_STAGE_MEL) {
+      sp_mel_job_f32_t job;
+      job.S = w->S;
+      job.spectrum = w->pSrc;
+      job.mel_out = w->pTmp;
+      job.mel_start = w->mel_mid;
+      job.mel_end = MFCC_TINYSPEECH_NUM_MEL;
+      job.coef_offset = sp_coef_offset(w->S->filterLengths, w->mel_mid);
+      sp_mel_worker_f32(&job);
+    } else if (stage == SP_STAGE_DCT) {
+      sp_dct_job_f32_t job;
+      job.S = w->S;
+      job.mel = w->pTmp;
+      job.out = w->pDst;
+      job.dct_start = w->dct_mid;
+      job.dct_end = MFCC_TINYSPEECH_NUM_DCT;
+      sp_dct_worker_f32(&job);
+    }
+
+    __sync_synchronize();
+    __atomic_store_n(&w->ack, stage, __ATOMIC_RELEASE);
+    last = stage;
+    if (stage == SP_STAGE_EXIT) {
+      return;
+    }
+  }
+}
+
 static mfcc_driver_status_t run_sp1024_f32_intra_mc(mfcc_driver_t *ctx,
                                                      const float32_t *input,
                                                      float32_t *output,
@@ -302,11 +405,8 @@ static mfcc_driver_status_t run_sp1024_f32_intra_mc(mfcc_driver_t *ctx,
   uint32_t index = 0U;
   uint64_t t0 = 0U;
   uint64_t t1 = 0U;
-  const uint32_t mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
-  const uint32_t dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
-  sp_mel_job_f32_t mel_h1;
+  sp_intra_f32_t w;
   sp_mel_job_f32_t mel_h0;
-  sp_dct_job_f32_t dct_h1;
   sp_dct_job_f32_t dct_h0;
 
   if ((ctx == NULL) || (input == NULL) || (output == NULL) || (ctx->initialized == 0U)) {
@@ -322,12 +422,30 @@ static mfcc_driver_status_t run_sp1024_f32_intra_mc(mfcc_driver_t *ctx,
   pTmp = ctx->tmp_f32;
   memcpy(pSrc, input, sizeof(ctx->input_f32));
 
+  memset(&w, 0, sizeof(w));
+  w.S = S;
+  w.pSrc = pSrc;
+  w.pTmp = pTmp;
+  w.pDst = output;
+  w.half = S->fftLen / 2U;
+  w.mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
+  w.dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
+
   t0 = mfcc_bench_rdcycle64();
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, sp_intra_worker_f32, &w);
+
   riscv_absmax_f32(pSrc, S->fftLen, &maxValue, &index);
   if (maxValue != 0.0f) {
     riscv_scale_f32(pSrc, 1.0f / maxValue, pSrc, S->fftLen);
   }
-  riscv_mult_f32(pSrc, S->windowCoefs, pSrc, S->fftLen);
+  w.maxValue = maxValue;
+
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_WINDOW);
+  for (uint32_t i = 0; i < w.half; i++) {
+    pSrc[i] *= S->windowCoefs[i];
+  }
+  sp_stage_wait(&w.ack, SP_STAGE_WINDOW);
 
 #if defined(RISCV_MFCC_CFFT_BASED)
   for (uint32_t i = 0; i < S->fftLen; i++) {
@@ -342,49 +460,42 @@ static mfcc_driver_status_t run_sp1024_f32_intra_mc(mfcc_driver_t *ctx,
   pTmp[1] = 0.0f;
 #endif
 
-  riscv_cmplx_mag_f32(pTmp, pSrc, S->fftLen);
-  if (maxValue != 0.0f) {
-    riscv_scale_f32(pSrc, maxValue, pSrc, S->fftLen);
-  }
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_CMPLX_MAG);
+  riscv_cmplx_mag_f32(pTmp, pSrc, w.half);
+  sp_stage_wait(&w.ack, SP_STAGE_CMPLX_MAG);
 
-  mel_h1.S = S;
-  mel_h1.spectrum = pSrc;
-  mel_h1.mel_out = pTmp;
-  mel_h1.mel_start = mel_mid;
-  mel_h1.mel_end = MFCC_TINYSPEECH_NUM_MEL;
-  mel_h1.coef_offset = sp_coef_offset(S->filterLengths, mel_mid);
+  if (maxValue != 0.0f) {
+    sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_RESCALE);
+    for (uint32_t i = 0; i < w.half; i++) {
+      pSrc[i] *= maxValue;
+    }
+    sp_stage_wait(&w.ack, SP_STAGE_RESCALE);
+  }
 
   mel_h0.S = S;
   mel_h0.spectrum = pSrc;
   mel_h0.mel_out = pTmp;
   mel_h0.mel_start = 0U;
-  mel_h0.mel_end = mel_mid;
+  mel_h0.mel_end = w.mel_mid;
   mel_h0.coef_offset = 0U;
-
-  asm volatile("fence rw, rw" ::: "memory");
-  hthread_issue(1, sp_mel_worker_f32, &mel_h1);
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_MEL);
   sp_mel_worker_f32(&mel_h0);
-  hthread_join(1);
-  asm volatile("fence rw, rw" ::: "memory");
+  sp_stage_wait(&w.ack, SP_STAGE_MEL);
 
   riscv_offset_f32(pTmp, 1.0e-6f, pTmp, MFCC_TINYSPEECH_NUM_MEL);
   riscv_vlog_f32(pTmp, pTmp, MFCC_TINYSPEECH_NUM_MEL);
-
-  dct_h1.S = S;
-  dct_h1.mel = pTmp;
-  dct_h1.out = output;
-  dct_h1.dct_start = dct_mid;
-  dct_h1.dct_end = MFCC_TINYSPEECH_NUM_DCT;
 
   dct_h0.S = S;
   dct_h0.mel = pTmp;
   dct_h0.out = output;
   dct_h0.dct_start = 0U;
-  dct_h0.dct_end = dct_mid;
-
-  asm volatile("fence rw, rw" ::: "memory");
-  hthread_issue(1, sp_dct_worker_f32, &dct_h1);
+  dct_h0.dct_end = w.dct_mid;
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_DCT);
   sp_dct_worker_f32(&dct_h0);
+  sp_stage_wait(&w.ack, SP_STAGE_DCT);
+
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_EXIT);
+  sp_stage_wait(&w.ack, SP_STAGE_EXIT);
   hthread_join(1);
   asm volatile("fence rw, rw" ::: "memory");
   t1 = mfcc_bench_rdcycle64();
@@ -396,6 +507,57 @@ static mfcc_driver_status_t run_sp1024_f32_intra_mc(mfcc_driver_t *ctx,
 }
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
+static void sp_intra_worker_f16(void *arg) {
+  sp_intra_f16_t *w = (sp_intra_f16_t *)arg;
+  uint32_t last = SP_STAGE_NONE;
+
+  while (1) {
+    const uint32_t stage = __atomic_load_n(&w->cmd, __ATOMIC_ACQUIRE);
+    if ((stage == SP_STAGE_NONE) || (stage == last)) {
+      asm volatile("nop");
+      continue;
+    }
+
+    if (stage == SP_STAGE_WINDOW) {
+      for (uint32_t i = w->half; i < w->S->fftLen; i++) {
+        w->pSrc[i] = (float16_t)((_Float16)w->pSrc[i] * (_Float16)w->S->windowCoefs[i]);
+      }
+    } else if (stage == SP_STAGE_CMPLX_MAG) {
+      riscv_cmplx_mag_f16(w->pTmp + (2U * w->half), w->pSrc + w->half, w->S->fftLen - w->half);
+    } else if (stage == SP_STAGE_RESCALE) {
+      if ((_Float16)w->maxValue != 0.0f16) {
+        for (uint32_t i = w->half; i < w->S->fftLen; i++) {
+          w->pSrc[i] = (float16_t)((_Float16)w->pSrc[i] * (_Float16)w->maxValue);
+        }
+      }
+    } else if (stage == SP_STAGE_MEL) {
+      sp_mel_job_f16_t job;
+      job.S = w->S;
+      job.spectrum = w->pSrc;
+      job.mel_out = w->pTmp;
+      job.mel_start = w->mel_mid;
+      job.mel_end = MFCC_TINYSPEECH_NUM_MEL;
+      job.coef_offset = sp_coef_offset(w->S->filterLengths, w->mel_mid);
+      sp_mel_worker_f16(&job);
+    } else if (stage == SP_STAGE_DCT) {
+      sp_dct_job_f16_t job;
+      job.S = w->S;
+      job.mel = w->pTmp;
+      job.out = w->pDst;
+      job.dct_start = w->dct_mid;
+      job.dct_end = MFCC_TINYSPEECH_NUM_DCT;
+      sp_dct_worker_f16(&job);
+    }
+
+    __sync_synchronize();
+    __atomic_store_n(&w->ack, stage, __ATOMIC_RELEASE);
+    last = stage;
+    if (stage == SP_STAGE_EXIT) {
+      return;
+    }
+  }
+}
+
 static mfcc_driver_status_t run_sp1024_f16_intra_mc(mfcc_driver_t *ctx,
                                                      const float32_t *input,
                                                      float16_t *output,
@@ -407,11 +569,8 @@ static mfcc_driver_status_t run_sp1024_f16_intra_mc(mfcc_driver_t *ctx,
   uint32_t index = 0U;
   uint64_t t0 = 0U;
   uint64_t t1 = 0U;
-  const uint32_t mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
-  const uint32_t dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
-  sp_mel_job_f16_t mel_h1;
+  sp_intra_f16_t w;
   sp_mel_job_f16_t mel_h0;
-  sp_dct_job_f16_t dct_h1;
   sp_dct_job_f16_t dct_h0;
 
   if ((ctx == NULL) || (input == NULL) || (output == NULL) || (ctx->initialized == 0U)) {
@@ -429,12 +588,30 @@ static mfcc_driver_status_t run_sp1024_f16_intra_mc(mfcc_driver_t *ctx,
     pSrc[i] = (float16_t)input[i];
   }
 
+  memset(&w, 0, sizeof(w));
+  w.S = S;
+  w.pSrc = pSrc;
+  w.pTmp = pTmp;
+  w.pDst = output;
+  w.half = S->fftLen / 2U;
+  w.mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
+  w.dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
+
   t0 = mfcc_bench_rdcycle64();
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, sp_intra_worker_f16, &w);
+
   riscv_absmax_f16(pSrc, S->fftLen, &maxValue, &index);
   if ((_Float16)maxValue != 0.0f16) {
     riscv_scale_f16(pSrc, 1.0f16 / (_Float16)maxValue, pSrc, S->fftLen);
   }
-  riscv_mult_f16(pSrc, S->windowCoefs, pSrc, S->fftLen);
+  w.maxValue = maxValue;
+
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_WINDOW);
+  for (uint32_t i = 0; i < w.half; i++) {
+    pSrc[i] = (float16_t)((_Float16)pSrc[i] * (_Float16)S->windowCoefs[i]);
+  }
+  sp_stage_wait(&w.ack, SP_STAGE_WINDOW);
 
 #if defined(RISCV_MFCC_CFFT_BASED)
   for (uint32_t i = 0; i < S->fftLen; i++) {
@@ -449,49 +626,42 @@ static mfcc_driver_status_t run_sp1024_f16_intra_mc(mfcc_driver_t *ctx,
   pTmp[1] = 0.0f16;
 #endif
 
-  riscv_cmplx_mag_f16(pTmp, pSrc, S->fftLen);
-  if ((_Float16)maxValue != 0.0f16) {
-    riscv_scale_f16(pSrc, maxValue, pSrc, S->fftLen);
-  }
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_CMPLX_MAG);
+  riscv_cmplx_mag_f16(pTmp, pSrc, w.half);
+  sp_stage_wait(&w.ack, SP_STAGE_CMPLX_MAG);
 
-  mel_h1.S = S;
-  mel_h1.spectrum = pSrc;
-  mel_h1.mel_out = pTmp;
-  mel_h1.mel_start = mel_mid;
-  mel_h1.mel_end = MFCC_TINYSPEECH_NUM_MEL;
-  mel_h1.coef_offset = sp_coef_offset(S->filterLengths, mel_mid);
+  if ((_Float16)maxValue != 0.0f16) {
+    sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_RESCALE);
+    for (uint32_t i = 0; i < w.half; i++) {
+      pSrc[i] = (float16_t)((_Float16)pSrc[i] * (_Float16)maxValue);
+    }
+    sp_stage_wait(&w.ack, SP_STAGE_RESCALE);
+  }
 
   mel_h0.S = S;
   mel_h0.spectrum = pSrc;
   mel_h0.mel_out = pTmp;
   mel_h0.mel_start = 0U;
-  mel_h0.mel_end = mel_mid;
+  mel_h0.mel_end = w.mel_mid;
   mel_h0.coef_offset = 0U;
-
-  asm volatile("fence rw, rw" ::: "memory");
-  hthread_issue(1, sp_mel_worker_f16, &mel_h1);
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_MEL);
   sp_mel_worker_f16(&mel_h0);
-  hthread_join(1);
-  asm volatile("fence rw, rw" ::: "memory");
+  sp_stage_wait(&w.ack, SP_STAGE_MEL);
 
   riscv_offset_f16(pTmp, 1.0e-4f16, pTmp, MFCC_TINYSPEECH_NUM_MEL);
   riscv_vlog_f16(pTmp, pTmp, MFCC_TINYSPEECH_NUM_MEL);
-
-  dct_h1.S = S;
-  dct_h1.mel = pTmp;
-  dct_h1.out = output;
-  dct_h1.dct_start = dct_mid;
-  dct_h1.dct_end = MFCC_TINYSPEECH_NUM_DCT;
 
   dct_h0.S = S;
   dct_h0.mel = pTmp;
   dct_h0.out = output;
   dct_h0.dct_start = 0U;
-  dct_h0.dct_end = dct_mid;
-
-  asm volatile("fence rw, rw" ::: "memory");
-  hthread_issue(1, sp_dct_worker_f16, &dct_h1);
+  dct_h0.dct_end = w.dct_mid;
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_DCT);
   sp_dct_worker_f16(&dct_h0);
+  sp_stage_wait(&w.ack, SP_STAGE_DCT);
+
+  sp_stage_launch(&w.cmd, &w.ack, SP_STAGE_EXIT);
+  sp_stage_wait(&w.ack, SP_STAGE_EXIT);
   hthread_join(1);
   asm volatile("fence rw, rw" ::: "memory");
   t1 = mfcc_bench_rdcycle64();

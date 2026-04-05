@@ -1,5 +1,6 @@
 #include "mfcc_driver_mc.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "dsp/basic_math_functions.h"
@@ -22,11 +23,12 @@ typedef enum {
   MFCC_MC_STAGE_NONE = 0U,
   MFCC_MC_STAGE_ABSMAX = 1U,
   MFCC_MC_STAGE_SCALE_WINDOW = 2U,
-  MFCC_MC_STAGE_CMPLX_MAG = 3U,
-  MFCC_MC_STAGE_RESCALE = 4U,
-  MFCC_MC_STAGE_MEL = 5U,
-  MFCC_MC_STAGE_DCT = 6U,
-  MFCC_MC_STAGE_EXIT = 7U
+  MFCC_MC_STAGE_RFFT_STAGE = 3U,
+  MFCC_MC_STAGE_CMPLX_MAG = 4U,
+  MFCC_MC_STAGE_RESCALE = 5U,
+  MFCC_MC_STAGE_MEL = 6U,
+  MFCC_MC_STAGE_DCT = 7U,
+  MFCC_MC_STAGE_EXIT = 8U
 } mfcc_mc_stage_t;
 
 typedef struct {
@@ -56,6 +58,9 @@ typedef struct {
   float32_t maxValue;
   float32_t localMax;
   float32_t normScale;
+  const riscv_rfft_fast_instance_f32 *rfft;
+  uint32_t rfft_l_start;
+  uint32_t rfft_l_end;
   uint32_t half;
   uint32_t mel_mid;
   uint32_t dct_mid;
@@ -89,6 +94,9 @@ typedef struct {
   float16_t maxValue;
   float16_t localMax;
   float16_t normScale;
+  const riscv_rfft_fast_instance_f16 *rfft;
+  uint32_t rfft_l_start;
+  uint32_t rfft_l_end;
   uint32_t half;
   uint32_t mel_mid;
   uint32_t dct_mid;
@@ -164,6 +172,89 @@ static void mfcc_mc_dct_worker_f32(void *arg) {
   }
 }
 
+static void mfcc_mc_rfft_stage_f32_range(const riscv_rfft_fast_instance_f32 *R,
+                                         const float32_t *p,
+                                         float32_t *pOut,
+                                         uint32_t l_start,
+                                         uint32_t l_end) {
+  if ((R == NULL) || (p == NULL) || (pOut == NULL) || (l_end <= l_start)) {
+    return;
+  }
+
+#if defined(RISCV_MATH_VECTOR)
+  {
+    uint32_t blkCnt = l_end - l_start;
+    size_t vl;
+    ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float32_t));
+    ptrdiff_t revStride = -cplxStride;
+    const float32_t *pAcur = p + (2U * l_start);
+    const float32_t *pBcur = p + (2U * ((R->Sint).fftLen - l_start));
+    const float32_t *pTwR = R->pTwiddleRFFT + (2U * l_start);
+    const float32_t *pTwI = pTwR + 1;
+    ptrdiff_t twStride = cplxStride;
+    float32_t *pOutCur = pOut + (2U * l_start);
+    const float32_t half = 0.5f;
+
+    while ((vl = __riscv_vsetvl_e32m8(blkCnt)) > 0) {
+      vfloat32m8_t vAR = __riscv_vlse32_v_f32m8(pAcur, cplxStride, vl);
+      vfloat32m8_t vAI = __riscv_vlse32_v_f32m8(pAcur + 1, cplxStride, vl);
+      vfloat32m8_t vBR = __riscv_vlse32_v_f32m8(pBcur, revStride, vl);
+      vfloat32m8_t vBI = __riscv_vlse32_v_f32m8(pBcur + 1, revStride, vl);
+      vfloat32m8_t vTwR = __riscv_vlse32_v_f32m8(pTwR, twStride, vl);
+      vfloat32m8_t vTwI = __riscv_vlse32_v_f32m8(pTwI, twStride, vl);
+
+      vfloat32m8_t vT1a = __riscv_vfsub_vv_f32m8(vBR, vAR, vl);
+      vfloat32m8_t vT1b = __riscv_vfadd_vv_f32m8(vBI, vAI, vl);
+
+      vfloat32m8_t vP0 = __riscv_vfmul_vv_f32m8(vTwR, vT1a, vl);
+      vfloat32m8_t vP1 = __riscv_vfmul_vv_f32m8(vTwI, vT1a, vl);
+      vfloat32m8_t vP2 = __riscv_vfmul_vv_f32m8(vTwR, vT1b, vl);
+      vfloat32m8_t vP3 = __riscv_vfmul_vv_f32m8(vTwI, vT1b, vl);
+
+      vfloat32m8_t vOutR = __riscv_vfadd_vv_f32m8(vAR, vBR, vl);
+      vOutR = __riscv_vfadd_vv_f32m8(vOutR, vP0, vl);
+      vOutR = __riscv_vfadd_vv_f32m8(vOutR, vP3, vl);
+      vOutR = __riscv_vfmul_vf_f32m8(vOutR, half, vl);
+
+      vfloat32m8_t vOutI = __riscv_vfsub_vv_f32m8(vAI, vBI, vl);
+      vOutI = __riscv_vfadd_vv_f32m8(vOutI, vP1, vl);
+      vOutI = __riscv_vfsub_vv_f32m8(vOutI, vP2, vl);
+      vOutI = __riscv_vfmul_vf_f32m8(vOutI, half, vl);
+
+      __riscv_vsse32_v_f32m8(pOutCur, cplxStride, vOutR, vl);
+      __riscv_vsse32_v_f32m8(pOutCur + 1, cplxStride, vOutI, vl);
+
+      pOutCur += (uint32_t)(2U * vl);
+      pAcur += (uint32_t)(2U * vl);
+      pBcur -= (uint32_t)(2U * vl);
+      pTwR += (uint32_t)(2U * vl);
+      pTwI += (uint32_t)(2U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+  }
+#else
+  for (uint32_t l = l_start; l < l_end; l++) {
+    const uint32_t ia = 2U * l;
+    const uint32_t ib = 2U * ((R->Sint).fftLen - l);
+    const uint32_t itw = 2U * l;
+    const float32_t xAR = p[ia];
+    const float32_t xAI = p[ia + 1U];
+    const float32_t xBR = p[ib];
+    const float32_t xBI = p[ib + 1U];
+    const float32_t twR = R->pTwiddleRFFT[itw];
+    const float32_t twI = R->pTwiddleRFFT[itw + 1U];
+    const float32_t t1a = xBR - xAR;
+    const float32_t t1b = xBI + xAI;
+    const float32_t p0 = twR * t1a;
+    const float32_t p1 = twI * t1a;
+    const float32_t p2 = twR * t1b;
+    const float32_t p3 = twI * t1b;
+    pOut[ia] = 0.5f * (xAR + xBR + p0 + p3);
+    pOut[ia + 1U] = 0.5f * (xAI - xBI + p1 - p2);
+  }
+#endif
+}
+
 static void mfcc_mc_intra_worker_f32(void *arg) {
   mfcc_mc_worker_f32_t *w = (mfcc_mc_worker_f32_t *)arg;
   uint32_t last = MFCC_MC_STAGE_NONE;
@@ -186,6 +277,8 @@ static void mfcc_mc_intra_worker_f32(void *arg) {
                      w->S->windowCoefs + w->half,
                      w->pSrc + w->half,
                      w->S->fftLen - w->half);
+    } else if (stage == MFCC_MC_STAGE_RFFT_STAGE) {
+      mfcc_mc_rfft_stage_f32_range(w->rfft, w->pSrc, w->pTmp, w->rfft_l_start, w->rfft_l_end);
     } else if (stage == MFCC_MC_STAGE_CMPLX_MAG) {
       riscv_cmplx_mag_f32(w->pTmp + (2U * w->half), w->pSrc + w->half, w->S->fftLen - w->half);
     } else if (stage == MFCC_MC_STAGE_RESCALE) {
@@ -244,6 +337,89 @@ static void mfcc_mc_dct_worker_f16(void *arg) {
   }
 }
 
+static void mfcc_mc_rfft_stage_f16_range(const riscv_rfft_fast_instance_f16 *R,
+                                         const float16_t *p,
+                                         float16_t *pOut,
+                                         uint32_t l_start,
+                                         uint32_t l_end) {
+  if ((R == NULL) || (p == NULL) || (pOut == NULL) || (l_end <= l_start)) {
+    return;
+  }
+
+#if defined(RISCV_MATH_VECTOR_F16)
+  {
+    uint32_t blkCnt = l_end - l_start;
+    size_t vl;
+    ptrdiff_t cplxStride = (ptrdiff_t)(2U * sizeof(float16_t));
+    ptrdiff_t revStride = -cplxStride;
+    const float16_t *pAcur = p + (2U * l_start);
+    const float16_t *pBcur = p + (2U * ((R->Sint).fftLen - l_start));
+    const float16_t *pTwR = R->pTwiddleRFFT + (2U * l_start);
+    const float16_t *pTwI = pTwR + 1;
+    ptrdiff_t twStride = cplxStride;
+    float16_t *pOutCur = pOut + (2U * l_start);
+    const float16_t half = 0.5f16;
+
+    while ((vl = __riscv_vsetvl_e16m8(blkCnt)) > 0) {
+      vfloat16m8_t vAR = __riscv_vlse16_v_f16m8(pAcur, cplxStride, vl);
+      vfloat16m8_t vAI = __riscv_vlse16_v_f16m8(pAcur + 1, cplxStride, vl);
+      vfloat16m8_t vBR = __riscv_vlse16_v_f16m8(pBcur, revStride, vl);
+      vfloat16m8_t vBI = __riscv_vlse16_v_f16m8(pBcur + 1, revStride, vl);
+      vfloat16m8_t vTwR = __riscv_vlse16_v_f16m8(pTwR, twStride, vl);
+      vfloat16m8_t vTwI = __riscv_vlse16_v_f16m8(pTwI, twStride, vl);
+
+      vfloat16m8_t vT1a = __riscv_vfsub_vv_f16m8(vBR, vAR, vl);
+      vfloat16m8_t vT1b = __riscv_vfadd_vv_f16m8(vBI, vAI, vl);
+
+      vfloat16m8_t vP0 = __riscv_vfmul_vv_f16m8(vTwR, vT1a, vl);
+      vfloat16m8_t vP1 = __riscv_vfmul_vv_f16m8(vTwI, vT1a, vl);
+      vfloat16m8_t vP2 = __riscv_vfmul_vv_f16m8(vTwR, vT1b, vl);
+      vfloat16m8_t vP3 = __riscv_vfmul_vv_f16m8(vTwI, vT1b, vl);
+
+      vfloat16m8_t vOutR = __riscv_vfadd_vv_f16m8(vAR, vBR, vl);
+      vOutR = __riscv_vfadd_vv_f16m8(vOutR, vP0, vl);
+      vOutR = __riscv_vfadd_vv_f16m8(vOutR, vP3, vl);
+      vOutR = __riscv_vfmul_vf_f16m8(vOutR, half, vl);
+
+      vfloat16m8_t vOutI = __riscv_vfsub_vv_f16m8(vAI, vBI, vl);
+      vOutI = __riscv_vfadd_vv_f16m8(vOutI, vP1, vl);
+      vOutI = __riscv_vfsub_vv_f16m8(vOutI, vP2, vl);
+      vOutI = __riscv_vfmul_vf_f16m8(vOutI, half, vl);
+
+      __riscv_vsse16_v_f16m8(pOutCur, cplxStride, vOutR, vl);
+      __riscv_vsse16_v_f16m8(pOutCur + 1, cplxStride, vOutI, vl);
+
+      pOutCur += (uint32_t)(2U * vl);
+      pAcur += (uint32_t)(2U * vl);
+      pBcur -= (uint32_t)(2U * vl);
+      pTwR += (uint32_t)(2U * vl);
+      pTwI += (uint32_t)(2U * vl);
+      blkCnt -= (uint32_t)vl;
+    }
+  }
+#else
+  for (uint32_t l = l_start; l < l_end; l++) {
+    const uint32_t ia = 2U * l;
+    const uint32_t ib = 2U * ((R->Sint).fftLen - l);
+    const uint32_t itw = 2U * l;
+    const float16_t xAR = p[ia];
+    const float16_t xAI = p[ia + 1U];
+    const float16_t xBR = p[ib];
+    const float16_t xBI = p[ib + 1U];
+    const float16_t twR = R->pTwiddleRFFT[itw];
+    const float16_t twI = R->pTwiddleRFFT[itw + 1U];
+    const _Float16 t1a = (_Float16)xBR - (_Float16)xAR;
+    const _Float16 t1b = (_Float16)xBI + (_Float16)xAI;
+    const _Float16 p0 = (_Float16)twR * t1a;
+    const _Float16 p1 = (_Float16)twI * t1a;
+    const _Float16 p2 = (_Float16)twR * t1b;
+    const _Float16 p3 = (_Float16)twI * t1b;
+    pOut[ia] = (float16_t)(0.5f16 * ((_Float16)xAR + (_Float16)xBR + p0 + p3));
+    pOut[ia + 1U] = (float16_t)(0.5f16 * ((_Float16)xAI - (_Float16)xBI + p1 - p2));
+  }
+#endif
+}
+
 static void mfcc_mc_intra_worker_f16(void *arg) {
   mfcc_mc_worker_f16_t *w = (mfcc_mc_worker_f16_t *)arg;
   uint32_t last = MFCC_MC_STAGE_NONE;
@@ -266,6 +442,8 @@ static void mfcc_mc_intra_worker_f16(void *arg) {
                      w->S->windowCoefs + w->half,
                      w->pSrc + w->half,
                      w->S->fftLen - w->half);
+    } else if (stage == MFCC_MC_STAGE_RFFT_STAGE) {
+      mfcc_mc_rfft_stage_f16_range(w->rfft, w->pSrc, w->pTmp, w->rfft_l_start, w->rfft_l_end);
     } else if (stage == MFCC_MC_STAGE_CMPLX_MAG) {
       riscv_cmplx_mag_f16(w->pTmp + (2U * w->half), w->pSrc + w->half, w->S->fftLen - w->half);
     } else if (stage == MFCC_MC_STAGE_RESCALE) {
@@ -416,7 +594,24 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f32_mc(mfcc_driver_t *ctx,
   }
   riscv_cfft_f32(&(S->cfft), pTmp, 0, 1);
 #else
-  riscv_rfft_fast_f32(&(S->rfft), pSrc, pTmp, 0);
+  {
+    const uint32_t n2 = (S->rfft.Sint).fftLen;
+    const uint32_t bins = n2 - 1U;
+    const uint32_t l_mid = 1U + (bins >> 1);
+    riscv_cfft_f32(&(S->rfft.Sint), pSrc, 0, 1);
+    const float32_t xAR = pSrc[0];
+    const float32_t xAI = pSrc[1];
+
+    pTmp[0] = xAR + xAI;
+    pTmp[1] = xAR - xAI;
+
+    w->rfft = &(S->rfft);
+    w->rfft_l_start = l_mid;
+    w->rfft_l_end = n2;
+    mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_RFFT_STAGE);
+    mfcc_mc_rfft_stage_f32_range(&(S->rfft), pSrc, pTmp, 1U, l_mid);
+    mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_RFFT_STAGE);
+  }
   pTmp[S->fftLen] = pTmp[1];
   pTmp[S->fftLen + 1U] = 0.0f;
   pTmp[1] = 0.0f;
@@ -531,7 +726,24 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16_mc(mfcc_driver_t *ctx,
   }
   riscv_cfft_f16(&(S->cfft), pTmp, 0, 1);
 #else
-  riscv_rfft_fast_f16(&(S->rfft), pSrc, pTmp, 0);
+  {
+    const uint32_t n2 = (S->rfft.Sint).fftLen;
+    const uint32_t bins = n2 - 1U;
+    const uint32_t l_mid = 1U + (bins >> 1);
+    riscv_cfft_f16(&(S->rfft.Sint), pSrc, 0, 1);
+    const float16_t xAR = pSrc[0];
+    const float16_t xAI = pSrc[1];
+
+    pTmp[0] = (float16_t)((_Float16)xAR + (_Float16)xAI);
+    pTmp[1] = (float16_t)((_Float16)xAR - (_Float16)xAI);
+
+    w->rfft = &(S->rfft);
+    w->rfft_l_start = l_mid;
+    w->rfft_l_end = n2;
+    mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_RFFT_STAGE);
+    mfcc_mc_rfft_stage_f16_range(&(S->rfft), pSrc, pTmp, 1U, l_mid);
+    mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_RFFT_STAGE);
+  }
   pTmp[S->fftLen] = pTmp[1];
   pTmp[S->fftLen + 1U] = 0.0f16;
   pTmp[1] = 0.0f16;

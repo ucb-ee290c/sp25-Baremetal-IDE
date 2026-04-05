@@ -726,24 +726,7 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16_mc(mfcc_driver_t *ctx,
   }
   riscv_cfft_f16(&(S->cfft), pTmp, 0, 1);
 #else
-  {
-    const uint32_t n2 = (S->rfft.Sint).fftLen;
-    const uint32_t bins = n2 - 1U;
-    const uint32_t l_mid = 1U + (bins >> 1);
-    riscv_cfft_f16(&(S->rfft.Sint), pSrc, 0, 1);
-    const float16_t xAR = pSrc[0];
-    const float16_t xAI = pSrc[1];
-
-    pTmp[0] = (float16_t)((_Float16)xAR + (_Float16)xAI);
-    pTmp[1] = (float16_t)((_Float16)xAR - (_Float16)xAI);
-
-    w->rfft = &(S->rfft);
-    w->rfft_l_start = l_mid;
-    w->rfft_l_end = n2;
-    mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_RFFT_STAGE);
-    mfcc_mc_rfft_stage_f16_range(&(S->rfft), pSrc, pTmp, 1U, l_mid);
-    mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_RFFT_STAGE);
-  }
+  riscv_rfft_fast_f16(&(S->rfft), pSrc, pTmp, 0);
   pTmp[S->fftLen] = pTmp[1];
   pTmp[S->fftLen + 1U] = 0.0f16;
   pTmp[1] = 0.0f16;

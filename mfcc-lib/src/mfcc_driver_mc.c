@@ -20,12 +20,13 @@ void hthread_join(uint32_t hartid);
 
 typedef enum {
   MFCC_MC_STAGE_NONE = 0U,
-  MFCC_MC_STAGE_WINDOW = 1U,
-  MFCC_MC_STAGE_CMPLX_MAG = 2U,
-  MFCC_MC_STAGE_RESCALE = 3U,
-  MFCC_MC_STAGE_MEL = 4U,
-  MFCC_MC_STAGE_DCT = 5U,
-  MFCC_MC_STAGE_EXIT = 6U
+  MFCC_MC_STAGE_ABSMAX = 1U,
+  MFCC_MC_STAGE_SCALE_WINDOW = 2U,
+  MFCC_MC_STAGE_CMPLX_MAG = 3U,
+  MFCC_MC_STAGE_RESCALE = 4U,
+  MFCC_MC_STAGE_MEL = 5U,
+  MFCC_MC_STAGE_DCT = 6U,
+  MFCC_MC_STAGE_EXIT = 7U
 } mfcc_mc_stage_t;
 
 typedef struct {
@@ -53,6 +54,8 @@ typedef struct {
   float32_t *pTmp;
   float32_t *pDst;
   float32_t maxValue;
+  float32_t localMax;
+  float32_t normScale;
   uint32_t half;
   uint32_t mel_mid;
   uint32_t dct_mid;
@@ -84,6 +87,8 @@ typedef struct {
   float16_t *pTmp;
   float16_t *pDst;
   float16_t maxValue;
+  float16_t localMax;
+  float16_t normScale;
   uint32_t half;
   uint32_t mel_mid;
   uint32_t dct_mid;
@@ -162,6 +167,7 @@ static void mfcc_mc_dct_worker_f32(void *arg) {
 static void mfcc_mc_intra_worker_f32(void *arg) {
   mfcc_mc_worker_f32_t *w = (mfcc_mc_worker_f32_t *)arg;
   uint32_t last = MFCC_MC_STAGE_NONE;
+  uint32_t idx = 0U;
 
   while (1) {
     const uint32_t stage = __atomic_load_n(&w->cmd, __ATOMIC_ACQUIRE);
@@ -170,17 +176,21 @@ static void mfcc_mc_intra_worker_f32(void *arg) {
       continue;
     }
 
-    if (stage == MFCC_MC_STAGE_WINDOW) {
-      for (uint32_t i = w->half; i < w->S->fftLen; i++) {
-        w->pSrc[i] *= w->S->windowCoefs[i];
+    if (stage == MFCC_MC_STAGE_ABSMAX) {
+      riscv_absmax_f32(w->pSrc + w->half, w->S->fftLen - w->half, &w->localMax, &idx);
+    } else if (stage == MFCC_MC_STAGE_SCALE_WINDOW) {
+      if (w->normScale != 1.0f) {
+        riscv_scale_f32(w->pSrc + w->half, w->normScale, w->pSrc + w->half, w->S->fftLen - w->half);
       }
+      riscv_mult_f32(w->pSrc + w->half,
+                     w->S->windowCoefs + w->half,
+                     w->pSrc + w->half,
+                     w->S->fftLen - w->half);
     } else if (stage == MFCC_MC_STAGE_CMPLX_MAG) {
       riscv_cmplx_mag_f32(w->pTmp + (2U * w->half), w->pSrc + w->half, w->S->fftLen - w->half);
     } else if (stage == MFCC_MC_STAGE_RESCALE) {
       if (w->maxValue != 0.0f) {
-        for (uint32_t i = w->half; i < w->S->fftLen; i++) {
-          w->pSrc[i] *= w->maxValue;
-        }
+        riscv_scale_f32(w->pSrc + w->half, w->maxValue, w->pSrc + w->half, w->S->fftLen - w->half);
       }
     } else if (stage == MFCC_MC_STAGE_MEL) {
       mfcc_mc_mel_job_f32_t job;
@@ -237,6 +247,7 @@ static void mfcc_mc_dct_worker_f16(void *arg) {
 static void mfcc_mc_intra_worker_f16(void *arg) {
   mfcc_mc_worker_f16_t *w = (mfcc_mc_worker_f16_t *)arg;
   uint32_t last = MFCC_MC_STAGE_NONE;
+  uint32_t idx = 0U;
 
   while (1) {
     const uint32_t stage = __atomic_load_n(&w->cmd, __ATOMIC_ACQUIRE);
@@ -245,17 +256,21 @@ static void mfcc_mc_intra_worker_f16(void *arg) {
       continue;
     }
 
-    if (stage == MFCC_MC_STAGE_WINDOW) {
-      for (uint32_t i = w->half; i < w->S->fftLen; i++) {
-        w->pSrc[i] = (float16_t)((_Float16)w->pSrc[i] * (_Float16)w->S->windowCoefs[i]);
+    if (stage == MFCC_MC_STAGE_ABSMAX) {
+      riscv_absmax_f16(w->pSrc + w->half, w->S->fftLen - w->half, &w->localMax, &idx);
+    } else if (stage == MFCC_MC_STAGE_SCALE_WINDOW) {
+      if ((_Float16)w->normScale != 1.0f16) {
+        riscv_scale_f16(w->pSrc + w->half, w->normScale, w->pSrc + w->half, w->S->fftLen - w->half);
       }
+      riscv_mult_f16(w->pSrc + w->half,
+                     w->S->windowCoefs + w->half,
+                     w->pSrc + w->half,
+                     w->S->fftLen - w->half);
     } else if (stage == MFCC_MC_STAGE_CMPLX_MAG) {
       riscv_cmplx_mag_f16(w->pTmp + (2U * w->half), w->pSrc + w->half, w->S->fftLen - w->half);
     } else if (stage == MFCC_MC_STAGE_RESCALE) {
       if ((_Float16)w->maxValue != 0.0f16) {
-        for (uint32_t i = w->half; i < w->S->fftLen; i++) {
-          w->pSrc[i] = (float16_t)((_Float16)w->pSrc[i] * (_Float16)w->maxValue);
-        }
+        riscv_scale_f16(w->pSrc + w->half, w->maxValue, w->pSrc + w->half, w->S->fftLen - w->half);
       }
     } else if (stage == MFCC_MC_STAGE_MEL) {
       mfcc_mc_mel_job_f16_t job;
@@ -342,6 +357,7 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f32_mc(mfcc_driver_t *ctx,
   float32_t *pSrc;
   float32_t *pTmp;
   float32_t maxValue = 0.0f;
+  float32_t maxValueLo = 0.0f;
   uint32_t index = 0U;
   uint64_t t0 = 0U;
   uint64_t t1 = 0U;
@@ -370,22 +386,28 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f32_mc(mfcc_driver_t *ctx,
   w->half = S->fftLen / 2U;
   w->mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
   w->dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
+  w->localMax = 0.0f;
+  w->normScale = 1.0f;
   w->cmd = MFCC_MC_STAGE_NONE;
   w->ack = MFCC_MC_STAGE_NONE;
 
   t0 = mfcc_mc_rdcycle64();
 
-  riscv_absmax_f32(pSrc, S->fftLen, &maxValue, &index);
+  mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_ABSMAX);
+  riscv_absmax_f32(pSrc, w->half, &maxValueLo, &index);
+  mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_ABSMAX);
+  maxValue = (maxValueLo > w->localMax) ? maxValueLo : w->localMax;
   if (maxValue != 0.0f) {
-    riscv_scale_f32(pSrc, 1.0f / maxValue, pSrc, S->fftLen);
+    w->normScale = 1.0f / maxValue;
   }
   w->maxValue = maxValue;
 
-  mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_WINDOW);
-  for (uint32_t i = 0; i < w->half; i++) {
-    pSrc[i] *= S->windowCoefs[i];
+  mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_SCALE_WINDOW);
+  if (w->normScale != 1.0f) {
+    riscv_scale_f32(pSrc, w->normScale, pSrc, w->half);
   }
-  mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_WINDOW);
+  riscv_mult_f32(pSrc, S->windowCoefs, pSrc, w->half);
+  mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_SCALE_WINDOW);
 
 #if defined(RISCV_MFCC_CFFT_BASED)
   for (uint32_t i = 0; i < S->fftLen; i++) {
@@ -406,9 +428,7 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f32_mc(mfcc_driver_t *ctx,
 
   if (maxValue != 0.0f) {
     mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_RESCALE);
-    for (uint32_t i = 0; i < w->half; i++) {
-      pSrc[i] *= maxValue;
-    }
+    riscv_scale_f32(pSrc, maxValue, pSrc, w->half);
     mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_RESCALE);
   }
 
@@ -450,6 +470,7 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16_mc(mfcc_driver_t *ctx,
   float16_t *pSrc;
   float16_t *pTmp;
   float16_t maxValue = 0.0f16;
+  float16_t maxValueLo = 0.0f16;
   uint32_t index = 0U;
   uint64_t t0 = 0U;
   uint64_t t1 = 0U;
@@ -480,22 +501,28 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16_mc(mfcc_driver_t *ctx,
   w->half = S->fftLen / 2U;
   w->mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
   w->dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
+  w->localMax = 0.0f16;
+  w->normScale = 1.0f16;
   w->cmd = MFCC_MC_STAGE_NONE;
   w->ack = MFCC_MC_STAGE_NONE;
 
   t0 = mfcc_mc_rdcycle64();
 
-  riscv_absmax_f16(pSrc, S->fftLen, &maxValue, &index);
+  mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_ABSMAX);
+  riscv_absmax_f16(pSrc, w->half, &maxValueLo, &index);
+  mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_ABSMAX);
+  maxValue = ((_Float16)maxValueLo > (_Float16)w->localMax) ? maxValueLo : w->localMax;
   if ((_Float16)maxValue != 0.0f16) {
-    riscv_scale_f16(pSrc, 1.0f16 / (_Float16)maxValue, pSrc, S->fftLen);
+    w->normScale = (float16_t)(1.0f16 / (_Float16)maxValue);
   }
   w->maxValue = maxValue;
 
-  mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_WINDOW);
-  for (uint32_t i = 0; i < w->half; i++) {
-    pSrc[i] = (float16_t)((_Float16)pSrc[i] * (_Float16)S->windowCoefs[i]);
+  mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_SCALE_WINDOW);
+  if ((_Float16)w->normScale != 1.0f16) {
+    riscv_scale_f16(pSrc, w->normScale, pSrc, w->half);
   }
-  mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_WINDOW);
+  riscv_mult_f16(pSrc, S->windowCoefs, pSrc, w->half);
+  mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_SCALE_WINDOW);
 
 #if defined(RISCV_MFCC_CFFT_BASED)
   for (uint32_t i = 0; i < S->fftLen; i++) {
@@ -516,9 +543,7 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16_mc(mfcc_driver_t *ctx,
 
   if ((_Float16)maxValue != 0.0f16) {
     mfcc_mc_stage_launch(&w->cmd, &w->ack, MFCC_MC_STAGE_RESCALE);
-    for (uint32_t i = 0; i < w->half; i++) {
-      pSrc[i] = (float16_t)((_Float16)pSrc[i] * (_Float16)maxValue);
-    }
+    riscv_scale_f16(pSrc, maxValue, pSrc, w->half);
     mfcc_mc_stage_wait(&w->ack, MFCC_MC_STAGE_RESCALE);
   }
 

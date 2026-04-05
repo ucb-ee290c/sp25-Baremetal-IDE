@@ -2,6 +2,19 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "dsp/basic_math_functions.h"
+#include "dsp/complex_math_functions.h"
+#include "dsp/fast_math_functions.h"
+#include "dsp/statistics_functions.h"
+#include "dsp/transform_functions.h"
+#if defined(RISCV_FLOAT16_SUPPORTED)
+#include "dsp/basic_math_functions_f16.h"
+#include "dsp/complex_math_functions_f16.h"
+#include "dsp/fast_math_functions_f16.h"
+#include "dsp/statistics_functions_f16.h"
+#include "dsp/transform_functions_f16.h"
+#endif
+
 #include "bench_cache.h"
 #include "bench_cases.h"
 #include "bench_config.h"
@@ -66,14 +79,6 @@ typedef struct {
   uint32_t hart_id;
 } hart_state_t;
 
-typedef struct {
-  hart_state_t *hs;
-  const mfcc_bench_case_t *cs;
-  case_outputs_t *out;
-  uint32_t variant_mask;
-  int status;
-} case_job_t;
-
 static uint64_t target_frequency = MFCC_BENCH_TARGET_FREQUENCY_HZ;
 static mfcc_bench_case_t g_cases[MFCC_BENCH_NUM_CASES];
 static uint8_t g_setup_done = 0U;
@@ -92,14 +97,13 @@ static const char *k_var_names[MFCC_VAR_COUNT] = {
 
 #define MFCC_VAR_BIT(v) (1u << (v))
 
-/* Balance the per-case workload across the two harts. */
-static const uint32_t k_hart0_variant_mask =
+/* For this benchmark, run one case on hart0 and use hart1 as an intra-op helper. */
+static const uint32_t k_single_hart_variant_mask =
     MFCC_VAR_BIT(MFCC_VAR_F32) |
-    MFCC_VAR_BIT(MFCC_VAR_Q15) |
-    MFCC_VAR_BIT(MFCC_VAR_SP_F32);
-static const uint32_t k_hart1_variant_mask =
     MFCC_VAR_BIT(MFCC_VAR_Q31) |
+    MFCC_VAR_BIT(MFCC_VAR_Q15) |
     MFCC_VAR_BIT(MFCC_VAR_F16) |
+    MFCC_VAR_BIT(MFCC_VAR_SP_F32) |
     MFCC_VAR_BIT(MFCC_VAR_SP_F16);
 
 static void stats_init(cycle_stats_t *s) {
@@ -192,6 +196,310 @@ static void print_vec_f16(const char *label, const float16_t *x) {
     printf(" %0.5f", mfcc_driver_f16_to_float(x[i]));
   }
   printf("\n");
+}
+#endif
+
+typedef struct {
+  const riscv_mfcc_instance_f32 *S;
+  const float32_t *spectrum;
+  float32_t *mel_out;
+  uint32_t mel_start;
+  uint32_t mel_end;
+  uint32_t coef_offset;
+} sp_mel_job_f32_t;
+
+typedef struct {
+  const riscv_mfcc_instance_f32 *S;
+  const float32_t *mel;
+  float32_t *out;
+  uint32_t dct_start;
+  uint32_t dct_end;
+} sp_dct_job_f32_t;
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+typedef struct {
+  const riscv_mfcc_instance_f16 *S;
+  const float16_t *spectrum;
+  float16_t *mel_out;
+  uint32_t mel_start;
+  uint32_t mel_end;
+  uint32_t coef_offset;
+} sp_mel_job_f16_t;
+
+typedef struct {
+  const riscv_mfcc_instance_f16 *S;
+  const float16_t *mel;
+  float16_t *out;
+  uint32_t dct_start;
+  uint32_t dct_end;
+} sp_dct_job_f16_t;
+#endif
+
+static uint32_t sp_coef_offset(const uint32_t *lengths, uint32_t start) {
+  uint32_t offset = 0U;
+  for (uint32_t i = 0; i < start; i++) {
+    offset += lengths[i];
+  }
+  return offset;
+}
+
+static void sp_mel_worker_f32(void *arg) {
+  sp_mel_job_f32_t *job = (sp_mel_job_f32_t *)arg;
+  const float32_t *coef = job->S->filterCoefs + job->coef_offset;
+
+  for (uint32_t i = job->mel_start; i < job->mel_end; i++) {
+    const uint32_t len = job->S->filterLengths[i];
+    float32_t result = 0.0f;
+    riscv_dot_prod_f32(job->spectrum + job->S->filterPos[i], coef, len, &result);
+    job->mel_out[i] = result;
+    coef += len;
+  }
+}
+
+static void sp_dct_worker_f32(void *arg) {
+  sp_dct_job_f32_t *job = (sp_dct_job_f32_t *)arg;
+  for (uint32_t r = job->dct_start; r < job->dct_end; r++) {
+    const float32_t *row = job->S->dctCoefs + (r * MFCC_TINYSPEECH_NUM_MEL);
+    float32_t result = 0.0f;
+    riscv_dot_prod_f32(row, job->mel, MFCC_TINYSPEECH_NUM_MEL, &result);
+    job->out[r] = result;
+  }
+}
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+static void sp_mel_worker_f16(void *arg) {
+  sp_mel_job_f16_t *job = (sp_mel_job_f16_t *)arg;
+  const float16_t *coef = job->S->filterCoefs + job->coef_offset;
+
+  for (uint32_t i = job->mel_start; i < job->mel_end; i++) {
+    const uint32_t len = job->S->filterLengths[i];
+    float16_t result = 0.0f16;
+    riscv_dot_prod_f16(job->spectrum + job->S->filterPos[i], coef, len, &result);
+    job->mel_out[i] = result;
+    coef += len;
+  }
+}
+
+static void sp_dct_worker_f16(void *arg) {
+  sp_dct_job_f16_t *job = (sp_dct_job_f16_t *)arg;
+  for (uint32_t r = job->dct_start; r < job->dct_end; r++) {
+    const float16_t *row = job->S->dctCoefs + (r * MFCC_TINYSPEECH_NUM_MEL);
+    float16_t result = 0.0f16;
+    riscv_dot_prod_f16(row, job->mel, MFCC_TINYSPEECH_NUM_MEL, &result);
+    job->out[r] = result;
+  }
+}
+#endif
+
+static mfcc_driver_status_t run_sp1024_f32_intra_mc(mfcc_driver_t *ctx,
+                                                     const float32_t *input,
+                                                     float32_t *output,
+                                                     uint64_t *cycles) {
+  const riscv_mfcc_instance_f32 *S;
+  float32_t *pSrc;
+  float32_t *pTmp;
+  float32_t maxValue = 0.0f;
+  uint32_t index = 0U;
+  uint64_t t0 = 0U;
+  uint64_t t1 = 0U;
+  const uint32_t mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
+  const uint32_t dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
+  sp_mel_job_f32_t mel_h1;
+  sp_mel_job_f32_t mel_h0;
+  sp_dct_job_f32_t dct_h1;
+  sp_dct_job_f32_t dct_h0;
+
+  if ((ctx == NULL) || (input == NULL) || (output == NULL) || (ctx->initialized == 0U)) {
+    return MFCC_DRIVER_ERR_BAD_ARG;
+  }
+
+  if ((mfcc_bench_hart_id() != 0U) || (MFCC_BENCH_ENABLE_SP_INTRA_OP_MC == 0)) {
+    return mfcc_driver_run_sp1024x23x12_f32(ctx, input, output, cycles);
+  }
+
+  S = &ctx->mfcc_f32;
+  pSrc = ctx->input_f32;
+  pTmp = ctx->tmp_f32;
+  memcpy(pSrc, input, sizeof(ctx->input_f32));
+
+  t0 = mfcc_bench_rdcycle64();
+  riscv_absmax_f32(pSrc, S->fftLen, &maxValue, &index);
+  if (maxValue != 0.0f) {
+    riscv_scale_f32(pSrc, 1.0f / maxValue, pSrc, S->fftLen);
+  }
+  riscv_mult_f32(pSrc, S->windowCoefs, pSrc, S->fftLen);
+
+#if defined(RISCV_MFCC_CFFT_BASED)
+  for (uint32_t i = 0; i < S->fftLen; i++) {
+    pTmp[2U * i] = pSrc[i];
+    pTmp[(2U * i) + 1U] = 0.0f;
+  }
+  riscv_cfft_f32(&(S->cfft), pTmp, 0, 1);
+#else
+  riscv_rfft_fast_f32(&(S->rfft), pSrc, pTmp, 0);
+  pTmp[S->fftLen] = pTmp[1];
+  pTmp[S->fftLen + 1U] = 0.0f;
+  pTmp[1] = 0.0f;
+#endif
+
+  riscv_cmplx_mag_f32(pTmp, pSrc, S->fftLen);
+  if (maxValue != 0.0f) {
+    riscv_scale_f32(pSrc, maxValue, pSrc, S->fftLen);
+  }
+
+  mel_h1.S = S;
+  mel_h1.spectrum = pSrc;
+  mel_h1.mel_out = pTmp;
+  mel_h1.mel_start = mel_mid;
+  mel_h1.mel_end = MFCC_TINYSPEECH_NUM_MEL;
+  mel_h1.coef_offset = sp_coef_offset(S->filterLengths, mel_mid);
+
+  mel_h0.S = S;
+  mel_h0.spectrum = pSrc;
+  mel_h0.mel_out = pTmp;
+  mel_h0.mel_start = 0U;
+  mel_h0.mel_end = mel_mid;
+  mel_h0.coef_offset = 0U;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, sp_mel_worker_f32, &mel_h1);
+  sp_mel_worker_f32(&mel_h0);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+
+  riscv_offset_f32(pTmp, 1.0e-6f, pTmp, MFCC_TINYSPEECH_NUM_MEL);
+  riscv_vlog_f32(pTmp, pTmp, MFCC_TINYSPEECH_NUM_MEL);
+
+  dct_h1.S = S;
+  dct_h1.mel = pTmp;
+  dct_h1.out = output;
+  dct_h1.dct_start = dct_mid;
+  dct_h1.dct_end = MFCC_TINYSPEECH_NUM_DCT;
+
+  dct_h0.S = S;
+  dct_h0.mel = pTmp;
+  dct_h0.out = output;
+  dct_h0.dct_start = 0U;
+  dct_h0.dct_end = dct_mid;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, sp_dct_worker_f32, &dct_h1);
+  sp_dct_worker_f32(&dct_h0);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+  t1 = mfcc_bench_rdcycle64();
+
+  if (cycles != NULL) {
+    *cycles = t1 - t0;
+  }
+  return MFCC_DRIVER_OK;
+}
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+static mfcc_driver_status_t run_sp1024_f16_intra_mc(mfcc_driver_t *ctx,
+                                                     const float32_t *input,
+                                                     float16_t *output,
+                                                     uint64_t *cycles) {
+  const riscv_mfcc_instance_f16 *S;
+  float16_t *pSrc;
+  float16_t *pTmp;
+  float16_t maxValue = 0.0f16;
+  uint32_t index = 0U;
+  uint64_t t0 = 0U;
+  uint64_t t1 = 0U;
+  const uint32_t mel_mid = (MFCC_TINYSPEECH_NUM_MEL + 1U) / 2U;
+  const uint32_t dct_mid = (MFCC_TINYSPEECH_NUM_DCT + 1U) / 2U;
+  sp_mel_job_f16_t mel_h1;
+  sp_mel_job_f16_t mel_h0;
+  sp_dct_job_f16_t dct_h1;
+  sp_dct_job_f16_t dct_h0;
+
+  if ((ctx == NULL) || (input == NULL) || (output == NULL) || (ctx->initialized == 0U)) {
+    return MFCC_DRIVER_ERR_BAD_ARG;
+  }
+
+  if ((mfcc_bench_hart_id() != 0U) || (MFCC_BENCH_ENABLE_SP_INTRA_OP_MC == 0)) {
+    return mfcc_driver_run_sp1024x23x12_f16(ctx, input, output, cycles);
+  }
+
+  S = &ctx->mfcc_f16;
+  pSrc = ctx->input_f16;
+  pTmp = ctx->tmp_f16;
+  for (uint32_t i = 0; i < MFCC_DRIVER_FFT_LEN; i++) {
+    pSrc[i] = (float16_t)input[i];
+  }
+
+  t0 = mfcc_bench_rdcycle64();
+  riscv_absmax_f16(pSrc, S->fftLen, &maxValue, &index);
+  if ((_Float16)maxValue != 0.0f16) {
+    riscv_scale_f16(pSrc, 1.0f16 / (_Float16)maxValue, pSrc, S->fftLen);
+  }
+  riscv_mult_f16(pSrc, S->windowCoefs, pSrc, S->fftLen);
+
+#if defined(RISCV_MFCC_CFFT_BASED)
+  for (uint32_t i = 0; i < S->fftLen; i++) {
+    pTmp[2U * i] = pSrc[i];
+    pTmp[(2U * i) + 1U] = 0.0f16;
+  }
+  riscv_cfft_f16(&(S->cfft), pTmp, 0, 1);
+#else
+  riscv_rfft_fast_f16(&(S->rfft), pSrc, pTmp, 0);
+  pTmp[S->fftLen] = pTmp[1];
+  pTmp[S->fftLen + 1U] = 0.0f16;
+  pTmp[1] = 0.0f16;
+#endif
+
+  riscv_cmplx_mag_f16(pTmp, pSrc, S->fftLen);
+  if ((_Float16)maxValue != 0.0f16) {
+    riscv_scale_f16(pSrc, maxValue, pSrc, S->fftLen);
+  }
+
+  mel_h1.S = S;
+  mel_h1.spectrum = pSrc;
+  mel_h1.mel_out = pTmp;
+  mel_h1.mel_start = mel_mid;
+  mel_h1.mel_end = MFCC_TINYSPEECH_NUM_MEL;
+  mel_h1.coef_offset = sp_coef_offset(S->filterLengths, mel_mid);
+
+  mel_h0.S = S;
+  mel_h0.spectrum = pSrc;
+  mel_h0.mel_out = pTmp;
+  mel_h0.mel_start = 0U;
+  mel_h0.mel_end = mel_mid;
+  mel_h0.coef_offset = 0U;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, sp_mel_worker_f16, &mel_h1);
+  sp_mel_worker_f16(&mel_h0);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+
+  riscv_offset_f16(pTmp, 1.0e-4f16, pTmp, MFCC_TINYSPEECH_NUM_MEL);
+  riscv_vlog_f16(pTmp, pTmp, MFCC_TINYSPEECH_NUM_MEL);
+
+  dct_h1.S = S;
+  dct_h1.mel = pTmp;
+  dct_h1.out = output;
+  dct_h1.dct_start = dct_mid;
+  dct_h1.dct_end = MFCC_TINYSPEECH_NUM_DCT;
+
+  dct_h0.S = S;
+  dct_h0.mel = pTmp;
+  dct_h0.out = output;
+  dct_h0.dct_start = 0U;
+  dct_h0.dct_end = dct_mid;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  hthread_issue(1, sp_dct_worker_f16, &dct_h1);
+  sp_dct_worker_f16(&dct_h0);
+  hthread_join(1);
+  asm volatile("fence rw, rw" ::: "memory");
+  t1 = mfcc_bench_rdcycle64();
+
+  if (cycles != NULL) {
+    *cycles = t1 - t0;
+  }
+  return MFCC_DRIVER_OK;
 }
 #endif
 
@@ -368,7 +676,7 @@ static int run_sp_f32_mode(hart_state_t *hs,
     if (is_cold) {
       bench_cache_flush(hs->hart_id);
     }
-    st = mfcc_driver_run_sp1024x23x12_f32(&hs->driver, input, output, &cycles);
+    st = run_sp1024_f32_intra_mc(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f32 run failed: %s\n", mfcc_driver_status_str(st));
@@ -408,7 +716,7 @@ static int run_sp_f16_mode(hart_state_t *hs,
     if (is_cold) {
       bench_cache_flush(hs->hart_id);
     }
-    st = mfcc_driver_run_sp1024x23x12_f16(&hs->driver, input, output, &cycles);
+    st = run_sp1024_f16_intra_mc(&hs->driver, input, output, &cycles);
     if (st != MFCC_DRIVER_OK) {
       if (mfcc_bench_is_print_hart()) {
         printf("      sp f16 run failed: %s\n", mfcc_driver_status_str(st));
@@ -910,48 +1218,33 @@ static void reset_hart_stats(hart_state_t *hs) {
 
 /* __main() for secondary harts is provided by threadlib. */
 
-static void hart1_worker(void *arg) {
-  case_job_t *job = (case_job_t *)arg;
-  job->status = run_case_variants(job->hs, job->cs, job->out, job->variant_mask);
-}
-
 static void mc_nop(void *arg) {
   (void)arg;
 }
 
-static void run_case_multicore(uint32_t case_idx) {
+static uint64_t run_case_multicore(uint32_t case_idx) {
   case_outputs_t out;
-  case_job_t job;
-  int h0_status = 0;
+  int status = 0;
+  uint64_t t0 = 0U;
+  uint64_t t1 = 0U;
 
   memset(&out, 0, sizeof(out));
-  memset(&job, 0, sizeof(job));
 
   if (mfcc_bench_is_print_hart()) {
     printf("\n[CASE %lu] %s\n", (unsigned long)case_idx, g_cases[case_idx].name);
   }
   print_input_preview(g_cases[case_idx].samples);
 
-  job.hs = &g_hart[1];
-  job.cs = &g_cases[case_idx];
-  job.out = &out;
-  job.variant_mask = k_hart1_variant_mask;
-  job.status = 0;
+  t0 = mfcc_bench_rdcycle64();
+  status = run_case_variants(&g_hart[0], &g_cases[case_idx], &out, k_single_hart_variant_mask);
+  t1 = mfcc_bench_rdcycle64();
 
-  asm volatile("fence rw, rw" ::: "memory");
-  hthread_issue(1, hart1_worker, &job);
-
-  h0_status = run_case_variants(&g_hart[0], &g_cases[case_idx], &out, k_hart0_variant_mask);
-  hthread_join(1);
-  asm volatile("fence rw, rw" ::: "memory");
-
-  if ((h0_status != 0 || job.status != 0) && mfcc_bench_is_print_hart()) {
-    printf("    warning: runtime errors seen (hart0=%d hart1=%d), correctness may be skipped per variant\n",
-           h0_status,
-           job.status);
+  if ((status != 0) && mfcc_bench_is_print_hart()) {
+    printf("    warning: runtime errors seen in case execution (status=%d)\n", status);
   }
 
   run_correctness_checks(&g_hart[0], case_idx, &out);
+  return (t1 - t0);
 }
 
 static void print_global_cycle_summary(const cycle_stats_t total_cold[MFCC_VAR_COUNT],
@@ -1026,15 +1319,21 @@ static int setup_once(void) {
 }
 
 static void run_suite_for_frequency(uint64_t frequency_hz) {
+  uint64_t suite_t0;
+  uint64_t suite_t1;
+  cycle_stats_t case_wall_stats;
+
   reset_hart_stats(&g_hart[0]);
   reset_hart_stats(&g_hart[1]);
+  stats_init(&case_wall_stats);
 
   if (mfcc_bench_is_print_hart()) {
     printf("\n=== MFCC Driver Benchmark (Multicore) @ %llu Hz ===\n",
            (unsigned long long)frequency_hz);
-    printf("  mode: 2-core per-case variant split\n");
-    printf("  hart0 variants: f32, q15, sp1024x23x12_f32\n");
-    printf("  hart1 variants: q31, f16, sp1024x23x12_f16\n");
+    printf("  mode: single-case execution on hart0 + intra-op helper on hart1 for sp1024 paths\n");
+    printf("  intra-op multicore: sp1024x23x12_f32=%d sp1024x23x12_f16=%d\n",
+           MFCC_BENCH_ENABLE_SP_INTRA_OP_MC,
+           MFCC_BENCH_ENABLE_SP_INTRA_OP_MC);
     printf("  reference header: FFT_LEN=%d CASES=%d DCT=%d\n",
            MFCC_REF_FFT_LEN, MFCC_REF_NUM_CASES, MFCC_REF_NUM_DCT);
     printf("  iterations=%d cold=%d warm=%d\n",
@@ -1050,9 +1349,12 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            MFCC_BENCH_ENABLE_SP1024X23X12_F16);
   }
 
+  suite_t0 = mfcc_bench_rdcycle64();
   for (uint32_t tc = 0; tc < MFCC_BENCH_NUM_CASES; tc++) {
-    run_case_multicore(tc);
+    const uint64_t case_cycles = run_case_multicore(tc);
+    stats_update(&case_wall_stats, case_cycles);
   }
+  suite_t1 = mfcc_bench_rdcycle64();
 
   /* Merge stats from both harts. */
   cycle_stats_t merged_cold[MFCC_VAR_COUNT];
@@ -1070,6 +1372,43 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 
   print_global_cycle_summary(merged_cold, merged_warm);
   print_global_correctness_summary(merged_check);
+
+  if (mfcc_bench_is_print_hart()) {
+    uint64_t serial_case_est = 0U;
+    uint64_t sp_serial_est = 0U;
+    uint64_t sp_parallel_est = 0U;
+    for (uint32_t v = 0; v < MFCC_VAR_COUNT; v++) {
+      const cycle_stats_t *src = (merged_warm[v].runs > 0U) ? &merged_warm[v] : &merged_cold[v];
+      const uint64_t avg_v = stats_avg(src);
+      serial_case_est += avg_v;
+      if ((v == MFCC_VAR_SP_F32) || (v == MFCC_VAR_SP_F16)) {
+        sp_serial_est += avg_v;
+        if (avg_v > sp_parallel_est) {
+          sp_parallel_est = avg_v;
+        }
+      }
+    }
+
+    printf("\n=== MFCC Multicore Wall Summary ===\n");
+    printf("  suite_total_cycles=%llu\n", (unsigned long long)(suite_t1 - suite_t0));
+    printf("  case_wall_cycles: runs=%lu best=%llu avg=%llu worst=%llu\n",
+           (unsigned long)case_wall_stats.runs,
+           (unsigned long long)(case_wall_stats.runs ? case_wall_stats.best : 0ULL),
+           (unsigned long long)stats_avg(&case_wall_stats),
+           (unsigned long long)case_wall_stats.worst);
+    printf("  est_case_total_single_core=%llu\n", (unsigned long long)serial_case_est);
+    if (case_wall_stats.runs > 0U && stats_avg(&case_wall_stats) > 0U) {
+      const double spd = (double)serial_case_est / (double)stats_avg(&case_wall_stats);
+      printf("  est_speedup_over_single_core=%.3fx\n", spd);
+    }
+    if (sp_parallel_est > 0U) {
+      const double sp_spd = (double)sp_serial_est / (double)sp_parallel_est;
+      printf("  sp1024_pair_est: serial=%llu parallel=%llu speedup=%.3fx\n",
+             (unsigned long long)sp_serial_est,
+             (unsigned long long)sp_parallel_est,
+             sp_spd);
+    }
+  }
 }
 
 void app_init(void) {

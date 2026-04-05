@@ -11,7 +11,20 @@
 #include "mfcc_reference_data.h"
 #include "simple_setup.h"
 
+#include "dsp/basic_math_functions.h"
+#include "dsp/complex_math_functions.h"
+#include "dsp/fast_math_functions.h"
+#include "dsp/matrix_functions.h"
+#include "dsp/statistics_functions.h"
 #include "dsp/transform_functions.h"
+#if defined(RISCV_FLOAT16_SUPPORTED)
+#include "dsp/basic_math_functions_f16.h"
+#include "dsp/complex_math_functions_f16.h"
+#include "dsp/fast_math_functions_f16.h"
+#include "dsp/matrix_functions_f16.h"
+#include "dsp/statistics_functions_f16.h"
+#include "dsp/transform_functions_f16.h"
+#endif
 
 #ifndef MFCC_REF_FFT_LEN
 #define MFCC_REF_FFT_LEN MFCC_DRIVER_FFT_LEN
@@ -82,6 +95,386 @@ static mfcc_driver_status_t spad_run_sp_f32(const float32_t *input,
   return MFCC_DRIVER_OK;
 }
 
+/* ---- Intra-MFCC parallelism: split pipeline stages across 2 cores ----
+ *
+ * Single dispatch per MFCC call with lightweight flag barriers.
+ * Core 1 runs one continuous function, no phase re-dispatch overhead.
+ *
+ * Parallel regions:
+ *   A) normalize (absmax reduction + scale) + windowing   (~10%)
+ *   B) complex magnitude + rescale                        (~15%)
+ *   C) mel filterbank + log                               (~25%)
+ * Serial (core 0 only):
+ *   FFT                                                   (~50%)
+ *   DCT                                                   (< 5%)
+ */
+
+#define PAR_MEL_SPLIT   12U  /* core 0: filters [0..11], core 1: filters [12..22] */
+
+typedef struct {
+  /* ---- per-call parameters (written by core 0 before kick) ---- */
+  volatile uint32_t dtype;         /* PAR_DTYPE_F32 or PAR_DTYPE_F16 */
+  void *pSrc;
+  void *pTmp;
+  const void *S;                   /* riscv_mfcc_instance_{f32,f16} * */
+
+  /* ---- lightweight barrier flags ---- */
+  volatile uint32_t kick;
+  volatile uint32_t c1_absmax_done;
+  volatile uint32_t c0_norm_done;
+  volatile uint32_t c1_norm_done;
+  volatile uint32_t c0_fft_done;
+  volatile uint32_t c0_mag_done;
+  volatile uint32_t c1_mag_done;
+  volatile uint32_t c1_mel_done;
+
+  /* ---- shared data (type-punned via dtype) ---- */
+  float32_t c1_local_max_f32;
+  float32_t global_max_f32;
+#if defined(RISCV_FLOAT16_SUPPORTED)
+  float16_t c1_local_max_f16;
+  float16_t global_max_f16;
+#endif
+
+  volatile uint32_t exit_flag;
+} par_ctx_t;
+
+#define PAR_DTYPE_F32  0U
+#define PAR_DTYPE_F16  1U
+
+static volatile par_ctx_t g_par __attribute__((aligned(64)));
+
+/* Spin-wait helper — keeps pipeline busy without stalling memory bus. */
+static inline void par_wait(volatile uint32_t *flag) {
+  while (!*flag) { asm volatile("nop"); }
+}
+
+static void par_helper_f32(void) {
+  const uint32_t half = MFCC_TINYSPEECH_FFT_LEN / 2U;
+  float32_t *pSrc = (float32_t *)g_par.pSrc;
+  float32_t *pTmp = (float32_t *)g_par.pTmp;
+  const riscv_mfcc_instance_f32 *S =
+      (const riscv_mfcc_instance_f32 *)g_par.S;
+
+  /* A) absmax second half */
+  float32_t localMax;
+  uint32_t localIdx;
+  riscv_absmax_f32(pSrc + half, half, &localMax, &localIdx);
+  g_par.c1_local_max_f32 = localMax;
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_absmax_done = 1;
+
+  par_wait(&g_par.c0_norm_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  float32_t gmax = g_par.global_max_f32;
+  if (gmax != 0.0f) {
+    riscv_scale_f32(pSrc + half, 1.0f / gmax, pSrc + half, half);
+  }
+  riscv_mult_f32(pSrc + half, S->windowCoefs + half, pSrc + half, half);
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_norm_done = 1;
+
+  par_wait(&g_par.c0_fft_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* B) magnitude + rescale second half */
+  riscv_cmplx_mag_f32(pTmp + half * 2, pSrc + half, half);
+  if (gmax != 0.0f) {
+    riscv_scale_f32(pSrc + half, gmax, pSrc + half, half);
+  }
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_mag_done = 1;
+
+  par_wait(&g_par.c0_mag_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* C) mel[12..22] + log */
+  {
+    const float32_t *coef = S->filterCoefs;
+    for (uint32_t i = 0; i < PAR_MEL_SPLIT; i++) coef += S->filterLengths[i];
+    for (uint32_t i = PAR_MEL_SPLIT; i < MFCC_TINYSPEECH_NUM_MEL; i++) {
+      float32_t result;
+      riscv_dot_prod_f32(pSrc + S->filterPos[i], coef,
+                         S->filterLengths[i], &result);
+      pTmp[i] = result;
+      coef += S->filterLengths[i];
+    }
+  }
+  riscv_offset_f32(pTmp + PAR_MEL_SPLIT, 1.0e-6f,
+                   pTmp + PAR_MEL_SPLIT,
+                   MFCC_TINYSPEECH_NUM_MEL - PAR_MEL_SPLIT);
+  riscv_vlog_f32(pTmp + PAR_MEL_SPLIT,
+                 pTmp + PAR_MEL_SPLIT,
+                 MFCC_TINYSPEECH_NUM_MEL - PAR_MEL_SPLIT);
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_mel_done = 1;
+}
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+static void par_helper_f16(void) {
+  const uint32_t half = MFCC_TINYSPEECH_FFT_LEN / 2U;
+  float16_t *pSrc = (float16_t *)g_par.pSrc;
+  float16_t *pTmp = (float16_t *)g_par.pTmp;
+  const riscv_mfcc_instance_f16 *S =
+      (const riscv_mfcc_instance_f16 *)g_par.S;
+
+  /* A) absmax second half */
+  float16_t localMax;
+  uint32_t localIdx;
+  riscv_absmax_f16(pSrc + half, half, &localMax, &localIdx);
+  g_par.c1_local_max_f16 = localMax;
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_absmax_done = 1;
+
+  par_wait(&g_par.c0_norm_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  float16_t gmax = g_par.global_max_f16;
+  if ((_Float16)gmax != 0.0f16) {
+    riscv_scale_f16(pSrc + half, 1.0f16 / (_Float16)gmax, pSrc + half, half);
+  }
+  riscv_mult_f16(pSrc + half, S->windowCoefs + half, pSrc + half, half);
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_norm_done = 1;
+
+  par_wait(&g_par.c0_fft_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* B) magnitude + rescale second half */
+  riscv_cmplx_mag_f16(pTmp + half * 2, pSrc + half, half);
+  if ((_Float16)gmax != 0.0f16) {
+    riscv_scale_f16(pSrc + half, gmax, pSrc + half, half);
+  }
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_mag_done = 1;
+
+  par_wait(&g_par.c0_mag_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* C) mel[12..22] + log */
+  {
+    const float16_t *coef = S->filterCoefs;
+    for (uint32_t i = 0; i < PAR_MEL_SPLIT; i++) coef += S->filterLengths[i];
+    for (uint32_t i = PAR_MEL_SPLIT; i < MFCC_TINYSPEECH_NUM_MEL; i++) {
+      float16_t result;
+      riscv_dot_prod_f16(pSrc + S->filterPos[i], coef,
+                         S->filterLengths[i], &result);
+      pTmp[i] = result;
+      coef += S->filterLengths[i];
+    }
+  }
+  riscv_offset_f16(pTmp + PAR_MEL_SPLIT, 1.0e-4f16,
+                   pTmp + PAR_MEL_SPLIT,
+                   MFCC_TINYSPEECH_NUM_MEL - PAR_MEL_SPLIT);
+  riscv_vlog_f16(pTmp + PAR_MEL_SPLIT,
+                 pTmp + PAR_MEL_SPLIT,
+                 MFCC_TINYSPEECH_NUM_MEL - PAR_MEL_SPLIT);
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c1_mel_done = 1;
+}
+#endif
+
+static void *par_mfcc_helper(void *arg) {
+  (void)arg;
+  while (1) {
+    while (!g_par.kick && !g_par.exit_flag) {
+      asm volatile("nop");
+    }
+    if (g_par.exit_flag) break;
+    asm volatile("fence r, rw" ::: "memory");
+
+    if (g_par.dtype == PAR_DTYPE_F32) {
+      par_helper_f32();
+#if defined(RISCV_FLOAT16_SUPPORTED)
+    } else {
+      par_helper_f16();
+#endif
+    }
+    g_par.kick = 0;
+  }
+  return NULL;
+}
+
+static inline void par_reset_flags(void) {
+  g_par.kick = 0;
+  g_par.c1_absmax_done = 0;
+  g_par.c0_norm_done = 0;
+  g_par.c1_norm_done = 0;
+  g_par.c0_fft_done = 0;
+  g_par.c0_mag_done = 0;
+  g_par.c1_mag_done = 0;
+  g_par.c1_mel_done = 0;
+}
+
+static void mfcc_parallel_f32(const riscv_mfcc_instance_f32 *S,
+                               float32_t *pSrc, float32_t *pDst,
+                               float32_t *pTmp) {
+  const uint32_t half = S->fftLen / 2U;  /* 512 */
+
+  /* Set up shared state and kick core 1. */
+  par_reset_flags();
+  g_par.dtype = PAR_DTYPE_F32;
+  g_par.pSrc = pSrc;
+  g_par.pTmp = pTmp;
+  g_par.S = S;
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.kick = 1;
+
+  /* ---- A) Normalize + window (first half, parallel with core 1) ---- */
+  float32_t maxValue0;
+  uint32_t index0;
+  riscv_absmax_f32(pSrc, half, &maxValue0, &index0);
+
+  /* Wait for core 1's local absmax, compute global max. */
+  par_wait(&g_par.c1_absmax_done);
+  asm volatile("fence r, rw" ::: "memory");
+  float32_t maxValue = (g_par.c1_local_max_f32 > maxValue0) ? g_par.c1_local_max_f32 : maxValue0;
+  g_par.global_max_f32 = maxValue;
+
+  /* Scale + window first half. */
+  if (maxValue != 0.0f) {
+    riscv_scale_f32(pSrc, 1.0f / maxValue, pSrc, half);
+  }
+  riscv_mult_f32(pSrc, S->windowCoefs, pSrc, half);
+
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c0_norm_done = 1;
+
+  /* Wait for core 1 to finish its half of normalize + window. */
+  par_wait(&g_par.c1_norm_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* ---- FFT (serial on core 0) ---- */
+  riscv_rfft_fast_f32(&(S->rfft), pSrc, pTmp, 0);
+  pTmp[S->fftLen] = pTmp[1];
+  pTmp[S->fftLen + 1U] = 0.0f;
+  pTmp[1] = 0.0f;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c0_fft_done = 1;
+
+  /* ---- B) Magnitude + rescale (first half) ---- */
+  riscv_cmplx_mag_f32(pTmp, pSrc, half);
+  if (maxValue != 0.0f) {
+    riscv_scale_f32(pSrc, maxValue, pSrc, half);
+  }
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c0_mag_done = 1;
+
+  /* Wait for core 1's magnitude. */
+  par_wait(&g_par.c1_mag_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* ---- C) Mel filterbank + log (filters 0..11) ---- */
+  {
+    const float32_t *coef = S->filterCoefs;
+    for (uint32_t i = 0; i < PAR_MEL_SPLIT; i++) {
+      float32_t result;
+      riscv_dot_prod_f32(pSrc + S->filterPos[i], coef,
+                         S->filterLengths[i], &result);
+      pTmp[i] = result;
+      coef += S->filterLengths[i];
+    }
+  }
+  /* log on our slice */
+  riscv_offset_f32(pTmp, 1.0e-6f, pTmp, PAR_MEL_SPLIT);
+  riscv_vlog_f32(pTmp, pTmp, PAR_MEL_SPLIT);
+
+  /* Wait for core 1's mel + log. */
+  par_wait(&g_par.c1_mel_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* ---- DCT (serial, uses full mel[0..22]) ---- */
+  riscv_matrix_instance_f32 pDctMat;
+  pDctMat.numRows = MFCC_TINYSPEECH_NUM_DCT;
+  pDctMat.numCols = MFCC_TINYSPEECH_NUM_MEL;
+  pDctMat.pData = (float32_t *)S->dctCoefs;
+  riscv_mat_vec_mult_f32(&pDctMat, pTmp, pDst);
+}
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+static void mfcc_parallel_f16(const riscv_mfcc_instance_f16 *S,
+                               float16_t *pSrc, float16_t *pDst,
+                               float16_t *pTmp) {
+  const uint32_t half = S->fftLen / 2U;
+
+  par_reset_flags();
+  g_par.dtype = PAR_DTYPE_F16;
+  g_par.pSrc = pSrc;
+  g_par.pTmp = pTmp;
+  g_par.S = S;
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.kick = 1;
+
+  /* ---- A) Normalize + window (first half) ---- */
+  float16_t maxValue0;
+  uint32_t index0;
+  riscv_absmax_f16(pSrc, half, &maxValue0, &index0);
+
+  par_wait(&g_par.c1_absmax_done);
+  asm volatile("fence r, rw" ::: "memory");
+  float16_t maxValue = ((_Float16)g_par.c1_local_max_f16 > (_Float16)maxValue0)
+                         ? g_par.c1_local_max_f16 : maxValue0;
+  g_par.global_max_f16 = maxValue;
+
+  if ((_Float16)maxValue != 0.0f16) {
+    riscv_scale_f16(pSrc, 1.0f16 / (_Float16)maxValue, pSrc, half);
+  }
+  riscv_mult_f16(pSrc, S->windowCoefs, pSrc, half);
+
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c0_norm_done = 1;
+
+  par_wait(&g_par.c1_norm_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* ---- FFT (serial) ---- */
+  riscv_rfft_fast_f16(&(S->rfft), pSrc, pTmp, 0);
+  pTmp[S->fftLen] = pTmp[1];
+  pTmp[S->fftLen + 1U] = 0.0f16;
+  pTmp[1] = 0.0f16;
+
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c0_fft_done = 1;
+
+  /* ---- B) Magnitude + rescale (first half) ---- */
+  riscv_cmplx_mag_f16(pTmp, pSrc, half);
+  if ((_Float16)maxValue != 0.0f16) {
+    riscv_scale_f16(pSrc, maxValue, pSrc, half);
+  }
+  asm volatile("fence rw, rw" ::: "memory");
+  g_par.c0_mag_done = 1;
+
+  par_wait(&g_par.c1_mag_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* ---- C) Mel filterbank + log (filters 0..11) ---- */
+  {
+    const float16_t *coef = S->filterCoefs;
+    for (uint32_t i = 0; i < PAR_MEL_SPLIT; i++) {
+      float16_t result;
+      riscv_dot_prod_f16(pSrc + S->filterPos[i], coef,
+                         S->filterLengths[i], &result);
+      pTmp[i] = result;
+      coef += S->filterLengths[i];
+    }
+  }
+  riscv_offset_f16(pTmp, 1.0e-4f16, pTmp, PAR_MEL_SPLIT);
+  riscv_vlog_f16(pTmp, pTmp, PAR_MEL_SPLIT);
+
+  par_wait(&g_par.c1_mel_done);
+  asm volatile("fence r, rw" ::: "memory");
+
+  /* ---- DCT (serial) ---- */
+  riscv_matrix_instance_f16 pDctMat;
+  pDctMat.numRows = MFCC_TINYSPEECH_NUM_DCT;
+  pDctMat.numCols = MFCC_TINYSPEECH_NUM_MEL;
+  pDctMat.pData = (float16_t *)S->dctCoefs;
+  riscv_mat_vec_mult_f16(&pDctMat, pTmp, pDst);
+}
+#endif
+
 typedef enum {
   MFCC_VAR_F32 = 0,
   MFCC_VAR_Q31,
@@ -89,6 +482,8 @@ typedef enum {
   MFCC_VAR_F16,
   MFCC_VAR_SP_F32,
   MFCC_VAR_SP_F16,
+  MFCC_VAR_PAR_F32,
+  MFCC_VAR_PAR_F16,
   MFCC_VAR_COUNT
 } mfcc_variant_t;
 
@@ -116,12 +511,18 @@ typedef struct {
 #if defined(RISCV_FLOAT16_SUPPORTED)
   float16_t out_sp_f16[MFCC_DRIVER_NUM_DCT];
 #endif
+  float32_t out_par_f32[MFCC_DRIVER_NUM_DCT];
+#if defined(RISCV_FLOAT16_SUPPORTED)
+  float16_t out_par_f16[MFCC_DRIVER_NUM_DCT];
+#endif
   uint8_t has_f32;
   uint8_t has_q31;
   uint8_t has_q15;
   uint8_t has_f16;
   uint8_t has_sp_f32;
   uint8_t has_sp_f16;
+  uint8_t has_par_f32;
+  uint8_t has_par_f16;
 } case_outputs_t;
 
 /* Per-hart state for the multicore benchmark. */
@@ -150,6 +551,8 @@ static const char *k_var_names[MFCC_VAR_COUNT] = {
     "f16",
     "sp1024x23x12_f32",
     "sp1024x23x12_f16",
+    "par_f32",
+    "par_f16",
 };
 
 static void stats_init(cycle_stats_t *s) {
@@ -177,16 +580,6 @@ static uint64_t stats_avg(const cycle_stats_t *s) {
   return s->sum / (uint64_t)s->runs;
 }
 
-static void stats_merge(cycle_stats_t *dst, const cycle_stats_t *src) {
-  dst->sum += src->sum;
-  if (src->runs > 0U && src->best < dst->best) {
-    dst->best = src->best;
-  }
-  if (src->worst > dst->worst) {
-    dst->worst = src->worst;
-  }
-  dst->runs += src->runs;
-}
 
 static void print_input_preview(const float32_t *x) {
   if (!mfcc_bench_is_print_hart()) {
@@ -443,6 +836,88 @@ static int run_sp_f32_mode(hart_state_t *hs,
   }
   return 0;
 }
+
+static int run_par_f32_mode(hart_state_t *hs,
+                            const float32_t *input,
+                            float32_t *output,
+                            const char *cache_name,
+                            uint8_t is_cold,
+                            cycle_stats_t *total_stats) {
+  cycle_stats_t local;
+  stats_init(&local);
+
+  for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
+    if (is_cold) {
+      bench_cache_flush(hs->hart_id);
+    }
+    /* Copy input into driver's scratch (parallel func modifies pSrc in-place) */
+    memcpy(hs->driver.input_f32, input, sizeof(hs->driver.input_f32));
+    uint64_t t0, t1;
+    asm volatile("rdcycle %0" : "=r"(t0));
+    mfcc_parallel_f32(&hs->driver.mfcc_f32,
+                      hs->driver.input_f32, output,
+                      hs->driver.tmp_f32);
+    asm volatile("rdcycle %0" : "=r"(t1));
+    uint64_t cycles = t1 - t0;
+    stats_update(&local, cycles);
+    stats_update(total_stats, cycles);
+    (void)iter;
+  }
+
+  if (mfcc_bench_is_print_hart()) {
+    printf("      summary[par_f32][%s]: runs=%lu best=%llu avg=%llu worst=%llu\n",
+           cache_name,
+           (unsigned long)local.runs,
+           (unsigned long long)local.best,
+           (unsigned long long)stats_avg(&local),
+           (unsigned long long)local.worst);
+    print_vec_f32("par_f32_mfcc", output);
+  }
+  return 0;
+}
+
+#if defined(RISCV_FLOAT16_SUPPORTED)
+static int run_par_f16_mode(hart_state_t *hs,
+                            const float32_t *input,
+                            float16_t *output,
+                            const char *cache_name,
+                            uint8_t is_cold,
+                            cycle_stats_t *total_stats) {
+  cycle_stats_t local;
+  stats_init(&local);
+
+  for (uint32_t iter = 0; iter < MFCC_BENCH_NUM_ITERATIONS; iter++) {
+    if (is_cold) {
+      bench_cache_flush(hs->hart_id);
+    }
+    /* Convert f32 input to f16 (outside timed section). */
+    for (uint32_t i = 0; i < MFCC_DRIVER_FFT_LEN; i++) {
+      hs->driver.input_f16[i] = (float16_t)input[i];
+    }
+    uint64_t t0, t1;
+    asm volatile("rdcycle %0" : "=r"(t0));
+    mfcc_parallel_f16(&hs->driver.mfcc_f16,
+                      hs->driver.input_f16, output,
+                      hs->driver.tmp_f16);
+    asm volatile("rdcycle %0" : "=r"(t1));
+    uint64_t cycles = t1 - t0;
+    stats_update(&local, cycles);
+    stats_update(total_stats, cycles);
+    (void)iter;
+  }
+
+  if (mfcc_bench_is_print_hart()) {
+    printf("      summary[par_f16][%s]: runs=%lu best=%llu avg=%llu worst=%llu\n",
+           cache_name,
+           (unsigned long)local.runs,
+           (unsigned long long)local.best,
+           (unsigned long long)stats_avg(&local),
+           (unsigned long long)local.worst);
+    print_vec_f16("par_f16_mfcc", output);
+  }
+  return 0;
+}
+#endif
 
 #if defined(RISCV_FLOAT16_SUPPORTED)
 static int run_sp_f16_mode(hart_state_t *hs,
@@ -797,6 +1272,64 @@ static void run_correctness_checks(hart_state_t *hs,
   update_check_stats(hs, MFCC_VAR_SP_F16, -1);
 #endif
 #endif
+
+  /* par_f32: compare against f32 golden */
+  if (out->has_par_f32) {
+#if MFCC_REF_HAS_F32
+    if (ref_case_is_usable(case_idx, "par_f32")) {
+      int pass = compare_f32_arrays(
+          out->out_par_f32, g_mfcc_ref_f32[case_idx], MFCC_REF_F32_TOL, &max_err, &max_idx);
+      update_check_stats(hs, MFCC_VAR_PAR_F32, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[par_f32] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_F32_TOL);
+      }
+    } else {
+      update_check_stats(hs, MFCC_VAR_PAR_F32, -1);
+    }
+#else
+    update_check_stats(hs, MFCC_VAR_PAR_F32, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[par_f32] = SKIP (f32 golden disabled)\n");
+    }
+#endif
+  } else {
+    update_check_stats(hs, MFCC_VAR_PAR_F32, -1);
+  }
+
+  /* par_f16: compare against f16 golden */
+#if defined(RISCV_FLOAT16_SUPPORTED)
+  if (out->has_par_f16) {
+#if MFCC_REF_HAS_F16
+    if (ref_case_is_usable(case_idx, "par_f16")) {
+      int pass = compare_f16_to_f32(
+          out->out_par_f16, g_mfcc_ref_f16[case_idx], MFCC_REF_F16_TOL, &max_err, &max_idx);
+      update_check_stats(hs, MFCC_VAR_PAR_F16, pass);
+      if (mfcc_bench_is_print_hart()) {
+        printf("    check[par_f16] = %s max_abs_err=%0.6f idx=%lu tol=%0.3f\n",
+               pass ? "PASS" : "FAIL",
+               max_err,
+               (unsigned long)max_idx,
+               MFCC_REF_F16_TOL);
+      }
+    } else {
+      update_check_stats(hs, MFCC_VAR_PAR_F16, -1);
+    }
+#else
+    update_check_stats(hs, MFCC_VAR_PAR_F16, -1);
+    if (mfcc_bench_is_print_hart()) {
+      printf("    check[par_f16] = SKIP (f16 golden disabled)\n");
+    }
+#endif
+  } else {
+    update_check_stats(hs, MFCC_VAR_PAR_F16, -1);
+  }
+#else
+  update_check_stats(hs, MFCC_VAR_PAR_F16, -1);
+#endif
 }
 
 static void run_case(hart_state_t *hs, const mfcc_bench_case_t *cs, uint32_t case_idx) {
@@ -921,6 +1454,39 @@ static void run_case(hart_state_t *hs, const mfcc_bench_case_t *cs, uint32_t cas
 #endif
   } /* end !use_spad */
 
+  /* Parallel MFCC: only run on hart 0 (core 1 is the helper) */
+  if (!hs->use_spad) {
+#if MFCC_BENCH_RUN_COLD
+    if (run_par_f32_mode(hs, cs->samples, out.out_par_f32,
+                         "cold", 1U, &hs->total_cold[MFCC_VAR_PAR_F32]) == 0) {
+      out.has_par_f32 = 1U;
+    }
+#endif
+#if MFCC_BENCH_RUN_WARM
+    if (run_par_f32_mode(hs, cs->samples, out.out_par_f32,
+                         "warm", 0U, &hs->total_warm[MFCC_VAR_PAR_F32]) == 0) {
+      out.has_par_f32 = 1U;
+    }
+#endif
+
+#if MFCC_BENCH_ENABLE_F16
+#if defined(RISCV_FLOAT16_SUPPORTED)
+#if MFCC_BENCH_RUN_COLD
+    if (run_par_f16_mode(hs, cs->samples, out.out_par_f16,
+                         "cold", 1U, &hs->total_cold[MFCC_VAR_PAR_F16]) == 0) {
+      out.has_par_f16 = 1U;
+    }
+#endif
+#if MFCC_BENCH_RUN_WARM
+    if (run_par_f16_mode(hs, cs->samples, out.out_par_f16,
+                         "warm", 0U, &hs->total_warm[MFCC_VAR_PAR_F16]) == 0) {
+      out.has_par_f16 = 1U;
+    }
+#endif
+#endif
+#endif
+  }
+
   run_correctness_checks(hs, case_idx, &out);
 }
 
@@ -938,13 +1504,6 @@ static void reset_hart_stats(hart_state_t *hs) {
  * Do not define __main here so that hthread_issue/join can dispatch
  * work to the secondary hart. */
 
-static void *hart1_worker(void *arg) {
-  hart_state_t *hs = (hart_state_t *)arg;
-  for (uint32_t tc = hs->case_start; tc < hs->case_end; tc++) {
-    run_case(hs, &g_cases[tc], tc);
-  }
-  return NULL;
-}
 
 static void *mc_nop(void *arg) {
   (void)arg;
@@ -1029,29 +1588,21 @@ static int setup_once(void) {
 
 static void run_suite_for_frequency(uint64_t frequency_hz) {
   reset_hart_stats(&g_hart[0]);
-  reset_hart_stats(&g_hart[1]);
 
-  /* Split cases between the two harts: hart 0 gets the first half, hart 1 gets the second. */
-  const uint32_t half = MFCC_BENCH_NUM_CASES / 2U;
   g_hart[0].case_start = 0U;
-  g_hart[0].case_end = half;
-  g_hart[1].case_start = half;
-  g_hart[1].case_end = MFCC_BENCH_NUM_CASES;
+  g_hart[0].case_end = MFCC_BENCH_NUM_CASES;
 
   if (mfcc_bench_is_print_hart()) {
     printf("\n=== MFCC Driver Benchmark (Multicore) @ %llu Hz ===\n",
            (unsigned long long)frequency_hz);
-    printf("  mode: 2-core case split (hart0: cases 0..%lu, hart1: cases %lu..%lu)\n",
-           (unsigned long)(half - 1U),
-           (unsigned long)half,
-           (unsigned long)(MFCC_BENCH_NUM_CASES - 1U));
+    printf("  mode: intra-MFCC parallel (normalize+window+mag+mel+log split across 2 cores)\n");
     printf("  reference header: FFT_LEN=%d CASES=%d DCT=%d\n",
            MFCC_REF_FFT_LEN, MFCC_REF_NUM_CASES, MFCC_REF_NUM_DCT);
     printf("  iterations=%d cold=%d warm=%d\n",
            MFCC_BENCH_NUM_ITERATIONS,
            MFCC_BENCH_RUN_COLD,
            MFCC_BENCH_RUN_WARM);
-    printf("  enabled: f32=%d q31=%d q15=%d f16=%d sp_f32=%d sp_f16=%d\n",
+    printf("  enabled: f32=%d q31=%d q15=%d f16=%d sp_f32=%d sp_f16=%d par_f32=1\n",
            MFCC_BENCH_ENABLE_F32,
            MFCC_BENCH_ENABLE_Q31,
            MFCC_BENCH_ENABLE_Q15,
@@ -1060,33 +1611,37 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            MFCC_BENCH_ENABLE_SP1024X23X12_F16);
   }
 
-  /* Dispatch hart 1's share, then run hart 0's share on this core. */
+  /* Launch core 1 as the persistent parallel helper (spins waiting for work). */
+  par_reset_flags();
+  g_par.exit_flag = 0;
   asm volatile("fence rw, rw" ::: "memory");
-  hthread_issue(1, hart1_worker, &g_hart[1]);
+  hthread_issue(1, par_mfcc_helper, NULL);
 
+  uint64_t wall_t0, wall_t1;
+  asm volatile("rdcycle %0" : "=r"(wall_t0));
+
+  /* Core 0 runs all cases sequentially.
+   * Non-parallel variants run single-threaded.
+   * par_f32 variant coordinates with core 1's helper loop. */
   for (uint32_t tc = g_hart[0].case_start; tc < g_hart[0].case_end; tc++) {
     run_case(&g_hart[0], &g_cases[tc], tc);
   }
 
+  asm volatile("rdcycle %0" : "=r"(wall_t1));
+
+  /* Tell core 1 helper to exit. */
+  g_par.exit_flag = 1;
+  asm volatile("fence rw, rw" ::: "memory");
   hthread_join(1);
   asm volatile("fence rw, rw" ::: "memory");
 
-  /* Merge stats from both harts. */
-  cycle_stats_t merged_cold[MFCC_VAR_COUNT];
-  cycle_stats_t merged_warm[MFCC_VAR_COUNT];
-  check_stats_t merged_check[MFCC_VAR_COUNT];
-  for (uint32_t v = 0; v < MFCC_VAR_COUNT; v++) {
-    merged_cold[v] = g_hart[0].total_cold[v];
-    stats_merge(&merged_cold[v], &g_hart[1].total_cold[v]);
-    merged_warm[v] = g_hart[0].total_warm[v];
-    stats_merge(&merged_warm[v], &g_hart[1].total_warm[v]);
-    merged_check[v].pass = g_hart[0].check_stats[v].pass + g_hart[1].check_stats[v].pass;
-    merged_check[v].fail = g_hart[0].check_stats[v].fail + g_hart[1].check_stats[v].fail;
-    merged_check[v].skip = g_hart[0].check_stats[v].skip + g_hart[1].check_stats[v].skip;
+  if (mfcc_bench_is_print_hart()) {
+    printf("\n  wall-clock cycles (all cases): %llu\n",
+           (unsigned long long)(wall_t1 - wall_t0));
   }
 
-  print_global_cycle_summary(merged_cold, merged_warm);
-  print_global_correctness_summary(merged_check);
+  print_global_cycle_summary(g_hart[0].total_cold, g_hart[0].total_warm);
+  print_global_correctness_summary(g_hart[0].check_stats);
 }
 
 void app_init(void) {

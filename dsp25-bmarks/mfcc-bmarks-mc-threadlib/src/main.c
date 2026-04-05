@@ -941,6 +941,7 @@ void app_init(void) {
 
 void app_main(void) {
   run_suite_for_frequency(target_frequency);
+  mfcc_driver_mc_shutdown();
 }
 
 #if MFCC_BENCH_ENABLE_PLL_SWEEP
@@ -973,6 +974,7 @@ int main(void) {
     asm volatile("fence rw, rw" ::: "memory");
     run_suite_for_frequency(target_frequency);
   }
+  mfcc_driver_mc_shutdown();
   return 0;
 #else
   app_init();

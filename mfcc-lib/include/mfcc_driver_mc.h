@@ -19,6 +19,8 @@ mfcc_driver_status_t mfcc_driver_run_sp1024x23x12_f16_mc(mfcc_driver_t *ctx,
                                                           uint64_t *cycles);
 #endif
 
+void mfcc_driver_mc_shutdown(void);
+
 #ifdef __cplusplus
 }
 #endif

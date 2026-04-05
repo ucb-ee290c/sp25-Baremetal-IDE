@@ -19,12 +19,13 @@ target_include_directories(boraiq PUBLIC int8/include)
 target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)
 
 if(BORAIQ_TRANSPOSED_WEIGHTS)
-  if(NOT BUILD_VECNN)
-    message(FATAL_ERROR "BORAIQ_TRANSPOSED_WEIGHTS requires BUILD_VECNN=ON")
+  if(BUILD_VECNN)
+    target_compile_definitions(boraiq PRIVATE TRANSPOSED_WEIGHTS)
+    target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
+    target_link_libraries(boraiq PRIVATE vecnn)
+  else()
+    message(STATUS "boraiq: BUILD_VECNN is OFF, disabling TRANSPOSED_WEIGHTS.")
   endif()
-  target_compile_definitions(boraiq PRIVATE TRANSPOSED_WEIGHTS)
-  target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
-  target_link_libraries(boraiq PRIVATE vecnn)
 endif()
 
 option(BORAIQ_PREFILL_MULTICORE
@@ -38,10 +39,12 @@ option(BORAIQ_VEC_SOFTMAX
   "Use vectorized RVV softmax for attention in boraiq (requires vecnn)" OFF)
 
 if(BORAIQ_VEC_SOFTMAX)
-  target_compile_definitions(boraiq PRIVATE VEC_SOFTMAX)
-  target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
   if(BUILD_VECNN)
+    target_compile_definitions(boraiq PRIVATE VEC_SOFTMAX)
+    target_include_directories(boraiq PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
     target_link_libraries(boraiq PRIVATE vecnn)
+  else()
+    message(STATUS "boraiq: BUILD_VECNN is OFF, disabling VEC_SOFTMAX.")
   endif()
 endif()
 

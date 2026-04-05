@@ -42,9 +42,9 @@ typedef struct {
 
 typedef struct {
   const char *name;
-  uintptr_t input_base;
-  uintptr_t kernel_base;
-  uintptr_t output_base;
+  volatile uint32_t *input_ptr;
+  volatile uint32_t *kernel_ptr;
+  volatile uint32_t *output_ptr;
   uint32_t input_capacity_bytes;
   uint32_t kernel_capacity_bytes;
   uint32_t output_capacity_bytes;
@@ -65,22 +65,42 @@ static const uint32_t k_sweep_n[] = { CONV_BENCH_N_LIST };
 static const uint32_t k_sweep_k[] = { CONV_BENCH_K_LIST };
 static const uint32_t k_sweep_d[] = { CONV_BENCH_DILATION_LIST };
 
+#if CONV_BENCH_DRAM_USE_ABSOLUTE_ADDR
+#define CONV_BENCH_DRAM_INPUT_PTR ((volatile uint32_t *)CONV_BENCH_DRAM_INPUT_BASE)
+#define CONV_BENCH_DRAM_KERNEL_PTR ((volatile uint32_t *)CONV_BENCH_DRAM_KERNEL_BASE)
+#define CONV_BENCH_DRAM_OUTPUT_PTR ((volatile uint32_t *)CONV_BENCH_DRAM_OUTPUT_BASE)
+#define CONV_BENCH_DRAM_INPUT_CAP_BYTES (CONV_BENCH_DRAM_REGION_BYTES)
+#define CONV_BENCH_DRAM_KERNEL_CAP_BYTES (CONV_BENCH_DRAM_REGION_BYTES)
+#define CONV_BENCH_DRAM_OUTPUT_CAP_BYTES (CONV_BENCH_DRAM_REGION_BYTES)
+#else
+static uint32_t g_conv_bench_dram_input_buf[CONV_BENCH_MAX_N + 16u] __attribute__((aligned(64)));
+static uint32_t g_conv_bench_dram_kernel_buf[CONV_BENCH_MAX_K + 16u] __attribute__((aligned(64)));
+static uint32_t g_conv_bench_dram_output_buf[CONV_BENCH_MAX_HW_OUTPUT_WORDS + 16u] __attribute__((aligned(64)));
+
+#define CONV_BENCH_DRAM_INPUT_PTR ((volatile uint32_t *)g_conv_bench_dram_input_buf)
+#define CONV_BENCH_DRAM_KERNEL_PTR ((volatile uint32_t *)g_conv_bench_dram_kernel_buf)
+#define CONV_BENCH_DRAM_OUTPUT_PTR ((volatile uint32_t *)g_conv_bench_dram_output_buf)
+#define CONV_BENCH_DRAM_INPUT_CAP_BYTES ((uint32_t)sizeof(g_conv_bench_dram_input_buf))
+#define CONV_BENCH_DRAM_KERNEL_CAP_BYTES ((uint32_t)sizeof(g_conv_bench_dram_kernel_buf))
+#define CONV_BENCH_DRAM_OUTPUT_CAP_BYTES ((uint32_t)sizeof(g_conv_bench_dram_output_buf))
+#endif
+
 static const mem_mode_t k_mem_modes[] = {
   {
       "dram_l2",
-      CONV_BENCH_DRAM_INPUT_BASE,
-      CONV_BENCH_DRAM_KERNEL_BASE,
-      CONV_BENCH_DRAM_OUTPUT_BASE,
-      CONV_BENCH_DRAM_REGION_BYTES,
-      CONV_BENCH_DRAM_REGION_BYTES,
-      CONV_BENCH_DRAM_REGION_BYTES,
+      CONV_BENCH_DRAM_INPUT_PTR,
+      CONV_BENCH_DRAM_KERNEL_PTR,
+      CONV_BENCH_DRAM_OUTPUT_PTR,
+      CONV_BENCH_DRAM_INPUT_CAP_BYTES,
+      CONV_BENCH_DRAM_KERNEL_CAP_BYTES,
+      CONV_BENCH_DRAM_OUTPUT_CAP_BYTES,
       CONV_BENCH_ENABLE_MEMMODE_DRAM_L2 ? 1u : 0u,
   },
   {
       "scratchpad",
-      CONV_BENCH_SCRATCH_INPUT_BASE,
-      CONV_BENCH_SCRATCH_KERNEL_BASE,
-      CONV_BENCH_SCRATCH_OUTPUT_BASE,
+      (volatile uint32_t *)CONV_BENCH_SCRATCH_INPUT_BASE,
+      (volatile uint32_t *)CONV_BENCH_SCRATCH_KERNEL_BASE,
+      (volatile uint32_t *)CONV_BENCH_SCRATCH_OUTPUT_BASE,
       CONV_BENCH_SCRATCH_REGION_BYTES,
       CONV_BENCH_SCRATCH_REGION_BYTES,
       CONV_BENCH_SCRATCH_REGION_BYTES,
@@ -525,9 +545,23 @@ static void run_one_case(uint64_t frequency_hz,
     return;
   }
 
-  volatile uint32_t *input_ptr = (volatile uint32_t *)mem_mode->input_base;
-  volatile uint32_t *kernel_ptr = (volatile uint32_t *)mem_mode->kernel_base;
-  volatile uint32_t *output_ptr = (volatile uint32_t *)mem_mode->output_base;
+  volatile uint32_t *input_ptr = mem_mode->input_ptr;
+  volatile uint32_t *kernel_ptr = mem_mode->kernel_ptr;
+  volatile uint32_t *output_ptr = mem_mode->output_ptr;
+
+  if (conv_bench_is_print_hart() && CONV_BENCH_PRINT_CASE_DETAILS) {
+    printf("BEGIN,mem=%s,cache=%s,reuse=%s,dataset=%u,N=%u,K=%u,D=%u,in=0x%016lx,k=0x%016lx,out=0x%016lx\n",
+           mem_mode->name,
+           cache_mode_name(cache_mode),
+           reuse_mode_name(reuse_mode),
+           dataset_idx,
+           n,
+           k,
+           dilation,
+           (unsigned long)(uintptr_t)input_ptr,
+           (unsigned long)(uintptr_t)kernel_ptr,
+           (unsigned long)(uintptr_t)output_ptr);
+  }
 
   uint32_t runs = (cache_mode == CONV_CACHE_COLD) ? CONV_BENCH_RUNS_COLD : CONV_BENCH_RUNS_WARM;
   cycle_stats_t cycles;
@@ -636,6 +670,7 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
     printf("CONFIG,memmodes,dram_l2=%d,scratchpad=%d\n",
            CONV_BENCH_ENABLE_MEMMODE_DRAM_L2,
            CONV_BENCH_ENABLE_MEMMODE_SCRATCHPAD);
+    printf("CONFIG,dram_mode,use_absolute_addr=%d\n", CONV_BENCH_DRAM_USE_ABSOLUTE_ADDR);
     printf("CONFIG,cachemodes,cold=%d,warm=%d,reuse_off=%d,reuse_on=%d\n",
            CONV_BENCH_ENABLE_CACHE_COLD,
            CONV_BENCH_ENABLE_CACHE_WARM,

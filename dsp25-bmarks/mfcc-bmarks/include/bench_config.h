@@ -65,7 +65,7 @@
 #endif
 
 #ifndef MFCC_BENCH_ENABLE_SP1024X23X12_F16
-#define MFCC_BENCH_ENABLE_SP1024X23X12_F16 1
+#define MFCC_BENCH_ENABLE_SP1024X23X12_F16 MFCC_BENCH_ENABLE_F16
 #endif
 
 // Correctness tolerances against floating reference (generic f32 preferred).

@@ -8,8 +8,12 @@
 #include "mfcc_driver.h"
 #include "mfcc_driver_mc.h"
 #include "mfcc_reference_data.h"
-#include "hthread.h"
 #include "simple_setup.h"
+
+/* Use explicit threadlib API declarations to avoid picking a legacy hthread.h. */
+void hthread_init(void);
+void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);
+void hthread_join(uint32_t hartid);
 
 #ifndef MFCC_REF_FFT_LEN
 #define MFCC_REF_FFT_LEN MFCC_DRIVER_FFT_LEN

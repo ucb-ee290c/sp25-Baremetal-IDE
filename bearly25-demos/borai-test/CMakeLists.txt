@@ -78,6 +78,13 @@ if(BORAI_TESTQ_FAST_SWIGLU_EXP)
   target_compile_definitions(boraiq-test PRIVATE BORAIQ_FAST_SWIGLU_EXP)
 endif()
 
+option(BORAI_TESTQ_DEBUG_NUMERIC
+  "Enable boraiq-test numeric debug checks (finite logits/probabilities, token-id tracing)" OFF)
+
+if(BORAI_TESTQ_DEBUG_NUMERIC)
+  target_compile_definitions(boraiq-test PRIVATE BORAIQ_DEBUG_NUMERIC)
+endif()
+
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
   if(BUILD_VECNN)
     target_compile_definitions(boraiq-test PRIVATE TRANSPOSED_WEIGHTS)

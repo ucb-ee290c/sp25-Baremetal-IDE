@@ -351,8 +351,6 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     return result;
   }
 
-  dma_reset();
-  dma_full_fence();
   t_setup_start = rdcycle();
 
   for (ch = 0u; ch < channels; ++ch) {
@@ -366,7 +364,6 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     }
 
     if (packets_this == 0u || packets_this > UINT16_MAX) {
-      dma_reset();
       return result;
     }
 
@@ -386,7 +383,6 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     tx.do_address_gate = false;
 
     if (!set_DMA_C(ch, tx, true)) {
-      dma_reset();
       return result;
     }
 
@@ -403,8 +399,6 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
   dma_wait_till_inactive(DMA_BENCH_IDLE_SPIN_CYCLES);
   dma_full_fence();
   t_done = rdcycle();
-
-  dma_reset();
 
   result.setup_cycles = t_setup_end - t_setup_start;
   result.transfer_cycles = t_done - t_setup_end;

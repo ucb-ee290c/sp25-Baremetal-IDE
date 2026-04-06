@@ -279,7 +279,9 @@ int dma_status(void) {
 }
 
 void dma_reset(void) {
+  /* Issue a reset pulse; holding this bit high can keep DMA logic in reset. */
   reg_write8(DMA_RESET_REG, 1U);
+  reg_write8(DMA_RESET_REG, 0U);
 }
 
 void dma_wait_till_inactive(int cycle_no_inflight) {

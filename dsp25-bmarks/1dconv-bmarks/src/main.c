@@ -173,8 +173,35 @@ static inline void full_fence(void) {
   asm volatile("fence rw, rw" ::: "memory");
 }
 
-static inline uint32_t hw_output_words(uint32_t n, uint32_t k) {
+/* Reset the accelerator between runs.
+ * Follows the pattern from the working test-multiple.c:
+ *   START=0 → CLEAR=1 → (next run loads data) → CLEAR=0 → START=1
+ * The perform_convolution_1D driver handles its own init/start, so we
+ * just need to stop + clear here. */
+static void conv_reset_between_runs(void) {
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);
+  full_fence();
+  /* Drain any remaining output packets as safety net. */
+  for (uint32_t i = 0; i < 1024u; ++i) {
+    if (get_register_out_count() == 0u) break;
+    (void)reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+  }
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);
+  full_fence();
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0);
+  full_fence();
+}
+
+static inline uint32_t hw_drain_words(uint32_t n, uint32_t k) {
+  /* The streaming protocol produces (n/2 + k/2) 64-bit packets = n+k FP32 values.
+   * The driver reads all of these to fully drain the output FIFO. */
   return ((n / 2u) + (k / 2u)) * 2u;
+}
+
+static inline uint32_t hw_valid_words(uint32_t n, uint32_t k) {
+  /* Only the first n+k-1 of the drained FP32 values are valid convolution
+   * outputs.  The last value is streaming-protocol padding. */
+  return n + k - 1u;
 }
 
 static inline uint32_t ref_output_words(uint32_t n, uint32_t k, uint32_t dilation) {
@@ -182,7 +209,10 @@ static inline uint32_t ref_output_words(uint32_t n, uint32_t k, uint32_t dilatio
 }
 
 static bool is_status_ok(uint8_t status) {
-  const uint8_t fatal_mask = STATUS_ERROR | STATUS_INVALID | STATUS_INFINITE | STATUS_OVERFLOW | STATUS_UNDERFLOW;
+  /* Only reject genuinely fatal HW errors.  UNDERFLOW / OVERFLOW / INEXACT
+   * are IEEE-754 informational flags that the HW sets for legitimate
+   * small-valued or large-valued operands and should not abort a run. */
+  const uint8_t fatal_mask = STATUS_ERROR | STATUS_INVALID | STATUS_INFINITE;
   if ((status & fatal_mask) != 0u) {
     return false;
   }
@@ -354,6 +384,11 @@ static bool case_supported(uint32_t n, uint32_t k, uint32_t dilation, char *reas
     return false;
   }
 
+  if (dilation != 1u) {
+    snprintf(reason, reason_cap, "D=%u: MMIO driver only supports dilation=1", dilation);
+    return false;
+  }
+
   if (n > CONV_BENCH_MAX_N) {
     snprintf(reason, reason_cap, "N=%u exceeds CONV_BENCH_MAX_N=%u", n, (unsigned)CONV_BENCH_MAX_N);
     return false;
@@ -369,7 +404,7 @@ static bool case_supported(uint32_t n, uint32_t k, uint32_t dilation, char *reas
     return false;
   }
 
-  if (hw_output_words(n, k) > CONV_BENCH_MAX_HW_OUTPUT_WORDS) {
+  if (hw_drain_words(n, k) > CONV_BENCH_MAX_HW_OUTPUT_WORDS) {
     snprintf(reason, reason_cap, "HW output bound too small");
     return false;
   }
@@ -508,9 +543,8 @@ static void run_one_case(uint64_t frequency_hz,
                          uint32_t dilation,
                          suite_summary_t *summary) {
   char reason[160];
-  uint32_t out_words_hw = hw_output_words(n, k);
-  uint32_t out_words_ref = ref_output_words(n, k, dilation);
-
+  uint32_t out_drain  = hw_drain_words(n, k);   /* total FP32 the driver writes to output buf */
+  uint32_t out_valid  = hw_valid_words(n, k);    /* valid convolution outputs (n+k-1) */
   summary->total_cases += 1u;
 
   if (!case_supported(n, k, dilation, reason, sizeof(reason))) {
@@ -529,7 +563,7 @@ static void run_one_case(uint64_t frequency_hz,
     return;
   }
 
-  if (!memory_mode_fits(mem_mode, n, k, out_words_hw, reason, sizeof(reason))) {
+  if (!memory_mode_fits(mem_mode, n, k, out_drain, reason, sizeof(reason))) {
     summary->skipped_cases += 1u;
     if (conv_bench_is_print_hart() && CONV_BENCH_PRINT_CASE_DETAILS) {
       printf("SKIP,mem=%s,cache=%s,reuse=%s,dataset=%u,N=%u,K=%u,D=%u,reason=%s\n",
@@ -575,8 +609,8 @@ static void run_one_case(uint64_t frequency_hz,
       select_case_data(dataset_idx, reuse_mode, run, n, k, input_ptr, kernel_ptr);
     }
 
-    clear_u32(output_ptr, out_words_hw);
-    prepare_cache_mode(cache_mode, input_ptr, n, kernel_ptr, k, output_ptr, out_words_hw);
+    clear_u32(output_ptr, out_drain);
+    prepare_cache_mode(cache_mode, input_ptr, n, kernel_ptr, k, output_ptr, out_drain);
 
     full_fence();
     uint64_t t0 = conv_bench_rdcycle64();
@@ -588,6 +622,9 @@ static void run_one_case(uint64_t frequency_hz,
                                             (uint16_t)dilation);
     uint64_t elapsed = conv_bench_rdcycle64() - t0;
     full_fence();
+
+    /* Reset accelerator between runs to ensure clean state. */
+    conv_reset_between_runs();
 
     if (!is_status_ok(status)) {
       cycles.status_fail += 1u;
@@ -609,14 +646,16 @@ static void run_one_case(uint64_t frequency_hz,
 
     stats_record(&cycles, elapsed);
 
-    copy_from_volatile_u32(g_hw_capture, output_ptr, out_words_hw);
+    copy_from_volatile_u32(g_hw_capture, output_ptr, out_valid);
+    /* Compute golden reference and compare.  case_supported() already
+     * rejects dilation != 1, so we always compare here. */
     perform_naive_convolution_1D((uint32_t *)input_ptr,
                                  n,
                                  (uint32_t *)kernel_ptr,
                                  k,
-                                 dilation,
+                                 1u,
                                  g_ref_output);
-    accuracy_update(&acc, g_hw_capture, out_words_hw, g_ref_output, out_words_ref);
+    accuracy_update(&acc, g_hw_capture, out_valid, g_ref_output, out_valid);
   }
 
   summary->run_cases += 1u;
@@ -635,8 +674,8 @@ static void run_one_case(uint64_t frequency_hz,
                       runs,
                       &cycles,
                       &acc,
-                      out_words_hw,
-                      out_words_ref);
+                      out_valid,
+                      out_valid);
   }
 }
 

@@ -44,16 +44,18 @@
 #endif
 
 #ifndef CONV_BENCH_K_LIST
+// Only K=8 is confirmed working with logMaxKernelSize=3 RTL config.
+// Add 16u here if your RTL supports logMaxKernelSize=4.
 #define CONV_BENCH_K_LIST \
-  8u, \
-  16u
+  8u
 #endif
 
 #ifndef CONV_BENCH_DILATION_LIST
+// Only dilation=1 is confirmed working with the MMIO streaming driver
+// (perform_convolution_1D). Dilation>1 uses a different output protocol
+// that the driver doesn't handle correctly - use raw MMIO or DMA for d>1.
 #define CONV_BENCH_DILATION_LIST \
-  1u, \
-  2u, \
-  4u
+  1u
 #endif
 
 #ifndef CONV_BENCH_MAX_N

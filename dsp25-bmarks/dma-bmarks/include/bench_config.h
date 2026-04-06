@@ -102,14 +102,13 @@
 #endif
 
 /* Region base addresses */
-/* Keep benchmark buffers away from top-of-DRAM stack/heap area.
- * Defaults mirror dma-rtl baremetal tests. */
+/* Use the same DRAM windows as validated dma-tests (0x8500_0000 range). */
 #ifndef DMA_BENCH_DRAM_SRC_BASE
-#define DMA_BENCH_DRAM_SRC_BASE 0x81000000UL
+#define DMA_BENCH_DRAM_SRC_BASE 0x85000000UL
 #endif
 
 #ifndef DMA_BENCH_DRAM_DST_BASE
-#define DMA_BENCH_DRAM_DST_BASE 0x82000000UL
+#define DMA_BENCH_DRAM_DST_BASE 0x85100000UL
 #endif
 
 #ifndef DMA_BENCH_SCRATCHPAD_BASE

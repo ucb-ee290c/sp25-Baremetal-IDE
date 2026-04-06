@@ -6,6 +6,7 @@
 
 #include "bench_config.h"
 #include "hal_dma.h"
+#include "hal_mmio.h"
 #include "simple_setup.h"
 
 #define ARRAY_LEN(x) (sizeof(x) / sizeof((x)[0]))
@@ -101,23 +102,30 @@ static inline uint32_t dma_pattern_word(uint32_t seed, uint32_t idx) {
 }
 
 static void dma_init_buffer(volatile uint8_t *buf, uint32_t bytes, uint32_t seed) {
-  volatile uint32_t *w = (volatile uint32_t *)buf;
+  uintptr_t base = (uintptr_t)buf;
   uint32_t words = bytes / 4u;
   uint32_t i;
 
   for (i = 0; i < words; ++i) {
-    w[i] = dma_pattern_word(seed, i);
+    reg_write32(base + (uintptr_t)(i * 4u), dma_pattern_word(seed, i));
   }
 
   for (i = words * 4u; i < bytes; ++i) {
-    buf[i] = (uint8_t)(seed ^ i);
+    reg_write8(base + (uintptr_t)i, (uint8_t)(seed ^ i));
   }
 }
 
 static void dma_zero_buffer(volatile uint8_t *buf, uint32_t bytes) {
+  uintptr_t base = (uintptr_t)buf;
+  uint32_t words = bytes / 4u;
   uint32_t i;
-  for (i = 0; i < bytes; ++i) {
-    buf[i] = 0u;
+
+  for (i = 0; i < words; ++i) {
+    reg_write32(base + (uintptr_t)(i * 4u), 0u);
+  }
+
+  for (i = words * 4u; i < bytes; ++i) {
+    reg_write8(base + (uintptr_t)i, 0u);
   }
 }
 
@@ -125,7 +133,7 @@ static bool dma_check_buffer(volatile uint8_t *buf,
                              uint32_t bytes,
                              uint32_t seed,
                              const char *tag) {
-  volatile uint32_t *w = (volatile uint32_t *)buf;
+  uintptr_t base = (uintptr_t)buf;
   uint32_t words = bytes / 4u;
   uint32_t i;
   uint32_t printed = 0u;
@@ -133,7 +141,7 @@ static bool dma_check_buffer(volatile uint8_t *buf,
 
   for (i = 0; i < words; ++i) {
     uint32_t expected = dma_pattern_word(seed, i);
-    uint32_t observed = w[i];
+    uint32_t observed = reg_read32(base + (uintptr_t)(i * 4u));
     if (observed != expected) {
       fail = true;
       if (printed < 6u) {
@@ -149,7 +157,7 @@ static bool dma_check_buffer(volatile uint8_t *buf,
 
   for (i = words * 4u; i < bytes; ++i) {
     uint8_t expected_b = (uint8_t)(seed ^ i);
-    uint8_t observed_b = buf[i];
+    uint8_t observed_b = reg_read8(base + (uintptr_t)i);
     if (observed_b != expected_b) {
       fail = true;
       if (printed < 6u) {
@@ -169,6 +177,7 @@ static bool dma_check_buffer(volatile uint8_t *buf,
 static void dma_stream_touch(volatile uint8_t *buf,
                              uint32_t bytes,
                              uint32_t stride_bytes) {
+  uintptr_t base = (uintptr_t)buf;
   volatile uint8_t sink = 0u;
   uint32_t i;
 
@@ -177,7 +186,7 @@ static void dma_stream_touch(volatile uint8_t *buf,
   }
 
   for (i = 0; i < bytes; i += stride_bytes) {
-    sink ^= buf[i];
+    sink ^= reg_read8(base + (uintptr_t)i);
   }
 
   asm volatile("" : : "r"(sink) : "memory");
@@ -342,6 +351,8 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     return result;
   }
 
+  dma_reset();
+  dma_full_fence();
   t_setup_start = rdcycle();
 
   for (ch = 0u; ch < channels; ++ch) {
@@ -390,6 +401,7 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
   t_setup_end = rdcycle();
 
   dma_wait_till_inactive(DMA_BENCH_IDLE_SPIN_CYCLES);
+  dma_full_fence();
   t_done = rdcycle();
 
   dma_reset();

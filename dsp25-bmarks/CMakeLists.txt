@@ -1,8 +1,8 @@
 add_subdirectory(1dconv-bmarks)
+add_subdirectory(dma-bmarks)
 
 if(BUILD_MFCC_LIB)
   add_subdirectory(mfcc-bmarks)
-  add_subdirectory(mfcc-bmarks-mc)
   if(TARGET threadlib)
     add_subdirectory(mfcc-bmarks-mc-threadlib)
   endif()

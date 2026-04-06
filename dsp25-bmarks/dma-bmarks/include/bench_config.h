@@ -40,9 +40,11 @@
 #define DMA_BENCH_BASE_SEED 0x12345678u
 #endif
 
-/* DMA payload width: bytes per packet = (1 << DMA_BENCH_LOGW). */
+/* DMA payload width: bytes per packet = (1 << DMA_BENCH_LOGW).
+ * Default to logw=2 (4B) because this is the most broadly validated mode
+ * in current dsp25 DMA tests. Set to 6 for 64B packets if your config supports it. */
 #ifndef DMA_BENCH_LOGW
-#define DMA_BENCH_LOGW 6u
+#define DMA_BENCH_LOGW 2u
 #endif
 
 #ifndef DMA_BENCH_PRIORITY
@@ -100,12 +102,14 @@
 #endif
 
 /* Region base addresses */
+/* Keep benchmark buffers away from top-of-DRAM stack/heap area.
+ * Defaults mirror dma-rtl baremetal tests. */
 #ifndef DMA_BENCH_DRAM_SRC_BASE
-#define DMA_BENCH_DRAM_SRC_BASE 0x8FFE0000UL
+#define DMA_BENCH_DRAM_SRC_BASE 0x81000000UL
 #endif
 
 #ifndef DMA_BENCH_DRAM_DST_BASE
-#define DMA_BENCH_DRAM_DST_BASE 0x8FFF0000UL
+#define DMA_BENCH_DRAM_DST_BASE 0x82000000UL
 #endif
 
 #ifndef DMA_BENCH_SCRATCHPAD_BASE
@@ -118,11 +122,11 @@
 #endif
 
 #ifndef DMA_BENCH_ENABLE_CASE_DRAM_TO_SCRATCH
-#define DMA_BENCH_ENABLE_CASE_DRAM_TO_SCRATCH 0
+#define DMA_BENCH_ENABLE_CASE_DRAM_TO_SCRATCH 1
 #endif
 
 #ifndef DMA_BENCH_ENABLE_CASE_SCRATCH_TO_DRAM
-#define DMA_BENCH_ENABLE_CASE_SCRATCH_TO_DRAM 0
+#define DMA_BENCH_ENABLE_CASE_SCRATCH_TO_DRAM 1
 #endif
 
 #ifndef DMA_BENCH_DRAM_TO_DRAM_BYTES

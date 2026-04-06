@@ -121,24 +121,49 @@ static void dma_zero_buffer(volatile uint8_t *buf, uint32_t bytes) {
   }
 }
 
-static bool dma_check_buffer(volatile uint8_t *buf, uint32_t bytes, uint32_t seed) {
+static bool dma_check_buffer(volatile uint8_t *buf,
+                             uint32_t bytes,
+                             uint32_t seed,
+                             const char *tag) {
   volatile uint32_t *w = (volatile uint32_t *)buf;
   uint32_t words = bytes / 4u;
   uint32_t i;
+  uint32_t printed = 0u;
+  bool fail = false;
 
   for (i = 0; i < words; ++i) {
-    if (w[i] != dma_pattern_word(seed, i)) {
-      return false;
+    uint32_t expected = dma_pattern_word(seed, i);
+    uint32_t observed = w[i];
+    if (observed != expected) {
+      fail = true;
+      if (printed < 6u) {
+        printf("[%s] word mismatch[%u] exp=0x%08x obs=0x%08x\n",
+               tag,
+               (unsigned)i,
+               expected,
+               observed);
+        printed += 1u;
+      }
     }
   }
 
   for (i = words * 4u; i < bytes; ++i) {
-    if (buf[i] != (uint8_t)(seed ^ i)) {
-      return false;
+    uint8_t expected_b = (uint8_t)(seed ^ i);
+    uint8_t observed_b = buf[i];
+    if (observed_b != expected_b) {
+      fail = true;
+      if (printed < 6u) {
+        printf("[%s] byte mismatch[%u] exp=0x%02x obs=0x%02x\n",
+               tag,
+               (unsigned)i,
+               (unsigned)expected_b,
+               (unsigned)observed_b);
+        printed += 1u;
+      }
     }
   }
 
-  return true;
+  return !fail;
 }
 
 static void dma_stream_touch(volatile uint8_t *buf,
@@ -385,8 +410,15 @@ static bool dma_run_state(const dma_transfer_case_t *tc,
   volatile uint8_t *dst = dma_region_base(tc->dst, true);
   bool ok = true;
   uint32_t channels = mode->requested_channels;
+  char verify_tag[96];
 
   dma_stats_init(stats_out);
+  snprintf(verify_tag,
+           sizeof(verify_tag),
+           "verify:%s:%s:%s",
+           mode->name,
+           tc->name,
+           k_cache_state_name[state]);
 
   if (state == DMA_CACHE_HOT_REPEAT) {
     uint32_t run;
@@ -400,7 +432,7 @@ static bool dma_run_state(const dma_transfer_case_t *tc,
       dma_copy_result_t warmup =
           dma_copy_buffer(dst, src, tc->bytes, channels);
       ok &= warmup.success;
-      ok &= dma_check_buffer(dst, tc->bytes, seed);
+      ok &= dma_check_buffer(dst, tc->bytes, seed, verify_tag);
     }
 
     for (run = 0u; run < DMA_BENCH_HOT_REPEAT_RUNS; ++run) {
@@ -409,7 +441,7 @@ static bool dma_run_state(const dma_transfer_case_t *tc,
       dma_stats_record(stats_out, &copy_result);
       ok &= copy_result.success;
       if (copy_result.success) {
-        ok &= dma_check_buffer(dst, tc->bytes, seed);
+        ok &= dma_check_buffer(dst, tc->bytes, seed, verify_tag);
       }
     }
 
@@ -431,7 +463,7 @@ static bool dma_run_state(const dma_transfer_case_t *tc,
 
       ok &= copy_result.success;
       if (copy_result.success) {
-        ok &= dma_check_buffer(dst, tc->bytes, seed);
+        ok &= dma_check_buffer(dst, tc->bytes, seed, verify_tag);
       }
     }
   }
@@ -488,6 +520,10 @@ static bool run_suite_for_frequency(uint64_t frequency_hz) {
          (unsigned)DMA_BENCH_HOT_REPEAT_RUNS,
          (unsigned)DMA_BENCH_LOGW,
          (unsigned)(1u << DMA_BENCH_LOGW));
+  printf("dram_src=0x%08lx dram_dst=0x%08lx scratch=0x%08lx\n",
+         (unsigned long)DMA_BENCH_DRAM_SRC_BASE,
+         (unsigned long)DMA_BENCH_DRAM_DST_BASE,
+         (unsigned long)DMA_BENCH_SCRATCHPAD_BASE);
 
   for (mode_i = 0u; mode_i < (uint32_t)ARRAY_LEN(k_dma_modes); ++mode_i) {
     const dma_mode_t *mode = &k_dma_modes[mode_i];

@@ -23,7 +23,7 @@ void handle_sigint(int sig) {
 void dram_write_c2c_read() {
   unsigned long addr = 0x480010000;
   uint32_t *dram = (uint32_t*) 0x80010000;
-  *dram = 0xDEADBEEF;
+  *dram = 0xFFFFFFFF;
   printf("set dram to %x\n", *dram);
   msleep(500);
   uint32_t *c2c = (uint32_t *) addr;
@@ -33,22 +33,34 @@ void dram_write_c2c_read() {
 }
 
 void c2c_write_dram_read() {
-  unsigned long addr = 0x480000000;
-  uint32_t *dram = (uint32_t*) 0x80000000;
+  unsigned long addr = 0x480010000;
+  uint32_t *dram = (uint32_t*) 0x80010000;
   // printf("set value in dram to %x\n", *dram);
   uint32_t *c2c = (uint32_t *) addr;
   printf("set c2c = address %lx\n", addr);
-  *c2c = 0xDEADBEEF;
+  *c2c = 0xFFFFFFFF;
   msleep(500);
   printf("reading from dram: %x\n", *dram);
+  msleep(1000);  
+}
+
+void c2c_write_read() {
+  unsigned long addr = 0x480000000;
+  // uint32_t *dram = (uint32_t*) 0x80010000;
+  // printf("set value in dram to %x\n", *dram);
+  uint32_t *c2c = (uint32_t *) addr;
+  printf("set c2c = address %lx\n", addr);
+  *c2c = 0;
+  printf("reading: %x\n", *c2c);
   msleep(1000);  
 }
 
 void app_main() {
   printf("In app_main.\n");
   while (1) {
-    c2c_write_dram_read();
+    // c2c_write_dram_read();
     // dram_write_c2c_read();
+    c2c_write_read();
   }
 }
 

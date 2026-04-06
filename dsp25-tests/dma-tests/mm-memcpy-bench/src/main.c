@@ -100,7 +100,6 @@ int main(int argc, char **argv) {
              "-",
              "-");
       fail = 1;
-      dma_reset();
       continue;
     }
 
@@ -115,8 +114,9 @@ int main(int argc, char **argv) {
            dma_rate);
 
     fail |= dma_test_expect_equal_words(src, dma_dst, words, "dma");
-    dma_reset();
   }
+
+  dma_reset();
 
   if (fail) {
     printf("\n[%s] FAIL (data mismatch)\n", TEST_NAME);

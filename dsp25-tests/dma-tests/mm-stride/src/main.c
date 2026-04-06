@@ -83,8 +83,6 @@ static int run_strided_test(const char *label,
     }
   }
 
-  dma_reset();
-
   if (fail) {
     printf("  FAIL\n");
   } else {
@@ -135,6 +133,8 @@ int main(int argc, char **argv) {
   fail |= run_strided_test("stride-to-stride",
                            region_a, PACKET_BYTES * 3,
                            region_b, PACKET_BYTES * 2, 0x55);
+
+  dma_reset();
 
   printf("\n");
   if (fail) {

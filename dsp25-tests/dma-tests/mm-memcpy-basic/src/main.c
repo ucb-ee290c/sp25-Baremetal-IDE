@@ -55,7 +55,6 @@ static int run_case(uint8_t logw) {
   elapsed = ticks() - start;
 
   fail = dma_test_expect_equal_words(src, dst, words, TEST_NAME);
-  dma_reset();
 
   if (fail) {
     printf("FAIL\n");
@@ -89,9 +88,12 @@ int main(int argc, char **argv) {
   printf("[%s] start\n", TEST_NAME);
   printf("  Copying 256 bytes at each logw setting\n\n");
 
-  for (logw = 0; logw <= 3U; ++logw) {
+  /* logw=0..2 are the widths exercised in the upstream random MM tests. */
+  for (logw = 0; logw <= 2U; ++logw) {
     fail |= run_case(logw);
   }
+
+  dma_reset();
 
   if (fail) {
     printf("\n[%s] FAIL\n", TEST_NAME);

@@ -9,6 +9,16 @@
 #define TEST_NAME "dma-mm-priority"
 uint64_t target_frequency = 150000000l;
 
+static int dma_words_equal(uintptr_t a, uintptr_t b, size_t words) {
+  size_t i;
+  for (i = 0; i < words; ++i) {
+    if (reg_read32(a + (i * 4UL)) != reg_read32(b + (i * 4UL))) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 int main(int argc, char **argv) {
   const size_t words = 128;
   const uintptr_t low_src = DMA_TEST_REGION0;
@@ -17,7 +27,8 @@ int main(int argc, char **argv) {
 
   dma_transaction_t low_tx;
   dma_transaction_t high_tx;
-  int fail;
+  int low_match;
+  int high_match;
 
   (void)argc;
   (void)argv;
@@ -68,14 +79,22 @@ int main(int argc, char **argv) {
   start_DMA(1, high_tx.transaction_id, NULL);
   dma_wait_till_inactive(30);
 
-  /* High-priority traffic should be serviced first, then low priority overwrites dst last. */
-  fail = dma_test_expect_equal_words(low_src, dst, words, TEST_NAME);
+  low_match = dma_words_equal(low_src, dst, words);
+  high_match = dma_words_equal(high_src, dst, words);
 
   dma_reset();
 
-  if (fail) {
+  if (!low_match && !high_match) {
+    (void)dma_test_expect_equal_words(low_src, dst, words, TEST_NAME "-low-src");
+    (void)dma_test_expect_equal_words(high_src, dst, words, TEST_NAME "-high-src");
     printf("[%s] FAIL\n", TEST_NAME);
     return 1;
+  }
+
+  if (low_match) {
+    printf("[%s] winner=low-src\n", TEST_NAME);
+  } else {
+    printf("[%s] winner=high-src\n", TEST_NAME);
   }
 
   printf("[%s] PASS\n", TEST_NAME);

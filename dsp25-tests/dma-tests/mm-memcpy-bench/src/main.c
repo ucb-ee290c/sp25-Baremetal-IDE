@@ -1,14 +1,3 @@
-/*
- * dma-mm-memcpy-bench
- *
- * Bandwidth benchmark: CPU word-by-word copy  vs  DMA copy.
- * Sweeps several transfer sizes and prints tick counts + bytes/tick
- * so you can characterize the DMA crossover point and peak throughput.
- *
- * Uses logw=3 (8-byte / 64-bit packets) for maximum DMA bandwidth.
- */
-
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,13 +7,9 @@
 #include "simple_setup.h"
 
 #define TEST_NAME "dma-mm-memcpy-bench"
-uint64_t target_frequency = 150000000UL;
+uint64_t target_frequency = 150000000l;
 
-#define SRC_BASE DMA_TEST_REGION0
-#define DST_BASE DMA_TEST_REGION1
-
-/* CPU baseline: copy `words` 32-bit words from src to dst using the core. */
-static size_t cpu_memcpy_words(uintptr_t src, uintptr_t dst, size_t words) {
+static size_t cpu_copy_words(uintptr_t src, uintptr_t dst, size_t words) {
   size_t i;
   size_t start = ticks();
 
@@ -35,11 +20,9 @@ static size_t cpu_memcpy_words(uintptr_t src, uintptr_t dst, size_t words) {
   return ticks() - start;
 }
 
-/* DMA copy: uses 64-bit packets (logw=3) with contiguous stride. */
-static size_t dma_memcpy_words(uintptr_t src, uintptr_t dst, size_t words,
-                               uint16_t tid) {
+static size_t dma_copy_words(uintptr_t src, uintptr_t dst, size_t words, uint16_t tid) {
   dma_transaction_t tx;
-  size_t start, elapsed;
+  size_t start;
 
   tx.core = 0;
   tx.transaction_id = tid;
@@ -47,10 +30,10 @@ static size_t dma_memcpy_words(uintptr_t src, uintptr_t dst, size_t words,
   tx.peripheral_id = 0;
   tx.addr_r = src;
   tx.addr_w = dst;
-  tx.inc_r = 8;
-  tx.inc_w = 8;
-  tx.len = (uint16_t)((words * 4) / 8);  /* bytes -> 8-byte packets */
-  tx.logw = 3;
+  tx.inc_r = 4;
+  tx.inc_w = 4;
+  tx.len = (uint16_t)words;
+  tx.logw = 2;
   tx.do_interrupt = false;
   tx.do_address_gate = false;
 
@@ -59,85 +42,88 @@ static size_t dma_memcpy_words(uintptr_t src, uintptr_t dst, size_t words,
   }
 
   start = ticks();
-  start_DMA(0, tx.transaction_id, NULL);
+  start_DMA(0, tid, NULL);
   dma_wait_till_inactive(20);
-  elapsed = ticks() - start;
 
-  dma_reset();
-  return elapsed;
-}
-
-static int verify(uintptr_t src, uintptr_t dst, size_t words,
-                  const char *label) {
-  return dma_test_expect_equal_words(src, dst, words, label);
+  return ticks() - start;
 }
 
 int main(int argc, char **argv) {
-  /* Transfer sizes in 32-bit words (must be multiple of 2 for 64-bit DMA). */
-  static const size_t sizes[] = {8, 16, 32, 64, 128, 256, 512};
-  const size_t nsizes = sizeof(sizes) / sizeof(sizes[0]);
-  size_t si;
+  const size_t sizes[] = {8, 16, 32, 64, 128, 256};
+  const uintptr_t src = DMA_TEST_REGION0;
+  const uintptr_t cpu_dst = DMA_TEST_REGION1;
+  const uintptr_t dma_dst = DMA_TEST_REGION2;
+  const size_t max_words = 256;
+  size_t i;
   int fail = 0;
 
   (void)argc;
   (void)argv;
 
+  // Initialize UART0 for Serial Monitor
+  // UART_InitType UART0_init_config;
+  // UART0_init_config.baudrate = 115200;
+  // UART0_init_config.mode = UART_MODE_TX_RX;
+  // UART0_init_config.stopbits = UART_STOPBITS_2;
+  // uart_init(UART0, &UART0_init_config);
   init_test(target_frequency);
+  // UART_InitType UART0_init_config;
+  // UART0_init_config.baudrate = 115200;
+  // UART0_init_config.mode = UART_MODE_TX_RX;
+  // UART0_init_config.stopbits = UART_STOPBITS_2;
+  // uart_init(UART0, &UART0_init_config);
 
-  printf("[%s] start\n", TEST_NAME);
-  printf("\n");
-  printf("  %6s  %10s  %10s  %10s  %10s\n",
-         "words", "cpu_ticks", "dma_ticks", "cpu_B/tick", "dma_B/tick");
-  printf("  %6s  %10s  %10s  %10s  %10s\n",
-         "------", "----------", "----------", "----------", "----------");
+  printf("[%s] start\n\n", TEST_NAME);
+  printf("   words   cpu_ticks   dma_ticks  cpu_B/tick  dma_B/tick\n");
+  printf("  ------  ----------  ----------  ----------  ----------\n");
 
-  for (si = 0; si < nsizes; ++si) {
-    size_t words = sizes[si];
-    size_t bytes = words * 4;
-    size_t cpu_t, dma_t;
-    uint16_t tid = (uint16_t)(0x10 + si);
+  for (i = 0; i < (sizeof(sizes) / sizeof(sizes[0])); ++i) {
+    size_t words = sizes[i];
+    size_t bytes = words * 4U;
+    size_t cpu_ticks;
+    size_t dma_ticks;
+    double cpu_rate;
+    double dma_rate;
 
-    /* Fill source, zero destination for CPU test. */
-    dma_test_fill_words(SRC_BASE, words, (uint32_t)(si + 1));
-    dma_test_zero_words(DST_BASE, words);
+    dma_test_fill_words(src, max_words, (uint32_t)(0x97U + words));
+    dma_test_zero_words(cpu_dst, max_words);
+    dma_test_zero_words(dma_dst, max_words);
 
-    cpu_t = cpu_memcpy_words(SRC_BASE, DST_BASE, words);
-    fail |= verify(SRC_BASE, DST_BASE, words, "cpu");
+    cpu_ticks = cpu_copy_words(src, cpu_dst, words);
+    dma_ticks = dma_copy_words(src, dma_dst, words, (uint16_t)(0x80U + i));
 
-    /* Zero destination for DMA test. */
-    dma_test_zero_words(DST_BASE, words);
-
-    dma_t = dma_memcpy_words(SRC_BASE, DST_BASE, words, tid);
-    fail |= verify(SRC_BASE, DST_BASE, words, "dma");
-
-    /* Print results.  Multiply by 100 to get fixed-point x100 B/tick. */
-    printf("  %6u  %10lu  %10lu",
-           (unsigned)words, (unsigned long)cpu_t, (unsigned long)dma_t);
-
-    if (cpu_t > 0) {
-      printf("  %7lu.%02lu", (unsigned long)(bytes / cpu_t),
-             (unsigned long)((bytes * 100 / cpu_t) % 100));
-    } else {
-      printf("  %10s", "inf");
+    if (dma_ticks == 0U) {
+      printf("%8u  %10lu  %10s  %10s  %10s\n",
+             (unsigned)words,
+             (unsigned long)cpu_ticks,
+             "FAIL",
+             "-",
+             "-");
+      fail = 1;
+      dma_reset();
+      continue;
     }
 
-    if (dma_t > 0) {
-      printf("  %7lu.%02lu", (unsigned long)(bytes / dma_t),
-             (unsigned long)((bytes * 100 / dma_t) % 100));
-    } else {
-      printf("  %10s", "inf");
-    }
+    cpu_rate = (cpu_ticks == 0U) ? 0.0 : ((double)bytes / (double)cpu_ticks);
+    dma_rate = (dma_ticks == 0U) ? 0.0 : ((double)bytes / (double)dma_ticks);
 
-    printf("\n");
+    printf("%8u  %10lu  %10lu  %10.2f  %10.2f\n",
+           (unsigned)words,
+           (unsigned long)cpu_ticks,
+           (unsigned long)dma_ticks,
+           cpu_rate,
+           dma_rate);
+
+    fail |= dma_test_expect_equal_words(src, dma_dst, words, "dma");
+    dma_reset();
   }
 
-  printf("\n");
   if (fail) {
-    printf("[%s] FAIL (data mismatch)\n", TEST_NAME);
+    printf("\n[%s] FAIL (data mismatch)\n", TEST_NAME);
     return 1;
   }
 
-  printf("[%s] PASS\n", TEST_NAME);
+  printf("\n[%s] PASS\n", TEST_NAME);
   return 0;
 }
 

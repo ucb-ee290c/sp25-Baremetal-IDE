@@ -23,13 +23,14 @@ static dma_transaction_t make_tx(uint16_t tid, uintptr_t src, uintptr_t dst, siz
   tx.len = (uint16_t)words;
   tx.logw = 2;
   tx.do_interrupt = false;
-  tx.do_address_gate = true;
+  tx.do_address_gate = false;
 
   return tx;
 }
 
 int main(int argc, char **argv) {
   const size_t words = 64;
+  const uint32_t tx3_channel = (DMA_CORE_CHANNEL_COUNT > 2U) ? 2U : 0U;
 
   const uintptr_t src0 = DMA_TEST_REGION0;
   const uintptr_t src1 = DMA_TEST_REGION1;
@@ -88,11 +89,11 @@ int main(int argc, char **argv) {
   }
   start_DMA(1, 0x32, NULL);
 
-  if (!set_DMA_C(2, make_tx(0x33, src2, dst2, words), true)) {
-    printf("[%s] failed to configure channel 2\n", TEST_NAME);
+  if (!set_DMA_C(tx3_channel, make_tx(0x33, src2, dst2, words), true)) {
+    printf("[%s] failed to configure channel %u (tx3)\n", TEST_NAME, (unsigned)tx3_channel);
     return 1;
   }
-  start_DMA(2, 0x33, NULL);
+  start_DMA(tx3_channel, 0x33, NULL);
 
   dma_wait_till_inactive(40);
 

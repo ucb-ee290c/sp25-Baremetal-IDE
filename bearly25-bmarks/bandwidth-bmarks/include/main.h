@@ -63,7 +63,7 @@ extern "C" {
 #endif
 
 #ifndef BW_TARGET_FREQUENCY_HZ
-#define BW_TARGET_FREQUENCY_HZ   50000000ULL
+#define BW_TARGET_FREQUENCY_HZ   750000000ULL
 #endif
 
 // 0: single-frequency mode
@@ -108,15 +108,15 @@ extern "C" {
 #endif
 
 #ifndef BW_ENABLE_CPU_MP
-#define BW_ENABLE_CPU_MP         1
+#define BW_ENABLE_CPU_MP         0
 #endif
 
 #ifndef BW_ENABLE_RVV_MP
-#define BW_ENABLE_RVV_MP         1
+#define BW_ENABLE_RVV_MP         0
 #endif
 
 #ifndef BW_DRAM_BYTES
-#define BW_DRAM_BYTES            (1024u * 1024u)
+#define BW_DRAM_BYTES            (64u * 1024u)
 #endif
 
 #ifndef BW_SCRATCH_BYTES

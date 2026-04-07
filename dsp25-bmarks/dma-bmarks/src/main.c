@@ -313,67 +313,6 @@ static uint32_t clamp_channel_count(uint32_t requested, uint32_t total_packets) 
   return active;
 }
 
-static bool dma_configure_channel_with_retry(uint32_t channel,
-                                             dma_transaction_t tx,
-                                             uint32_t max_retries,
-                                             uint32_t *attempts_out) {
-  uint32_t attempts = 0u;
-
-  while (attempts < max_retries) {
-    if (set_DMA_C(channel, tx, false)) {
-      if (attempts_out != NULL) {
-        *attempts_out = attempts + 1u;
-      }
-      return true;
-    }
-    attempts += 1u;
-  }
-
-  if (attempts_out != NULL) {
-    *attempts_out = attempts;
-  }
-  return false;
-}
-
-static bool dma_wait_for_quiescent_timeout(int idle_cycles,
-                                           uint64_t start_timeout_cycles,
-                                           uint64_t done_timeout_cycles,
-                                           bool *saw_active_out) {
-  uint64_t t0 = rdcycle();
-  bool saw_active = false;
-  int idle_count = 0;
-
-  while ((rdcycle() - t0) < done_timeout_cycles) {
-    int st = dma_status();
-
-    if (st != 0) {
-      saw_active = true;
-      idle_count = 0;
-      continue;
-    }
-
-    if (!saw_active) {
-      if ((rdcycle() - t0) >= start_timeout_cycles) {
-        break;
-      }
-      continue;
-    }
-
-    idle_count += 1;
-    if (idle_count >= idle_cycles) {
-      if (saw_active_out != NULL) {
-        *saw_active_out = saw_active;
-      }
-      return true;
-    }
-  }
-
-  if (saw_active_out != NULL) {
-    *saw_active_out = saw_active;
-  }
-  return false;
-}
-
 static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
                                          volatile uint8_t *src,
                                          uint32_t bytes,
@@ -418,7 +357,6 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     dma_transaction_t tx;
     uint32_t packets_this = total_packets / channels;
     uint32_t rem = total_packets % channels;
-    uint32_t cfg_attempts = 0u;
     uintptr_t addr_offset;
 
     if (ch < rem) {
@@ -442,16 +380,9 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     tx.len = (uint16_t)packets_this;
     tx.logw = (uint8_t)DMA_BENCH_LOGW;
     tx.do_interrupt = false;
-    tx.do_address_gate = DMA_BENCH_ENABLE_ADDRESS_GATING ? true : false;
+    tx.do_address_gate = false;
 
-    if (!dma_configure_channel_with_retry(ch,
-                                          tx,
-                                          DMA_BENCH_SET_MAX_RETRIES,
-                                          &cfg_attempts)) {
-      printf("[dma-bmarks] channel %u config timeout after %u retries\n",
-             (unsigned)ch,
-             (unsigned)cfg_attempts);
-      dma_reset();
+    if (!set_DMA_C(ch, tx, true)) {
       return result;
     }
 
@@ -465,22 +396,7 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
 
   t_setup_end = rdcycle();
 
-  {
-    bool saw_active = false;
-    bool wait_ok = dma_wait_for_quiescent_timeout(DMA_BENCH_IDLE_SPIN_CYCLES,
-                                                  DMA_BENCH_WAIT_START_TIMEOUT_CYCLES,
-                                                  DMA_BENCH_WAIT_DONE_TIMEOUT_CYCLES,
-                                                  &saw_active);
-    if (!wait_ok) {
-      printf("[dma-bmarks] wait timeout (channels=%u bytes=%u saw_active=%u inflight=%d)\n",
-             (unsigned)channels,
-             (unsigned)bytes,
-             saw_active ? 1u : 0u,
-             dma_status());
-      dma_reset();
-      return result;
-    }
-  }
+  dma_wait_till_inactive(DMA_BENCH_IDLE_SPIN_CYCLES);
   dma_full_fence();
   t_done = rdcycle();
 

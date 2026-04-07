@@ -3,13 +3,3 @@ build/
 *.log
 *.afdo
 *.DS_Store
-
-1d-conv-rtl/
-NMSIS/
-dma-rtl/
-dsp25-bmarks/1dconv-bmarks/README.md
-dsp25-tests/dma-tests/README.md
-dsp25-tests/tinyspeech-test/datasets/
-run-output.txt
-tinyspeech/
-tinyspeech_content

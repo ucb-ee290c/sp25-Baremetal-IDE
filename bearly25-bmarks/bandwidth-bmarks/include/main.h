@@ -69,7 +69,7 @@ extern "C" {
 // 0: single-frequency mode
 // 1: iterate over BW_PLL_FREQ_LIST frequencies
 #ifndef BW_ENABLE_PLL_SWEEP
-#define BW_ENABLE_PLL_SWEEP      1
+#define BW_ENABLE_PLL_SWEEP      0
 #endif
 
 #ifndef BW_PLL_SWEEP_SLEEP_MS
@@ -108,15 +108,15 @@ extern "C" {
 #endif
 
 #ifndef BW_ENABLE_CPU_MP
-#define BW_ENABLE_CPU_MP         0
+#define BW_ENABLE_CPU_MP         1
 #endif
 
 #ifndef BW_ENABLE_RVV_MP
-#define BW_ENABLE_RVV_MP         0
+#define BW_ENABLE_RVV_MP         1
 #endif
 
 #ifndef BW_DRAM_BYTES
-#define BW_DRAM_BYTES            (64u * 1024u)
+#define BW_DRAM_BYTES            (1024u * 1024u)
 #endif
 
 #ifndef BW_SCRATCH_BYTES

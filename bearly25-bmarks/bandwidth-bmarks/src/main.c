@@ -10,9 +10,16 @@
 #include "main.h"
 #include "mtwister.h"
 #include "simple_setup.h"
-#include <hthread.h>
 #include <limits.h>
 #include <riscv_vector.h>
+
+#ifndef BW_USE_THREADLIB
+#define BW_USE_THREADLIB 0
+#endif
+
+#if BW_USE_THREADLIB
+#include "hthread.h"
+#endif
 
 typedef struct {
   uint64_t summary_cycles;
@@ -228,24 +235,57 @@ static void bw_copy_rvv(volatile uint8_t *dst, volatile uint8_t *src, uint32_t b
   }
 }
 
-static void *bw_worker_copy(void *arg_) {
+#if BW_USE_THREADLIB
+static void bw_worker_copy(void *arg_) {
   bw_worker_arg_t *arg = (bw_worker_arg_t *)arg_;
   if (arg->vector) {
     bw_copy_rvv(arg->dst, arg->src, arg->bytes);
   } else {
     bw_copy_cpu(arg->dst, arg->src, arg->bytes);
   }
-  return NULL;
 }
 
+static void bw_worker_nop(void *arg) {
+  (void)arg;
+}
+
+static void bw_threadlib_init(void) {
+  hthread_init();
+
+  /* Warm thread-lib once so first measured run avoids cold startup effects. */
+  for (uint32_t i = 0; i < N_HARTS; ++i) {
+    hthread_dispatch(bw_worker_nop, NULL);
+  }
+  for (uint32_t i = 1; i < N_HARTS; ++i) {
+    hthread_join(i);
+  }
+}
+#else
+static void bw_threadlib_init(void) {}
+#endif
+
 static void bw_copy_mp_common(volatile uint8_t *dst, volatile uint8_t *src, uint32_t bytes, bool vector) {
+#if BW_USE_THREADLIB
+  const uint32_t workers = N_HARTS;
   bw_worker_arg_t args[N_HARTS];
-  uint32_t base_chunk = bytes / N_HARTS;
-  uint32_t rem = bytes % N_HARTS;
+  uint32_t base_chunk;
+  uint32_t rem;
   uint32_t offset = 0;
 
-  for (uint32_t i = 0; i < N_HARTS; i++) {
-    uint32_t chunk = base_chunk + ((i == N_HARTS - 1) ? rem : 0);
+  if (workers < 2u || bytes == 0u) {
+    if (vector) {
+      bw_copy_rvv(dst, src, bytes);
+    } else {
+      bw_copy_cpu(dst, src, bytes);
+    }
+    return;
+  }
+
+  base_chunk = bytes / workers;
+  rem = bytes % workers;
+
+  for (uint32_t i = 0; i < workers; i++) {
+    uint32_t chunk = base_chunk + ((i == workers - 1u) ? rem : 0u);
     args[i].src = src + offset;
     args[i].dst = dst + offset;
     args[i].bytes = chunk;
@@ -253,15 +293,20 @@ static void bw_copy_mp_common(volatile uint8_t *dst, volatile uint8_t *src, uint
     offset += chunk;
   }
 
-  for (uint32_t i = 1; i < N_HARTS; i++) {
-    hthread_issue(i, bw_worker_copy, args + i);
+  for (uint32_t i = 0; i < workers; ++i) {
+    hthread_dispatch(bw_worker_copy, args + i);
   }
 
-  (void)bw_worker_copy(args);
-
-  for (uint32_t i = 1; i < N_HARTS; i++) {
+  for (uint32_t i = 1; i < workers; ++i) {
     hthread_join(i);
   }
+#else
+  if (vector) {
+    bw_copy_rvv(dst, src, bytes);
+  } else {
+    bw_copy_cpu(dst, src, bytes);
+  }
+#endif
 }
 
 static void bw_copy_cpu_mp(volatile uint8_t *dst, volatile uint8_t *src, uint32_t bytes) {
@@ -427,11 +472,19 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 #endif
 
 #if BW_ENABLE_CPU_MP
+#if BW_USE_THREADLIB
   all_ok &= cpu_memcpy_mp_suite(seed + 0x4000u, frequency_hz);
+#else
+  printf("[bandwidth] BW_ENABLE_CPU_MP=1 but thread-lib is unavailable; skipping CPU memcpy (multi-hart)\n");
+#endif
 #endif
 
 #if BW_ENABLE_RVV_MP
+#if BW_USE_THREADLIB
   all_ok &= rvv_memcpy_mp_suite(seed + 0x5000u, frequency_hz);
+#else
+  printf("[bandwidth] BW_ENABLE_RVV_MP=1 but thread-lib is unavailable; skipping RVV memcpy (multi-hart)\n");
+#endif
 #endif
 
   printf("\n=== Bandwidth sweep complete @ %llu Hz: %s ===\n",
@@ -439,7 +492,8 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 }
 
 void app_init(void) {
-  // init_test(BW_TARGET_FREQUENCY_HZ);
+  init_test(target_frequency);
+  bw_threadlib_init();
 }
 
 void app_main(void) {
@@ -462,6 +516,7 @@ int main(void) {
 
   target_frequency = k_pll_sweep_freqs_hz[0];
   init_test(target_frequency);
+  bw_threadlib_init();
   run_suite_for_frequency(target_frequency);
 
   for (size_t i = 1; i < num_freqs; ++i) {

@@ -2,7 +2,6 @@
 
 add_executable(1dconv-bmarks
   src/main.c
-  src/bench_cache.c
   ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 

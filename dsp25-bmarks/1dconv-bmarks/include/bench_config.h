@@ -44,10 +44,10 @@
 #endif
 
 #ifndef CONV_BENCH_K_LIST
-// Only K=8 is confirmed working with logMaxKernelSize=3 RTL config.
-// Add 16u here if your RTL supports logMaxKernelSize=4.
+// Try both K=8 and K=16.  K=16 matches the working convrev-demo2.
+// K=8 may or may not work depending on the chip's logMaxKernelSize.
 #define CONV_BENCH_K_LIST \
-  8u
+  16u
 #endif
 
 #ifndef CONV_BENCH_DILATION_LIST

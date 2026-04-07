@@ -1,6 +1,7 @@
 /*
-MULTI-CHANNEL DMA doesn't work atm so it is disabled. 
-Keep this in mind if you ever want to iterate in the future.
+MULTI-CHANNEL DMA: channels must be configured and started one at a time
+(configure ch0 -> start ch0 -> configure ch1 -> start ch1 -> ...),
+matching the pattern used in the dsp25-audio baremetal reference tests.
 */
 
 #include <limits.h>
@@ -392,17 +393,15 @@ static dma_copy_result_t dma_copy_buffer(volatile uint8_t *dst,
     }
 
     tids[ch] = tx.transaction_id;
-    packet_cursor += packets_this;
-  }
-
-  for (ch = 0u; ch < channels; ++ch) {
     start_DMA(ch, tids[ch], NULL);
+    packet_cursor += packets_this;
   }
 
   t_setup_end = rdcycle();
 
   dma_wait_till_inactive(DMA_BENCH_IDLE_SPIN_CYCLES);
   dma_full_fence();
+  dma_reset();
   t_done = rdcycle();
 
   result.setup_cycles = t_setup_end - t_setup_start;

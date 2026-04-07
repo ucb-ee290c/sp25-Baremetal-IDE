@@ -44,7 +44,7 @@
  * Default to logw=2 (4B) because this is the most broadly validated mode
  * in current dsp25 DMA tests. Set to 6 for 64B packets if your config supports it. */
 #ifndef DMA_BENCH_LOGW
-#define DMA_BENCH_LOGW 2u
+#define DMA_BENCH_LOGW 6u
 #endif
 
 #ifndef DMA_BENCH_PRIORITY
@@ -65,7 +65,7 @@
 #endif
 
 #ifndef DMA_BENCH_ENABLE_MULTI_CHANNEL
-#define DMA_BENCH_ENABLE_MULTI_CHANNEL 1
+#define DMA_BENCH_ENABLE_MULTI_CHANNEL 0
 #endif
 
 #ifndef DMA_BENCH_MULTI_CHANNELS

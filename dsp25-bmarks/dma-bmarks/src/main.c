@@ -1,3 +1,8 @@
+/*
+MULTI-CHANNEL DMA doesn't work atm so it is disabled. 
+Keep this in mind if you ever want to iterate in the future.
+*/
+
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>

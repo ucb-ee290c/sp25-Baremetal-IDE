@@ -465,6 +465,11 @@ static bw_suite_result_t run_bandwidth_suite(const char *kernel_name,
   printf("\n=== Memory Bandwidth Sweep: %s ===\n", kernel_name);
   printf("runs/state=%u, DRAM=%u B, Scratchpad=%u B, TCM=%u B\n",
          BW_NUM_RUNS, BW_DRAM_BYTES, BW_SCRATCH_BYTES, BW_TCM_BYTES);
+  printf("dram-src=[0x%08lx..0x%08lx), dram-dst=[0x%08lx..0x%08lx)\n",
+         (unsigned long)BW_DRAM_SRC_BASE,
+         (unsigned long)(BW_DRAM_SRC_BASE + BW_DRAM_BYTES),
+         (unsigned long)BW_DRAM_DST_BASE,
+         (unsigned long)(BW_DRAM_DST_BASE + BW_DRAM_BYTES));
 
   for (uint32_t tc_i = 0; tc_i < (uint32_t)(sizeof(k_transfer_cases) / sizeof(k_transfer_cases[0])); tc_i++) {
     const bw_transfer_case_t *tc = &k_transfer_cases[tc_i];

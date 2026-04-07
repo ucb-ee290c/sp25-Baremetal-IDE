@@ -64,6 +64,13 @@ typedef struct {
   bool vector;
 } bw_worker_arg_t;
 
+#if BW_USE_THREADLIB && (N_HARTS == 2)
+static volatile uint32_t g_bw_mp_req_seq = 0u;
+static volatile uint32_t g_bw_mp_done_seq = 0u;
+static volatile uint32_t g_bw_mp_worker_ready = 0u;
+static bw_worker_arg_t g_bw_mp_arg_h1;
+#endif
+
 static volatile uint8_t *g_dram_src = (volatile uint8_t *)BW_DRAM_SRC_BASE;
 static volatile uint8_t *g_dram_dst = (volatile uint8_t *)BW_DRAM_DST_BASE;
 static uint8_t g_cache_evict[BW_CACHE_EVICT_BYTES] __attribute__((aligned(BW_CACHE_LINE_BYTES)));
@@ -249,15 +256,71 @@ static void bw_worker_nop(void *arg) {
   (void)arg;
 }
 
+#if N_HARTS == 2
+static void bw_worker_service_h1(void *arg) {
+  (void)arg;
+  uint32_t seen = 0u;
+
+  __atomic_store_n(&g_bw_mp_worker_ready, 1u, __ATOMIC_RELEASE);
+
+  while (1) {
+    uint32_t req = __atomic_load_n(&g_bw_mp_req_seq, __ATOMIC_ACQUIRE);
+    if (req == seen) {
+      asm volatile("nop");
+      continue;
+    }
+
+    seen = req;
+    bw_worker_arg_t local = g_bw_mp_arg_h1;
+    if (local.vector) {
+      bw_copy_rvv(local.dst, local.src, local.bytes);
+    } else {
+      bw_copy_cpu(local.dst, local.src, local.bytes);
+    }
+    __atomic_store_n(&g_bw_mp_done_seq, seen, __ATOMIC_RELEASE);
+  }
+}
+#endif
+
 static void bw_threadlib_init(void) {
   hthread_init();
 
-  /* Warm thread-lib once so first measured run avoids cold startup effects. */
-  for (uint32_t i = 0; i < N_HARTS; ++i) {
-    hthread_dispatch(bw_worker_nop, NULL);
-  }
-  for (uint32_t i = 1; i < N_HARTS; ++i) {
-    hthread_join(i);
+  /* Warm hart1 once so timed runs avoid first-issue startup costs. */
+  if (N_HARTS > 1u) {
+#if N_HARTS == 2
+    static uint8_t warm_src[256] __attribute__((aligned(64)));
+    static uint8_t warm_dst[256] __attribute__((aligned(64)));
+
+    init_buffer(warm_src, sizeof(warm_src), 0xBADC0DEu);
+    memset(warm_dst, 0, sizeof(warm_dst));
+
+    __atomic_store_n(&g_bw_mp_req_seq, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_bw_mp_done_seq, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_bw_mp_worker_ready, 0u, __ATOMIC_RELEASE);
+
+    hthread_issue(1u, bw_worker_service_h1, NULL);
+    while (__atomic_load_n(&g_bw_mp_worker_ready, __ATOMIC_ACQUIRE) == 0u) {
+      asm volatile("nop");
+    }
+
+    g_bw_mp_arg_h1.src = warm_src;
+    g_bw_mp_arg_h1.dst = warm_dst;
+    g_bw_mp_arg_h1.bytes = sizeof(warm_src);
+    g_bw_mp_arg_h1.vector = false;
+    __atomic_store_n(&g_bw_mp_req_seq, 1u, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&g_bw_mp_done_seq, __ATOMIC_ACQUIRE) != 1u) {
+      asm volatile("nop");
+    }
+
+    g_bw_mp_arg_h1.vector = true;
+    __atomic_store_n(&g_bw_mp_req_seq, 2u, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&g_bw_mp_done_seq, __ATOMIC_ACQUIRE) != 2u) {
+      asm volatile("nop");
+    }
+#else
+    hthread_issue(1u, bw_worker_nop, NULL);
+    hthread_join(1u);
+#endif
   }
 }
 #else
@@ -293,9 +356,33 @@ static void bw_copy_mp_common(volatile uint8_t *dst, volatile uint8_t *src, uint
     offset += chunk;
   }
 
-  for (uint32_t i = 0; i < workers; ++i) {
-    hthread_dispatch(bw_worker_copy, args + i);
+  /*
+   * Two-hart hot path: hart1 runs a persistent worker loop started in
+   * bw_threadlib_init(). Each timed copy only posts a job token and waits
+   * for completion, avoiding per-run issue/join scheduler overhead.
+   */
+  if (workers == 2u) {
+#if N_HARTS == 2
+    uint32_t req = __atomic_load_n(&g_bw_mp_req_seq, __ATOMIC_RELAXED) + 1u;
+    g_bw_mp_arg_h1 = args[1u];
+    __atomic_store_n(&g_bw_mp_req_seq, req, __ATOMIC_RELEASE);
+    bw_worker_copy(args);
+    while (__atomic_load_n(&g_bw_mp_done_seq, __ATOMIC_ACQUIRE) != req) {
+      asm volatile("nop");
+    }
+#else
+    hthread_issue(1u, bw_worker_copy, args + 1u);
+    bw_worker_copy(args);
+    hthread_join(1u);
+#endif
+    return;
   }
+
+  for (uint32_t i = 1; i < workers; ++i) {
+    hthread_issue(i, bw_worker_copy, args + i);
+  }
+
+  bw_worker_copy(args);
 
   for (uint32_t i = 1; i < workers; ++i) {
     hthread_join(i);

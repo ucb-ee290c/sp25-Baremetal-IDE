@@ -1,5 +1,5 @@
-add_subdirectory(1dconv-bmarks)
 add_subdirectory(dma-bmarks)
+add_subdirectory(simple-conv-bmark)
 
 if(BUILD_MFCC_LIB)
   add_subdirectory(mfcc-bmarks)

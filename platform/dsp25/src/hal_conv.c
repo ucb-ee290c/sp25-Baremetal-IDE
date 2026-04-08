@@ -3,6 +3,37 @@
 
 // --- 1D Convolution Driver Functions ---
 
+static inline __attribute__((always_inline)) void mmio_write64_fast(uintptr_t addr, uint64_t data) {
+  *(volatile uint64_t *)addr = data;
+}
+
+static inline __attribute__((always_inline)) uint64_t mmio_read64_fast(uintptr_t addr) {
+  return *(volatile uint64_t *)addr;
+}
+
+static inline __attribute__((always_inline)) uint64_t conv_read_cycles(void) {
+  uint64_t c;
+  asm volatile("rdcycle %0" : "=r"(c));
+  return c;
+}
+
+static bool dma_wait_till_inactive_timeout(int cycle_no_inflight, uint64_t timeout_cycles) {
+  uint64_t start = conv_read_cycles();
+  while ((conv_read_cycles() - start) < timeout_cycles) {
+    volatile int t = 0;
+    while ((t < cycle_no_inflight) && (dma_status() == 0)) {
+      t++;
+      if ((conv_read_cycles() - start) >= timeout_cycles) {
+        return false;
+      }
+    }
+    if (t == cycle_no_inflight) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void start_conv() {
   reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 1);
 }
@@ -39,12 +70,12 @@ int conv_set_params_kernel_only(uint32_t input_length, uint16_t dilation, uint32
   // Write kernel data and kernel length encoding (One-time setup)
   if (kernel_length == 8) {
     for (int i = 0; i < 8; i += 2) {
-      reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+      mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
     }
     reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
   } else if (kernel_length == 16) {
     for (int i = 0; i < 16; i += 2) {
-      reg_write64((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
+      mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
     }
     reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);  
   } else {
@@ -58,7 +89,7 @@ int conv_set_params_kernel_only(uint32_t input_length, uint16_t dilation, uint32
 void conv_stream_input_batch(uint32_t *input, size_t start_element, size_t num_packets) {
     for (size_t i = 0; i < num_packets; ++i) {
         size_t element_idx = start_element + (i * FP32_PER_PACKET);
-        reg_write64((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + element_idx)));
+        mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + element_idx)));
     }
 }
 
@@ -66,14 +97,9 @@ void conv_stream_input_batch(uint32_t *input, size_t start_element, size_t num_p
 void conv_read_output_batch(uint32_t *output, size_t start_element, size_t num_packets) {
     for (size_t i = 0; i < num_packets; ++i) {
         size_t element_idx = start_element + (i * FP32_PER_PACKET);
-        
-        // Wait until at least one 64-bit word (2 FP32) is ready in the output FIFO
-        while (get_register_out_count() < 1) {
-            // Spin-wait for output data
-        }
-        
-        uint64_t current_out = reg_read64((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
-        
+
+        uint64_t current_out = mmio_read64_fast((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+
         // Unpack the 64-bit word into two 32-bit FP32 elements
         uint32_t *unpacked = (uint32_t *) &current_out;
         output[element_idx]   = unpacked[0];
@@ -90,59 +116,54 @@ uint8_t perform_convolution_1D(
     uint32_t* output, 
     uint16_t dilation
 ) {
-    // 1. Initial Setup
+    // 1. Initial setup
     conv_init();
-    conv_set_params_kernel_only(input_length, dilation, kernel, kernel_length);
+    {
+        int cfg_status = conv_set_params_kernel_only(input_length, dilation, kernel, kernel_length);
+        if (cfg_status != 0) {
+            return STATUS_INVALID;
+        }
+    }
+
+    if ((input_length % FP32_PER_PACKET) != 0U || (kernel_length % FP32_PER_PACKET) != 0U) {
+        return STATUS_INVALID;
+    }
 
     // Calculate total packets
     size_t input_packets = input_length / FP32_PER_PACKET;
-    // Assuming a valid convolution length, output_packets calculation is based on the DMA driver
     size_t kernel_packets = kernel_length / FP32_PER_PACKET; 
     size_t output_packets = input_packets + kernel_packets;
 
-    size_t in_packet_idx = 0;
-    size_t out_packet_idx = 0;
+    // Preload a bounded number of packets before start.
+    // This follows the proven baremetal interleaving style while avoiding queue overfill.
+    size_t preload_packets = input_packets;
+    if (preload_packets > FIFO_CAPACITY_PACKETS) {
+        preload_packets = FIFO_CAPACITY_PACKETS;
+    }
+
+    for (size_t i = 0; i < preload_packets; ++i) {
+        size_t element_idx = i * FP32_PER_PACKET;
+        mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + element_idx)));
+    }
 
     // 2. Start the convolution engine
     start_conv();
 
-    // 3. Streaming in Batches
-    while (out_packet_idx < output_packets) {
-        // Calculate batch size, capped by the FIFO capacity (8 packets)
-        size_t remaining_out_packets = output_packets - out_packet_idx;
-
-        // Pseudocode: current_batch_packets = min(FIFO_CAPACITY_PACKETS, remaining_out_packets);
-        size_t current_batch_packets = remaining_out_packets < FIFO_CAPACITY_PACKETS
-                                        ? remaining_out_packets
-                                        : FIFO_CAPACITY_PACKETS;
-        
-        // The number of input packets to stream in this batch is limited by the remaining input
-        // Pseudocode: input_stream_packets = min(current_batch_packets, remaining_in_packets)
-        size_t input_stream_packets = 0;
+    // 3. Stream with 1:1 interleaving and no out_count polling in the hot loop.
+    //    Use write-then-read ordering to avoid blocking on the first output read.
+    size_t in_packet_idx = preload_packets;
+    for (size_t out_packet_idx = 0; out_packet_idx < output_packets; ++out_packet_idx) {
         if (in_packet_idx < input_packets) {
-            size_t remaining_in_packets = input_packets - in_packet_idx;
-            input_stream_packets = remaining_in_packets < current_batch_packets
-                                    ? remaining_in_packets
-                                    : current_batch_packets;
+            size_t in_start_element = in_packet_idx * FP32_PER_PACKET;
+            mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + in_start_element)));
+            in_packet_idx++;
         }
 
-        // A. Stream Input Batch (MMIO write)
-        if (input_stream_packets > 0) {
-            // Convert packet index to FP32 element index
-            size_t start_element = in_packet_idx * FP32_PER_PACKET; 
-            conv_stream_input_batch(input, start_element, input_stream_packets);
-            in_packet_idx += input_stream_packets;
-        }
-
-        // B. Read Output Batch (MMIO read)
-        // Read the full batch, waiting for data if necessary (handled inside conv_read_output_batch)
-        size_t start_element = out_packet_idx * FP32_PER_PACKET;
-        conv_read_output_batch(output, start_element, current_batch_packets);
-        out_packet_idx += current_batch_packets;
-
-        // Note: Unlike the DMA driver which waits for bus silence, 
-        // the MMIO driver uses the `get_register_out_count()` check 
-        // inside `conv_read_output_batch` for synchronization (spin-wait).
+        uint64_t current_out = mmio_read64_fast((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+        uint32_t *unpacked = (uint32_t *) &current_out;
+        size_t out_start_element = out_packet_idx * FP32_PER_PACKET;
+        output[out_start_element] = unpacked[0];
+        output[out_start_element + 1U] = unpacked[1];
     }
 
     // 4. Final Status Read (Output fully drained)
@@ -256,7 +277,7 @@ void perform_naive_convolution_1D(uint32_t *arr, size_t arr_len, uint32_t *kerne
 // }
 
 
-void dma_1dConvDriver(
+bool dma_1dConvDriver(
     uint32_t *input_buffer_ptr,
     uint32_t *output_buffer_ptr,
     uint32_t *kernel_buffer_ptr,
@@ -265,6 +286,8 @@ void dma_1dConvDriver(
     uint16_t  dilation,
     uint32_t  base_id
 ) {
+    const uint64_t dma_timeout_cycles = 50000000ULL;
+
     // Packets = number of 64-bit beats (each beat carries 2 FP32s)
     size_t input_packets  = total_elements   / FP32_PER_PACKET;
     size_t kernel_packets = kernel_elements  / FP32_PER_PACKET;
@@ -296,11 +319,15 @@ void dma_1dConvDriver(
         .do_address_gate = true
     };
 
-    set_DMA_P(k_trans.core, k_trans, true);
+    if (!set_DMA_P(k_trans.core, k_trans, true)) {
+        return false;
+    }
     start_DMA(k_trans.core, k_trans.transaction_id, NULL);
 
     // Wait once for kernel DMA to complete
-    dma_wait_till_inactive(DMA_IDLE_THRESHOLD);
+    if (!dma_wait_till_inactive_timeout(DMA_IDLE_THRESHOLD, dma_timeout_cycles)) {
+        return false;
+    }
 
     // ================================
     // 2) Enable convolution engine
@@ -324,7 +351,9 @@ void dma_1dConvDriver(
         .do_interrupt    = false,
         .do_address_gate = true
     };
-    set_DMA_P(tx_out.core, tx_out, true);
+    if (!set_DMA_P(tx_out.core, tx_out, true)) {
+        return false;
+    }
     start_DMA(tx_out.core, tx_out.transaction_id, NULL);
 
     // 3b) Input: memory → accelerator (write to INPUT_ADDR)
@@ -340,11 +369,16 @@ void dma_1dConvDriver(
         .do_interrupt    = false,
         .do_address_gate = true
     };
-    set_DMA_P(tx_in.core, tx_in, true);
+    if (!set_DMA_P(tx_in.core, tx_in, true)) {
+        return false;
+    }
     start_DMA(tx_in.core, tx_in.transaction_id, NULL);
 
     // ================================
     // 4) Wait once for everything to finish
     // ================================
-    dma_wait_till_inactive(DMA_IDLE_THRESHOLD);
+    if (!dma_wait_till_inactive_timeout(DMA_IDLE_THRESHOLD, dma_timeout_cycles)) {
+        return false;
+    }
+    return true;
 }

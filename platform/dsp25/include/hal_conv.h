@@ -55,8 +55,10 @@
  } ConvStatusBits;
  
  
- // Accelerator's FIFO capacity in terms of 64-bit packets (2 FP32 each)
- #define FIFO_CAPACITY_PACKETS 8 
+ // Conservative software preload cap in 64-bit packets (2 FP32 each).
+ // Keep this at 8 for compatibility with taped-out revisions that may stall
+ // on larger pre-start queue fills.
+ #define FIFO_CAPACITY_PACKETS 8
  #define FP32_PER_PACKET 2
  
  // --- Core Driver Functions ---
@@ -87,7 +89,6 @@
  
  /**
   * \brief Reads a batch of output data (2 FP32 per 64-bit packet) from the accelerator's FIFO via MMIO.
-  * * This function busy-waits using get_register_out_count() to ensure data is available before reading.
   * \param output Pointer to the output buffer.
   * \param start_element Starting FP32 element index in the output buffer for this batch.
   * \param num_packets Number of 64-bit packets (2 FP32 each) to read.
@@ -135,28 +136,25 @@
  
   
  /**
-  * @brief Perform a 1D convolution using the streaming MMIO hardware accelerator.
+ * @brief Perform a 1D convolution using the streaming MMIO hardware accelerator.
   *
-  * This function first initializes the accelerator and preloads the kernel queue, then starts the accelerator.
-  * Then this function streams input data into the 1D accelerator and retrieves the output in batches of 8 packets (each packet is two FP32 numbers).
+  * This function initializes and configures the accelerator, preloads a bounded
+  * number of input packets, starts the engine, then performs 1:1 interleaved
+  * streaming in the hot loop:
+  *   - write next input packet when available
+  *   - read one output packet
   *
-  * The accelerator has a limited FIFO capacity (FIFO_CAPACITY_PACKETS), so the
-  * function dynamically batches input and output transfers to avoid overflow.
-  * It spin-waits for output availability using get_register_out_count() inside
-  * conv_read_output_batch().
-  * 
-  * FIFO_CAPACITY_PACKETS = 16 because that is the size of the input/output vector queues
+  * No output-count polling is used in the hot loop.
   *
   * Input and output data are transferred using MMIO-based functions:
-  *    - conv_stream_input_batch()
-  *    - conv_read_output_batch()
+  *    - raw 64-bit MMIO packet writes and reads
   *
   * Streaming Protocol Summary:
   *  - Input and kernel values must be packetized (FP32_PER_PACKET floats).
   *  - input_packets  = input_length  / FP32_PER_PACKET
   *  - kernel_packets = kernel_length / FP32_PER_PACKET
   *  - output_packets = input_packets + kernel_packets
-  *  - The hardware begins producing output after enough input data arrives.
+  *  - Output is consumed as packets: 2 FP32 per packet.
   * 
   * FP32_PER_PACKET = 2 because the input/output vector queues are 64 bits wide so two FP32 numbers fit in one entry of the input/output vector queues
   *
@@ -169,8 +167,7 @@
   * \param dilation The dilation factor.
   * \return uint8_t: Hardware status register after output is fully drained.
   *
-  * @note This is an MMIO-based (non-DMA) streaming driver. All synchronization
-  *       is handled via register polling inside the read/write helpers.
+  * @note This is an MMIO-based (non-DMA) streaming driver.
   * @note The output size (in packets) is determined by the hardware protocol.
   * @note The function will block until all expected output packets are read.
   */
@@ -214,7 +211,7 @@
 
 // --- DMA Configuration ---
 #define DMA_INPUT_CORE      3
-#define DMA_KERNEL_CORE     0
+#define DMA_KERNEL_CORE     2
 #define DMA_OUTPUT_CORE     5
 #define DMA_WORD_LOGW       3       // 8 bytes (64-bit)
 #define DMA_WORD_INC        8       // increment in bytes for memory-side address
@@ -226,7 +223,7 @@
 #define FP32_PER_PACKET         2
 
 // TODO: needs documentation
-void dma_1dConvDriver(
+bool dma_1dConvDriver(
     uint32_t *input_buffer_ptr,
     uint32_t *output_buffer_ptr,
     uint32_t *kernel_buffer_ptr,

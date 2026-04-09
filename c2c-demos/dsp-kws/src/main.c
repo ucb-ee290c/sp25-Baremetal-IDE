@@ -10,6 +10,11 @@ static mfcc_driver_t g_mfcc;
 static float32_t g_templates[KWS_TEMPLATE_CASES][MFCC_DRIVER_FFT_LEN];
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
 
+static volatile kws_mailbox_t *const g_mbox =
+    (volatile kws_mailbox_t *)(uintptr_t)KWS_DSP_REMOTE_MAILBOX_ADDR;
+static volatile kws_ring_slot_t *const g_ring =
+    (volatile kws_ring_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
+
 uint64_t target_frequency = KWS_DSP_TARGET_FREQUENCY_HZ;
 
 static float32_t clampf_local(float32_t x, float32_t lo, float32_t hi) {
@@ -77,54 +82,105 @@ static int8_t quantize_mfcc(float32_t x) {
   return (int8_t)qi;
 }
 
-static void init_tx_uart(void) {
-  UART_InitType uart_cfg;
-  uart_cfg.baudrate = KWS_DSP_UART_BAUDRATE;
-  uart_cfg.mode = UART_MODE_TX_RX;
-  uart_cfg.stopbits = UART_STOPBITS_2;
-  uart_init(KWS_DSP_TX_UART, &uart_cfg);
-  KWS_DSP_TX_UART->DIV = (uint32_t)((target_frequency / KWS_DSP_UART_BAUDRATE) - 1u);
+static uint32_t wait_for_reader_ready(void) {
+  uint32_t iters = 0u;
+
+  while (1) {
+    const uint32_t magic = g_mbox->magic;
+    const uint32_t version = g_mbox->version;
+    const uint32_t flags = g_mbox->flags;
+
+    if ((magic == KWS_MAILBOX_MAGIC) &&
+        (version == KWS_PROTO_VERSION) &&
+        ((flags & KWS_FLAG_READER_READY) != 0u)) {
+      const uint32_t slots = g_mbox->ring_slots;
+      const uint32_t slot_bytes = g_mbox->slot_bytes;
+
+      if ((slots == 0u) || ((slots & (slots - 1u)) != 0u)) {
+        KWS_DSP_LOG("[dsp-kws] remote ring_slots invalid=%u\n", (unsigned)slots);
+        return 0u;
+      }
+      if (slot_bytes != (uint32_t)sizeof(kws_ring_slot_t)) {
+        KWS_DSP_LOG("[dsp-kws] remote slot_bytes mismatch=%u expected=%u\n",
+                    (unsigned)slot_bytes,
+                    (unsigned)sizeof(kws_ring_slot_t));
+        return 0u;
+      }
+      return slots;
+    }
+
+    if ((KWS_DSP_WAIT_READER_READY_ITERS != 0u) && (iters++ >= KWS_DSP_WAIT_READER_READY_ITERS)) {
+      KWS_DSP_LOG("[dsp-kws] timeout waiting for reader-ready\n");
+      return 0u;
+    }
+    __asm__ volatile("nop");
+  }
 }
 
-static void uart_send_bytes(const uint8_t *bytes, uint16_t len) {
-  (void)uart_transmit(KWS_DSP_TX_UART, bytes, len, 0u);
+static void set_flag(uint32_t flag) {
+  uint32_t flags = g_mbox->flags;
+  flags |= flag;
+  g_mbox->flags = flags;
+  kws_fence_rw();
 }
 
-static void send_packet(uint8_t type,
-                        uint32_t seq,
-                        uint16_t case_id,
-                        uint8_t frame_idx,
-                        const int8_t *payload,
-                        uint8_t payload_len) {
-  uint8_t packet[KWS_WIRE_MAX_PACKET_BYTES];
-  const uint16_t wire_len = (uint16_t)(KWS_WIRE_FIXED_HEADER_BYTES + payload_len + KWS_WIRE_CRC_BYTES);
-  uint32_t crc;
+static void clear_flag(uint32_t flag) {
+  uint32_t flags = g_mbox->flags;
+  flags &= ~flag;
+  g_mbox->flags = flags;
+  kws_fence_rw();
+}
 
-  packet[0] = KWS_SYNC0;
-  packet[1] = KWS_SYNC1;
-  packet[2] = KWS_PROTO_VERSION;
-  packet[3] = type;
-  kws_write_u32_le(&packet[4], seq);
-  kws_write_u16_le(&packet[8], case_id);
-  packet[10] = frame_idx;
-  packet[11] = payload_len;
+static void push_frame(uint32_t ring_slots,
+                       uint32_t seq,
+                       uint16_t case_id,
+                       uint8_t frame_idx,
+                       const int8_t *mfcc_q) {
+  uint32_t prod;
 
-  if ((payload != NULL) && (payload_len > 0u)) {
-    memcpy(&packet[12], payload, payload_len);
+  while (1) {
+    const uint32_t cur_prod = g_mbox->prod_idx;
+    const uint32_t cur_cons = g_mbox->cons_idx;
+
+    if ((cur_prod - cur_cons) < ring_slots) {
+      prod = cur_prod;
+      break;
+    }
+
+    g_mbox->producer_wait_loops++;
+    __asm__ volatile("nop");
   }
 
-  crc = kws_crc32(&packet[2], (size_t)(10u + payload_len));
-  kws_write_u32_le(&packet[12u + payload_len], crc);
+  {
+    const uint32_t slot_idx = prod & (ring_slots - 1u);
+    volatile kws_ring_slot_t *slot = &g_ring[slot_idx];
 
-  uart_send_bytes(packet, wire_len);
+    slot->seq = seq;
+    slot->case_id = case_id;
+    slot->frame_idx = frame_idx;
+    for (uint32_t i = 0; i < KWS_MFCC_DIM; ++i) {
+      slot->mfcc[i] = mfcc_q[i];
+    }
+
+    kws_fence_rw();
+    slot->valid = 1u;
+  }
+
+  kws_fence_rw();
+  g_mbox->prod_idx = prod + 1u;
+  g_mbox->produced_frames++;
+  g_mbox->last_seq = seq;
+  g_mbox->last_case_id = case_id;
+  g_mbox->last_frame_idx = frame_idx;
 }
 
-static void send_case_stream(uint16_t case_id, uint32_t *seq_io, uint64_t *mfcc_cycle_sum_io) {
+static void stream_case_frames(uint32_t ring_slots,
+                               uint16_t case_id,
+                               uint32_t *seq_io,
+                               uint64_t *mfcc_cycle_sum_io) {
   uint32_t seq = *seq_io;
   float32_t mfcc_f32[MFCC_DRIVER_NUM_DCT];
   int8_t mfcc_q[KWS_MFCC_DIM];
-
-  send_packet(KWS_PKT_CASE_START, seq++, case_id, 0xFFu, NULL, 0u);
 
   for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
     uint64_t mfcc_cycles = 0;
@@ -138,28 +194,40 @@ static void send_case_stream(uint16_t case_id, uint32_t *seq_io, uint64_t *mfcc_
     }
 
     if (st != MFCC_DRIVER_OK) {
+      memset(mfcc_q, 0, sizeof(mfcc_q));
+      g_mbox->mfcc_failures++;
       KWS_DSP_LOG("[dsp-kws] MFCC failed case=%u frame=%u err=%s\n",
                   (unsigned)case_id,
                   (unsigned)frame_idx,
                   mfcc_driver_status_str(st));
-      continue;
+    } else {
+      for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+        mfcc_q[k] = quantize_mfcc(mfcc_f32[k]);
+      }
+      *mfcc_cycle_sum_io += mfcc_cycles;
     }
 
-    for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-      mfcc_q[k] = quantize_mfcc(mfcc_f32[k]);
-    }
-
-    send_packet(KWS_PKT_FRAME, seq++, case_id, frame_idx, mfcc_q, (uint8_t)KWS_MFCC_DIM);
-    *mfcc_cycle_sum_io += mfcc_cycles;
+    push_frame(ring_slots, seq, case_id, frame_idx, mfcc_q);
+    seq++;
   }
 
-  send_packet(KWS_PKT_CASE_END, seq++, case_id, 0xFFu, NULL, 0u);
   *seq_io = seq;
+}
+
+static void init_remote_mailbox_writer_state(void) {
+  g_mbox->prod_idx = 0u;
+  g_mbox->produced_frames = 0u;
+  g_mbox->mfcc_failures = 0u;
+  g_mbox->last_seq = 0u;
+  g_mbox->last_case_id = 0u;
+  g_mbox->last_frame_idx = 0u;
+  g_mbox->producer_wait_loops = 0u;
+  clear_flag(KWS_FLAG_STREAM_DONE);
+  set_flag(KWS_FLAG_WRITER_READY);
 }
 
 void app_init(void) {
   init_test(target_frequency);
-  init_tx_uart();
 
   prepare_templates();
   if (mfcc_driver_init(&g_mfcc) != MFCC_DRIVER_OK) {
@@ -169,17 +237,26 @@ void app_init(void) {
     }
   }
 
-  KWS_DSP_LOG("[dsp-kws] UART stream init: uart=%p baud=%u\n",
-              (void *)KWS_DSP_TX_UART,
-              (unsigned)KWS_DSP_UART_BAUDRATE);
+  KWS_DSP_LOG("[dsp-kws] waiting for remote reader at mailbox=0x%08lx ring=0x%08lx\n",
+              (unsigned long)KWS_DSP_REMOTE_MAILBOX_ADDR,
+              (unsigned long)KWS_DSP_REMOTE_RING_ADDR);
 }
 
 void app_main(void) {
+  const uint32_t ring_slots = wait_for_reader_ready();
   uint32_t seq = 1u;
   uint64_t total_mfcc_cycles = 0u;
 
+  if (ring_slots == 0u) {
+    while (1) {
+      __asm__ volatile("wfi");
+    }
+  }
+
+  init_remote_mailbox_writer_state();
+
   for (uint16_t case_id = 0; case_id < (uint16_t)KWS_DSP_NUM_CASES; ++case_id) {
-    send_case_stream(case_id, &seq, &total_mfcc_cycles);
+    stream_case_frames(ring_slots, case_id, &seq, &total_mfcc_cycles);
 
     if (KWS_DSP_LOG_ENABLE && ((case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
       KWS_DSP_LOG("[dsp-kws] streamed %u/%u cases\n",
@@ -188,12 +265,15 @@ void app_main(void) {
     }
   }
 
-  send_packet(KWS_PKT_STREAM_END, seq++, 0xFFFFu, 0xFFu, NULL, 0u);
+  set_flag(KWS_FLAG_STREAM_DONE);
 
-  KWS_DSP_LOG("[dsp-kws] done: cases=%u frames/case=%u seq_end=%u mfcc_cycles=%llu\n",
+  KWS_DSP_LOG("[dsp-kws] done: cases=%u frames/case=%u produced=%u seq_end=%u mfcc_fail=%u wait_loops=%u mfcc_cycles=%llu\n",
               (unsigned)KWS_DSP_NUM_CASES,
               (unsigned)KWS_DSP_FRAMES_PER_CASE,
+              (unsigned)g_mbox->produced_frames,
               (unsigned)(seq - 1u),
+              (unsigned)g_mbox->mfcc_failures,
+              (unsigned)g_mbox->producer_wait_loops,
               (unsigned long long)total_mfcc_cycles);
 
   while (1) {

@@ -16,20 +16,6 @@
 #define KWS_BEARLY_LOG(...) do { } while (0)
 #endif
 
-#if defined(UART1)
-#ifndef KWS_BEARLY_RX_UART
-#define KWS_BEARLY_RX_UART UART1
-#endif
-#else
-#ifndef KWS_BEARLY_RX_UART
-#define KWS_BEARLY_RX_UART UART0
-#endif
-#endif
-
-#ifndef KWS_BEARLY_UART_BAUDRATE
-#define KWS_BEARLY_UART_BAUDRATE 115200u
-#endif
-
 #ifndef KWS_BEARLY_TARGET_FREQUENCY_HZ
 #define KWS_BEARLY_TARGET_FREQUENCY_HZ 500000000ULL
 #endif

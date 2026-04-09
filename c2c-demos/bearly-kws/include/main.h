@@ -7,6 +7,5 @@
 #include "kws_bearly_config.h"
 #include "simple_setup.h"
 #include "tinyspeech_model.h"
-#include "uart.h"
 
 #endif /* C2C_BEARLY_KWS_MAIN_H */

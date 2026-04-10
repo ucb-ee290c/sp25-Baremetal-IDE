@@ -69,38 +69,13 @@ static void clear_shared_if_enabled(void) {
 #endif
 }
 
-static uint64_t wait_for_first_cycle(uint32_t *polls_out) {
-  uint32_t polls = 0u;
-
-  while (1) {
-    uint64_t v;
-
-    polls++;
-    refresh_shared();
-    v = *g_cycle_word;
-    if (v != 0u) {
-      *polls_out = polls;
-      return v;
-    }
-
-    if ((C2C_TRANSFER_BEARLY_WAIT_LOG_EVERY != 0u) &&
-        ((polls % C2C_TRANSFER_BEARLY_WAIT_LOG_EVERY) == 0u)) {
-      C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] waiting first packet polls=%u value=%llu\n",
-                              (unsigned)polls,
-                              (unsigned long long)v);
-    }
-
-    __asm__ volatile("nop");
-  }
-}
-
 static void wait_until_cycle(uint64_t target_cycle) {
   while (rdcycle64() < target_cycle) {
     __asm__ volatile("nop");
   }
 }
 
-static rx_sample_t poll_for_new_cycle(uint64_t prev_value) {
+static rx_sample_t poll_for_new_cycle(uint64_t prev_value, uint8_t require_strictly_increasing) {
   rx_sample_t out;
   uint32_t loops = 0u;
 
@@ -110,7 +85,8 @@ static rx_sample_t poll_for_new_cycle(uint64_t prev_value) {
     refresh_shared();
     v = *g_cycle_word;
 
-    if (v != prev_value) {
+    if ((v != prev_value) && (v != 0u) &&
+        ((!require_strictly_increasing) || (v > prev_value))) {
       out.tx_cycle = v;
       out.rx_cycle = rdcycle64();
       out.delta = out.rx_cycle - out.tx_cycle;
@@ -145,8 +121,10 @@ void app_main(void) {
   uint64_t delta_min;
   uint64_t delta_max;
   uint64_t delta_sum;
+  uint64_t est_link_delay;
+  uint64_t baseline;
   int prev_dir = 0;
-  uint32_t init_polls = 0u;
+  rx_sample_t first_sample;
 
   slack = C2C_TRANSFER_BEARLY_SEARCH_INITIAL_SLACK_CYCLES;
   if (slack > interval) {
@@ -167,17 +145,26 @@ void app_main(void) {
                           (unsigned long long)slack,
                           (unsigned long long)step);
 
-  prev_tx = wait_for_first_cycle(&init_polls);
-  prev_rx = rdcycle64();
-  delta_min = prev_rx - prev_tx;
-  delta_max = delta_min;
-  delta_sum = delta_min;
+  refresh_shared();
+  baseline = *g_cycle_word;
+  C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] baseline cycle word=%llu; waiting for first non-zero change\n",
+                          (unsigned long long)baseline);
 
-  C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] recv seq=1 tx_cycle=%llu rx_cycle=%llu delta=%llu polls=%u\n",
-                          (unsigned long long)prev_tx,
-                          (unsigned long long)prev_rx,
-                          (unsigned long long)delta_min,
-                          (unsigned)init_polls);
+  first_sample = poll_for_new_cycle(baseline, 0u);
+  prev_tx = first_sample.tx_cycle;
+  prev_rx = first_sample.rx_cycle;
+  delta_min = first_sample.delta;
+  delta_max = first_sample.delta;
+  delta_sum = first_sample.delta;
+  est_link_delay = delta_min;
+
+  C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] recv seq=1 tx_cycle=%llu rx_cycle=%llu delta=%llu loops=%u immediate=%u est_link_delay=%llu\n",
+                          (unsigned long long)first_sample.tx_cycle,
+                          (unsigned long long)first_sample.rx_cycle,
+                          (unsigned long long)first_sample.delta,
+                          (unsigned)first_sample.poll_loops,
+                          (unsigned)first_sample.immediate_hit,
+                          (unsigned long long)est_link_delay);
 
   for (uint32_t seq = 2u; seq <= total_packets; ++seq) {
     uint64_t predicted_rx = prev_rx + interval;
@@ -192,7 +179,7 @@ void app_main(void) {
                             (unsigned long long)step);
 
     wait_until_cycle(poll_start);
-    sample = poll_for_new_cycle(prev_tx);
+    sample = poll_for_new_cycle(prev_tx, 1u);
 
     if (sample.delta < delta_min) {
       delta_min = sample.delta;
@@ -201,14 +188,16 @@ void app_main(void) {
       delta_max = sample.delta;
     }
     delta_sum += sample.delta;
+    est_link_delay = delta_min;
 
-    C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] recv seq=%u tx_cycle=%llu rx_cycle=%llu delta=%llu loops=%u immediate=%u\n",
+    C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] recv seq=%u tx_cycle=%llu rx_cycle=%llu delta=%llu loops=%u immediate=%u est_link_delay=%llu\n",
                             (unsigned)seq,
                             (unsigned long long)sample.tx_cycle,
                             (unsigned long long)sample.rx_cycle,
                             (unsigned long long)sample.delta,
                             (unsigned)sample.poll_loops,
-                            (unsigned)sample.immediate_hit);
+                            (unsigned)sample.immediate_hit,
+                            (unsigned long long)est_link_delay);
 
     {
       int dir = sample.immediate_hit ? +1 : -1;
@@ -240,11 +229,12 @@ void app_main(void) {
     prev_rx = sample.rx_cycle;
   }
 
-  C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] summary packets=%u delta_min=%llu delta_avg=%llu delta_max=%llu final_slack=%llu final_step=%llu\n",
+  C2C_TRANSFER_BEARLY_LOG("[c2c-transfer-bearly] summary packets=%u delta_min=%llu delta_avg=%llu delta_max=%llu est_link_delay=%llu final_slack=%llu final_step=%llu\n",
                           (unsigned)total_packets,
                           (unsigned long long)delta_min,
                           (unsigned long long)(delta_sum / (uint64_t)total_packets),
                           (unsigned long long)delta_max,
+                          (unsigned long long)est_link_delay,
                           (unsigned long long)slack,
                           (unsigned long long)step);
 

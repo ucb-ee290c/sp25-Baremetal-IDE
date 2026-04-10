@@ -18,6 +18,12 @@ _Static_assert((KWS_DSP_SHARED_BYTES > sizeof(kws_mailbox_t)),
                "KWS_DSP_SHARED_BYTES must be larger than mailbox size.");
 _Static_assert((KWS_DSP_REMOTE_RING_BYTES > 0u),
                "KWS_DSP_REMOTE_RING_BYTES must be greater than 0.");
+_Static_assert((KWS_DSP_CACHE_LINE_BYTES & (KWS_DSP_CACHE_LINE_BYTES - 1u)) == 0u,
+               "KWS_DSP_CACHE_LINE_BYTES must be a power of two.");
+_Static_assert((KWS_DSP_CACHE_EVICT_BYTES >= KWS_DSP_CACHE_LINE_BYTES),
+               "KWS_DSP_CACHE_EVICT_BYTES must be at least one cache line.");
+_Static_assert((KWS_DSP_CACHE_EVICT_BYTES % KWS_DSP_CACHE_LINE_BYTES) == 0u,
+               "KWS_DSP_CACHE_EVICT_BYTES must be a multiple of cache line size.");
 
 static mfcc_driver_t g_mfcc;
 static float32_t g_templates[KWS_TEMPLATE_CASES][MFCC_DRIVER_FFT_LEN];
@@ -29,6 +35,9 @@ static volatile kws_ring_slot_t *const g_ring_safe =
     (volatile kws_ring_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
 static volatile kws_fast_case_slot_t *const g_ring_fast =
     (volatile kws_fast_case_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
+static uint8_t g_cache_evict[KWS_DSP_CACHE_EVICT_BYTES]
+    __attribute__((aligned(KWS_DSP_CACHE_LINE_BYTES)));
+static volatile uint8_t g_cache_sink;
 
 uint64_t target_frequency = KWS_DSP_TARGET_FREQUENCY_HZ;
 static uint32_t g_mfcc_fail_local;
@@ -110,8 +119,23 @@ static int8_t quantize_mfcc(float32_t x) {
   return (int8_t)qi;
 }
 
+static inline void cache_writeback_pressure(void) {
+  volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
+  volatile uint8_t sink = g_cache_sink;
+
+  for (uint32_t i = 0; i < (uint32_t)KWS_DSP_CACHE_EVICT_BYTES; i += KWS_DSP_CACHE_LINE_BYTES) {
+    sink ^= buf[i];
+    buf[i] = (uint8_t)(sink + (uint8_t)i);
+  }
+
+  g_cache_sink = sink;
+  kws_fence_rw();
+}
+
 static void set_flags(uint32_t flags) {
   g_mbox->flags = flags;
+  kws_fence_rw();
+  cache_writeback_pressure();
   kws_fence_rw();
 }
 
@@ -224,6 +248,8 @@ static void stream_safe(void) {
     }
 
     g_mbox->produced_cases = (uint32_t)case_id + 1u;
+    cache_writeback_pressure();
+    kws_fence_rw();
     if (KWS_DSP_LOG_ENABLE && (((uint32_t)case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
       KWS_DSP_LOG("[dsp-kws] SAFE streamed %u/%u cases\n",
                   (unsigned)((uint32_t)case_id + 1u),
@@ -298,6 +324,8 @@ static void stream_fast(void) {
     g_mbox->last_seq = case_seq;
     g_mbox->last_case_id = case_id;
     g_mbox->last_frame_idx = KWS_DSP_FRAMES_PER_CASE - 1u;
+    cache_writeback_pressure();
+    kws_fence_rw();
 
     if (KWS_DSP_LOG_ENABLE && (((uint32_t)case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
       KWS_DSP_LOG("[dsp-kws] FAST streamed %u/%u cases\n",
@@ -316,6 +344,7 @@ static void stream_fast(void) {
 
 void app_init(void) {
   init_test(target_frequency);
+  g_cache_sink = 0u;
 
 #if KWS_DSP_USE_THREADLIB
   hthread_init();

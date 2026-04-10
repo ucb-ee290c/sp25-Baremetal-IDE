@@ -29,7 +29,7 @@ static const char *g_labels[TINYSPEECH_NUM_CLASSES] = {
 };
 
 static uint8_t g_cache_evict[KWS_BEARLY_CACHE_EVICT_BYTES]
-    __attribute__((aligned(KWS_BEARLY_CACHE_LINE_BYTES)));
+    __attribute__((aligned(0x8000)));
 static volatile uint8_t g_cache_sink;
 static uint32_t g_wait_poll_count;
 

@@ -26,7 +26,7 @@ _Static_assert((KWS_DSP_CACHE_EVICT_BYTES % KWS_DSP_CACHE_LINE_BYTES) == 0u,
 static mfcc_driver_t g_mfcc;
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
 static uint8_t g_cache_evict[KWS_DSP_CACHE_EVICT_BYTES]
-    __attribute__((aligned(KWS_DSP_CACHE_LINE_BYTES)));
+    __attribute__((aligned(0x8000)));
 static volatile uint8_t g_cache_sink;
 static uint32_t g_mfcc_fail_local;
 
@@ -228,6 +228,16 @@ void app_init(void) {
 }
 
 void app_main(void) {
+  /* DEBUG: test write to shared region before any MFCC work */
+  {
+    volatile uint32_t *test = (volatile uint32_t *)0xC0000000UL;
+    *test = 0xDEADBEEFu;
+    kws_fence_rw_local();
+    cache_writeback_pressure();
+    kws_fence_rw_local();
+    KWS_DSP_LOG("[dsp-kws] DEBUG: wrote 0xDEADBEEF to 0xC0000000\n");
+  }
+
   int8_t payload[KWS_CASE_PAYLOAD_BYTES];
   uint64_t total_mfcc_cycles = 0u;
   uint64_t t0 = rdcycle64();

@@ -2,8 +2,9 @@ if(NOT TARGET mfcclib)
   message(FATAL_ERROR "dsp-kws requires target `mfcclib`. Configure with -DBUILD_MFCC_LIB=ON.")
 endif()
 
-if(NOT TARGET threadlib)
-  message(FATAL_ERROR "dsp-kws requires THREAD_LIB=ON (threadlib target missing).")
+set(KWS_DSP_USE_THREADLIB_VALUE 0)
+if(TARGET threadlib)
+  set(KWS_DSP_USE_THREADLIB_VALUE 1)
 endif()
 
 set(KWS_DSP_MODE "SAFE" CACHE STRING "dsp-kws link mode: SAFE or FAST")
@@ -27,16 +28,18 @@ target_include_directories(dsp-kws PRIVATE
 )
 
 target_compile_definitions(dsp-kws PRIVATE
-  KWS_DSP_USE_THREADLIB=1
+  KWS_DSP_USE_THREADLIB=${KWS_DSP_USE_THREADLIB_VALUE}
   KWS_DSP_LINK_MODE=${KWS_DSP_LINK_MODE_VALUE}
 )
 
 target_link_libraries(dsp-kws PRIVATE
   mfcclib
-  threadlib
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
   m
 )
+if(TARGET threadlib)
+  target_link_libraries(dsp-kws PRIVATE threadlib)
+endif()
 
 if(PROF_COV)
   target_link_libraries(dsp-kws PRIVATE gcov)

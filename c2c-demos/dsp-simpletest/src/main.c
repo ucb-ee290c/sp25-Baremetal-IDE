@@ -8,6 +8,12 @@ static volatile uint8_t g_cache_sink;
 
 uint64_t target_frequency = DSP_SIMPLETEST_TARGET_FREQUENCY_HZ;
 
+static inline uint64_t rdcycle64(void) {
+  uint64_t x;
+  __asm__ volatile("rdcycle %0" : "=r"(x));
+  return x;
+}
+
 static inline void cache_evict_all(void) {
   volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
   volatile uint8_t sink = g_cache_sink;
@@ -27,21 +33,17 @@ void app_init(void) {
 }
 
 void app_main(void) {
-  volatile uint32_t *shm0 = (volatile uint32_t *)SHM_BASE;
-  volatile uint32_t *shm1 = (volatile uint32_t *)(SHM_BASE + 4);
+  volatile uint64_t *shm_cycle = (volatile uint64_t *)SHM_BASE;
+  uint64_t dsp_cycle = rdcycle64();
 
-  /* Write 19 to 0xC0000004 */
-  *shm1 = 19u;
-  __asm__ volatile("fence rw, rw" ::: "memory");
-
-  /* Signal bearly by writing 0xFFFFFFFF to 0xC0000000 */
-  *shm0 = 0xFFFFFFFFu;
+  /* Publish DSP cycle timestamp for Bearly to read. */
+  *shm_cycle = dsp_cycle;
   __asm__ volatile("fence rw, rw" ::: "memory");
   cache_evict_all();
   __asm__ volatile("fence rw, rw" ::: "memory");
 
-  printf("[dsp] wrote 19 to 0x%08lx, wrote 0xFFFFFFFF to 0x%08lx\n",
-         (unsigned long)(SHM_BASE + 4), (unsigned long)SHM_BASE);
+  printf("[dsp] published cycle=%llu to 0x%08lx\n",
+         (unsigned long long)dsp_cycle, (unsigned long)SHM_BASE);
   printf("[dsp] done\n");
 
   while (1) {

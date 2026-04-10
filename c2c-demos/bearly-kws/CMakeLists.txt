@@ -1,5 +1,6 @@
-if (NOT TARGET threadlib)
-  message(FATAL_ERROR "bearly-kws requires THREAD_LIB=ON (threadlib target missing).")
+set(KWS_BEARLY_USE_THREADLIB_VALUE 0)
+if (TARGET threadlib)
+  set(KWS_BEARLY_USE_THREADLIB_VALUE 1)
 endif()
 
 include(CheckCSourceCompiles)
@@ -153,6 +154,8 @@ if (KWS_BEARLY_HAS_ZVFH_INTRINSICS)
   set(KWS_BEARLY_FP16_MIXED_VALUE 1)
 endif()
 
+set(KWS_BEARLY_TINYSPEECH_INT8_MULTICORE_VALUE ${KWS_BEARLY_USE_THREADLIB_VALUE})
+
 add_executable(bearly-kws
   src/main.c
   ${CMAKE_SOURCE_DIR}/bearly25-bmarks/tinyspeech-mc/src/tinyspeech_model.c
@@ -173,7 +176,7 @@ target_include_directories(bearly-kws PRIVATE
 
 target_compile_options(bearly-kws PRIVATE -O3)
 target_compile_definitions(bearly-kws PRIVATE
-  KWS_BEARLY_USE_THREADLIB=1
+  KWS_BEARLY_USE_THREADLIB=${KWS_BEARLY_USE_THREADLIB_VALUE}
   KWS_BEARLY_EXPECTED_MODE=${KWS_BEARLY_EXPECT_MODE_VALUE}
   TINYSPEECH_OPT_VARIANT_GEMM_RVV=1
   TINYSPEECH_CONV_FUSE_RELU=1
@@ -192,16 +195,18 @@ target_compile_definitions(bearly-kws PRIVATE
   TINYSPEECH_INT8_USE_VSMUL_REQUANT=${KWS_BEARLY_INT8_USE_VSMUL_REQUANT_VALUE}
   TINYSPEECH_RVV_VSMUL_API=${KWS_BEARLY_RVV_VSMUL_API_VALUE}
   TINYSPEECH_INT8_RVV_UKERNELS=1
-  TINYSPEECH_INT8_MULTICORE=1
+  TINYSPEECH_INT8_MULTICORE=${KWS_BEARLY_TINYSPEECH_INT8_MULTICORE_VALUE}
 )
 
 target_link_libraries(bearly-kws PRIVATE
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
   chip-config
   rocketcore
-  threadlib
   m
 )
+if (TARGET threadlib)
+  target_link_libraries(bearly-kws PRIVATE threadlib)
+endif()
 
 if(PROF_COV)
   target_link_libraries(bearly-kws PRIVATE gcov)

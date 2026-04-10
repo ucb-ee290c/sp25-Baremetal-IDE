@@ -8,6 +8,12 @@ static volatile uint8_t g_cache_sink;
 
 uint64_t target_frequency = BEARLY_SIMPLETEST_TARGET_FREQUENCY_HZ;
 
+static inline uint64_t rdcycle64(void) {
+  uint64_t x;
+  __asm__ volatile("rdcycle %0" : "=r"(x));
+  return x;
+}
+
 static inline void cache_evict_all(void) {
   volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
   volatile uint8_t sink = g_cache_sink;
@@ -27,28 +33,34 @@ void app_init(void) {
 }
 
 void app_main(void) {
-  volatile uint32_t *shm0 = (volatile uint32_t *)SHM_BASE;
-  volatile uint32_t *shm1 = (volatile uint32_t *)(SHM_BASE + 4);
+  volatile uint64_t *shm_cycle = (volatile uint64_t *)SHM_BASE;
+  uint64_t dsp_cycle;
+  uint64_t bearly_cycle;
+  uint64_t delta;
 
-  printf("[bearly] hello world from bearly chip\n");
-  printf("[bearly] polling 0x%08lx for 0xFFFFFFFF...\n", (unsigned long)SHM_BASE);
+  *shm_cycle = 0u;
+  __asm__ volatile("fence rw, rw" ::: "memory");
+  cache_evict_all();
+  __asm__ volatile("fence rw, rw" ::: "memory");
+
+  printf("[bearly] polling 0x%08lx for DSP cycle...\n", (unsigned long)SHM_BASE);
 
   while (1) {
     cache_evict_all();
-    uint32_t val = *shm0;
-    printf("[bearly] 0x%08lx = 0x%08lx\n", (unsigned long)SHM_BASE, (unsigned long)val);
-    if (val == 0xFFFFFFFFu) {
-      printf("[bearly] received 0xFFFFFFFF from DSP\n");
+    dsp_cycle = *shm_cycle;
+    if (dsp_cycle != 0u) {
+      __asm__ volatile("fence rw, rw" ::: "memory");
+      bearly_cycle = rdcycle64();
+      delta = bearly_cycle - dsp_cycle;
+      printf("[bearly] received dsp_cycle=%llu bearly_cycle=%llu delta=%llu cycles\n",
+             (unsigned long long)dsp_cycle,
+             (unsigned long long)bearly_cycle,
+             (unsigned long long)delta);
       break;
     }
     sleep(5);
   }
 
-  /* Read what DSP wrote at 0xC0000004 (should be 19) */
-  cache_evict_all();
-  uint32_t val2 = *shm1;
-  printf("[bearly] read %lu (0x%08lx) from 0x%08lx\n",
-         (unsigned long)val2, (unsigned long)val2, (unsigned long)(SHM_BASE + 4));
   printf("[bearly] done\n");
 
   while (1) {

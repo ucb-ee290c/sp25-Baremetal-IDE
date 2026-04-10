@@ -50,9 +50,12 @@ static inline void cache_evict_all(void) {
   volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
   volatile uint8_t sink = g_cache_sink;
 
-  for (uint32_t i = 0; i < (uint32_t)KWS_BEARLY_CACHE_EVICT_BYTES; i += KWS_BEARLY_CACHE_LINE_BYTES) {
-    sink ^= buf[i];
-    buf[i] = (uint8_t)(sink + (uint8_t)i);
+  for (uint32_t pass = 0; pass < 3u; ++pass) {
+    for (uint32_t i = 0; i < (uint32_t)KWS_BEARLY_CACHE_EVICT_BYTES; i += KWS_BEARLY_CACHE_LINE_BYTES) {
+      sink ^= buf[i];
+      buf[i] = (uint8_t)(sink + (uint8_t)i + (uint8_t)pass);
+    }
+    kws_fence_rw_local();
   }
 
   g_cache_sink = sink;
@@ -150,11 +153,13 @@ static void run_one_inference_from_shared(void) {
     KWS_BEARLY_LOG("[bearly-kws] int8 calibration %s\n", calib_ok ? "done" : "failed");
 
     /* Warm one fixed-path run so measured cycles are steady-state. */
+    KWS_BEARLY_LOG("[bearly-kws] warm-up inference begin\n");
     warm = tinyspeech_run_inference(&input);
     free_tensor(&warm);
   }
 #endif
 
+  KWS_BEARLY_LOG("[bearly-kws] measured inference begin\n");
   t0 = rdcycle64();
   probs = tinyspeech_run_inference(&input);
   t1 = rdcycle64();

@@ -233,6 +233,7 @@ void hthread_init() {
 void __main(void) {
     uint32_t mhartid = (uint32_t)READ_CSR("mhartid");
     htask_t task;
+    uint32_t idle_spins = 0;
 
     while (1) {
         // Secondary harts can reach __main before hart0 finishes runtime init.
@@ -244,24 +245,38 @@ void __main(void) {
 
         int did_work = 0;
 
-        if (ws_pop(mhartid, &task)) {
-            run_task(&task);
-            did_work = 1;
-        } else {
+        // Check if own deque has work before acquiring the lock
+        wsdeque_t *my_dq = &deques[mhartid];
+        if (my_dq->top != my_dq->bottom) {
+            if (ws_pop(mhartid, &task)) {
+                run_task(&task);
+                did_work = 1;
+                idle_spins = 0;
+            }
+        }
+
+        if (!did_work) {
             for (uint32_t victim = 0; victim < N_HARTS; victim++) {
                 if (victim == mhartid) {
                     continue;
                 }
-                if (ws_steal(victim, &task)) {
-                    run_task(&task);
-                    did_work = 1;
-                    break;
+                if (deques[victim].top != deques[victim].bottom) {
+                    if (ws_steal(victim, &task)) {
+                        run_task(&task);
+                        did_work = 1;
+                        idle_spins = 0;
+                        break;
+                    }
                 }
             }
         }
 
         if (!did_work) {
-            asm volatile("nop");
+            idle_spins++;
+            // Back off to reduce lock contention when idle
+            for (uint32_t j = 0; j < (idle_spins < 64u ? idle_spins : 64u); j++) {
+                asm volatile("nop");
+            }
         }
     }
 }

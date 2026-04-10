@@ -58,7 +58,7 @@
 #endif
 
 #ifndef KWS_BEARLY_USE_THREADLIB
-#define KWS_BEARLY_USE_THREADLIB 0
+#define KWS_BEARLY_USE_THREADLIB 1
 #endif
 
 #endif /* C2C_BEARLY_KWS_CONFIG_H */

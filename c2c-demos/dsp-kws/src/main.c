@@ -50,9 +50,12 @@ static inline void cache_writeback_pressure(void) {
   volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
   volatile uint8_t sink = g_cache_sink;
 
-  for (uint32_t i = 0; i < (uint32_t)KWS_DSP_CACHE_EVICT_BYTES; i += KWS_DSP_CACHE_LINE_BYTES) {
-    sink ^= buf[i];
-    buf[i] = (uint8_t)(sink + (uint8_t)i);
+  for (uint32_t pass = 0; pass < 3u; ++pass) {
+    for (uint32_t i = 0; i < (uint32_t)KWS_DSP_CACHE_EVICT_BYTES; i += KWS_DSP_CACHE_LINE_BYTES) {
+      sink ^= buf[i];
+      buf[i] = (uint8_t)(sink + (uint8_t)i + (uint8_t)pass);
+    }
+    kws_fence_rw_local();
   }
 
   g_cache_sink = sink;
@@ -145,6 +148,12 @@ static void publish_case_payload(const int8_t *payload, uint16_t case_id) {
   cache_writeback_pressure();
   *g_marker = (uint32_t)KWS_DSP_SIMPLE_MARKER_VALUE;
   kws_fence_rw_local();
+  *g_marker = (uint32_t)KWS_DSP_SIMPLE_MARKER_VALUE;
+  kws_fence_rw_local();
+  *g_marker = (uint32_t)KWS_DSP_SIMPLE_MARKER_VALUE;
+  kws_fence_rw_local();
+  *g_marker = (uint32_t)KWS_DSP_SIMPLE_MARKER_VALUE;
+  kws_fence_rw_local();
   cache_writeback_pressure();
   kws_fence_rw_local();
 
@@ -188,14 +197,14 @@ void app_init(void) {
 
 void app_main(void) {
   /* DEBUG: test write to shared region before any MFCC work */
-  {
-    volatile uint32_t *test = (volatile uint32_t *)0xC0000000UL;
-    *test = 0xDEADBEEFu;
-    kws_fence_rw_local();
-    cache_writeback_pressure();
-    kws_fence_rw_local();
-    KWS_DSP_LOG("[dsp-kws] DEBUG: wrote 0xDEADBEEF to 0xC0000000\n");
-  }
+  // {
+  //   volatile uint32_t *test = (volatile uint32_t *)0xC0000000UL;
+  //   *test = 0xDEADBEEFu;
+  //   kws_fence_rw_local();
+  //   cache_writeback_pressure();
+  //   kws_fence_rw_local();
+  //   KWS_DSP_LOG("[dsp-kws] DEBUG: wrote 0xDEADBEEF to 0xC0000000\n");
+  // }
 
   int8_t payload[KWS_CASE_PAYLOAD_BYTES];
   uint64_t total_mfcc_cycles = 0u;

@@ -53,7 +53,7 @@
 #endif
 
 #ifndef KWS_BEARLY_CACHE_EVICT_BYTES
-#define KWS_BEARLY_CACHE_EVICT_BYTES (512u * 1024u)
+#define KWS_BEARLY_CACHE_EVICT_BYTES (256u * 1024u)
 #endif
 
 /*

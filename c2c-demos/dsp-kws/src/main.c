@@ -39,6 +39,12 @@ static void mc_nop_worker(void *arg) {
 }
 #endif
 
+static inline uint64_t rdcycle64(void) {
+  uint64_t x;
+  __asm__ volatile("rdcycle %0" : "=r"(x));
+  return x;
+}
+
 static float32_t clampf_local(float32_t x, float32_t lo, float32_t hi) {
   if (x < lo) {
     return lo;
@@ -254,22 +260,33 @@ static void stream_fast(void) {
     volatile kws_fast_case_slot_t *slot = &g_ring_fast[((uint32_t)case_id) % fast_slots];
     const uint32_t commit_seq = (uint32_t)case_id + 1u;
     uint32_t case_seq = (uint32_t)case_id * KWS_DSP_FRAMES_PER_CASE;
+    int8_t case_payload[KWS_CASE_PAYLOAD_BYTES];
+    uint64_t tx_cycle_start;
+    uint64_t tx_cycle_commit;
 
-    slot->commit_seq = 0u;
-    kws_fence_rw();
-    slot->case_id = case_id;
-    slot->reserved = 0u;
-
+    /* Compute MFCC payload first; stamp cycle counter right before transmission starts. */
     for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
       int8_t mfcc_q[KWS_MFCC_DIM];
       const uint32_t base = ((uint32_t)frame_idx) * KWS_MFCC_DIM;
 
       (void)run_one_mfcc(case_id, frame_idx, mfcc_q, &total_mfcc_cycles);
       for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-        slot->mfcc[base + k] = mfcc_q[k];
+        case_payload[base + k] = mfcc_q[k];
       }
       case_seq++;
     }
+
+    tx_cycle_start = rdcycle64();
+    slot->commit_seq = 0u;
+    kws_fence_rw();
+    slot->case_id = case_id;
+    slot->reserved = 0u;
+    slot->tx_cycle_start = tx_cycle_start;
+    for (uint32_t i = 0; i < KWS_CASE_PAYLOAD_BYTES; ++i) {
+      slot->mfcc[i] = case_payload[i];
+    }
+    tx_cycle_commit = rdcycle64();
+    slot->tx_cycle_commit = tx_cycle_commit;
 
     kws_fence_rw();
     slot->commit_seq = commit_seq;

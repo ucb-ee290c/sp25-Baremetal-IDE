@@ -36,6 +36,20 @@ typedef struct {
 } stream_stats_t;
 
 typedef struct {
+  uint32_t cases;
+  uint64_t link_cycle_sum;
+  uint64_t link_cycle_min;
+  uint64_t link_cycle_max;
+  uint64_t tx_cycle_sum;
+  uint64_t tx_cycle_min;
+  uint64_t tx_cycle_max;
+  uint64_t first_tx_cycle;
+  uint64_t first_rx_cycle;
+  uint64_t last_rx_cycle;
+  uint8_t have_first;
+} link_stats_t;
+
+typedef struct {
   uint8_t have_case;
   uint16_t case_id;
   uint8_t next_frame_idx;
@@ -51,6 +65,7 @@ static volatile kws_fast_case_slot_t *const g_ring_fast =
 
 static inference_stats_t g_stats;
 static stream_stats_t g_stream;
+static link_stats_t g_link;
 static case_assembler_t g_assembler;
 static uint8_t g_summary_printed;
 static uint32_t g_mode;
@@ -73,6 +88,24 @@ static inline uint64_t rdcycle64(void) {
   uint64_t x;
   __asm__ volatile("rdcycle %0" : "=r"(x));
   return x;
+}
+
+static inline double cycles_to_us(uint64_t cycles) {
+  if (target_frequency == 0u) {
+    return 0.0;
+  }
+  return ((double)cycles * 1000000.0) / (double)target_frequency;
+}
+
+static inline double payload_mb_per_s(uint32_t payload_bytes, uint64_t cycles) {
+  if ((target_frequency == 0u) || (cycles == 0u)) {
+    return 0.0;
+  }
+  return ((double)payload_bytes * (double)target_frequency) / ((double)cycles * 1000000.0);
+}
+
+static inline double payload_mbit_per_s(uint32_t payload_bytes, uint64_t cycles) {
+  return 8.0 * payload_mb_per_s(payload_bytes, cycles);
 }
 
 static inline void cache_evict_all(void) {
@@ -106,7 +139,10 @@ static void reset_case_assembler(void) {
 static void reset_stats(void) {
   memset(&g_stats, 0, sizeof(g_stats));
   memset(&g_stream, 0, sizeof(g_stream));
+  memset(&g_link, 0, sizeof(g_link));
   g_stats.cycle_min = UINT64_MAX;
+  g_link.link_cycle_min = UINT64_MAX;
+  g_link.tx_cycle_min = UINT64_MAX;
 }
 
 static void run_inference_for_current_case(void) {
@@ -315,6 +351,11 @@ static void process_fast(void) {
     const uint32_t slot_idx = g_cons_cases % ring_slots;
     volatile kws_fast_case_slot_t *slot = &g_ring_fast[slot_idx];
     const uint32_t commit_seq = slot->commit_seq;
+    uint64_t rx_cycle;
+    uint64_t tx_cycle_start;
+    uint64_t tx_cycle_commit;
+    uint64_t link_cycles;
+    uint64_t tx_cycles;
 
     if (commit_seq < expected_seq) {
       break;
@@ -325,6 +366,35 @@ static void process_fast(void) {
       g_stream.dropped_frames += missed * KWS_FRAMES_PER_CASE;
       g_stream.seq_errors++;
       continue;
+    }
+
+    kws_fence_rw();
+    rx_cycle = rdcycle64();
+    tx_cycle_start = slot->tx_cycle_start;
+    tx_cycle_commit = slot->tx_cycle_commit;
+    link_cycles = rx_cycle - tx_cycle_start;
+    tx_cycles = tx_cycle_commit - tx_cycle_start;
+
+    if (!g_link.have_first) {
+      g_link.have_first = 1u;
+      g_link.first_tx_cycle = tx_cycle_start;
+      g_link.first_rx_cycle = rx_cycle;
+    }
+    g_link.last_rx_cycle = rx_cycle;
+    g_link.cases++;
+    g_link.link_cycle_sum += link_cycles;
+    g_link.tx_cycle_sum += tx_cycles;
+    if (link_cycles < g_link.link_cycle_min) {
+      g_link.link_cycle_min = link_cycles;
+    }
+    if (link_cycles > g_link.link_cycle_max) {
+      g_link.link_cycle_max = link_cycles;
+    }
+    if (tx_cycles < g_link.tx_cycle_min) {
+      g_link.tx_cycle_min = tx_cycles;
+    }
+    if (tx_cycles > g_link.tx_cycle_max) {
+      g_link.tx_cycle_max = tx_cycles;
     }
 
     run_inference_for_case_payload(slot->case_id, slot->mfcc);
@@ -401,6 +471,31 @@ void app_main(void) {
                        (unsigned)g_stream.seq_errors,
                        (unsigned)g_mbox->mfcc_failures,
                        (unsigned)g_stats.inferences);
+        if ((g_mode == KWS_LINK_MODE_FAST) && (g_link.cases > 0u)) {
+          const uint64_t link_avg = g_link.link_cycle_sum / g_link.cases;
+          const uint64_t tx_avg = g_link.tx_cycle_sum / g_link.cases;
+          const uint64_t first_msg_to_last_case = g_link.last_rx_cycle - g_link.first_tx_cycle;
+          const uint64_t first_rx_to_last_case = g_link.last_rx_cycle - g_link.first_rx_cycle;
+          KWS_BEARLY_LOG("[bearly-kws] link-summary: payload=%uB/case link_cycles(best/avg/worst)=%llu/%llu/%llu tx_cycles(best/avg/worst)=%llu/%llu/%llu\n",
+                         (unsigned)KWS_CASE_PAYLOAD_BYTES,
+                         (unsigned long long)g_link.link_cycle_min,
+                         (unsigned long long)link_avg,
+                         (unsigned long long)g_link.link_cycle_max,
+                         (unsigned long long)g_link.tx_cycle_min,
+                         (unsigned long long)tx_avg,
+                         (unsigned long long)g_link.tx_cycle_max);
+          KWS_BEARLY_LOG("[bearly-kws] link-speed: payloadMBps(best/avg)=%.3f/%.3f\n",
+                         payload_mb_per_s(KWS_CASE_PAYLOAD_BYTES, g_link.link_cycle_min),
+                         payload_mb_per_s(KWS_CASE_PAYLOAD_BYTES, link_avg));
+          KWS_BEARLY_LOG("[bearly-kws] link-speed: payloadMbit/s(best/avg)=%.3f/%.3f\n",
+                         payload_mbit_per_s(KWS_CASE_PAYLOAD_BYTES, g_link.link_cycle_min),
+                         payload_mbit_per_s(KWS_CASE_PAYLOAD_BYTES, link_avg));
+          KWS_BEARLY_LOG("[bearly-kws] span: first-msg->last-case cycles=%llu (%.3f us), first-rx->last-case cycles=%llu (%.3f us)\n",
+                         (unsigned long long)first_msg_to_last_case,
+                         cycles_to_us(first_msg_to_last_case),
+                         (unsigned long long)first_rx_to_last_case,
+                         cycles_to_us(first_rx_to_last_case));
+        }
         if (g_stats.inferences > 0u) {
           KWS_BEARLY_LOG("[bearly-kws] cycle-summary: avg=%llu min=%llu max=%llu\n",
                          (unsigned long long)(g_stats.cycle_sum / g_stats.inferences),

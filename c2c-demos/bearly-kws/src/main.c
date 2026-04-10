@@ -75,6 +75,7 @@ static uint8_t g_cache_evict[KWS_BEARLY_CACHE_EVICT_BYTES]
     __attribute__((aligned(KWS_BEARLY_CACHE_LINE_BYTES)));
 static volatile uint8_t g_cache_sink;
 static uint32_t g_mailbox_poll_count;
+static uint32_t g_wait_poll_count;
 
 uint64_t target_frequency = KWS_BEARLY_TARGET_FREQUENCY_HZ;
 
@@ -127,6 +128,43 @@ static inline void refresh_mailbox(void) {
     cache_evict_all();
   }
   kws_fence_rw();
+}
+
+#if KWS_BEARLY_CLEAR_SHM_ON_BOOT
+static void clear_shared_scratchpad(void) {
+  volatile uint8_t *shm = (volatile uint8_t *)(uintptr_t)KWS_BEARLY_SHM_BASE;
+  for (uint32_t i = 0; i < (uint32_t)KWS_BEARLY_SHM_BYTES; ++i) {
+    shm[i] = 0u;
+  }
+  kws_fence_rw();
+  cache_evict_all();
+  kws_fence_rw();
+}
+
+static inline uint8_t mailbox_writer_ready_seen(void) {
+  return (uint8_t)((g_mbox->magic == KWS_MAILBOX_MAGIC) &&
+                   (g_mbox->version == KWS_PROTO_VERSION) &&
+                   ((g_mbox->flags & KWS_FLAG_WRITER_READY) != 0u));
+}
+#endif
+
+static void maybe_clear_shared_scratchpad(void) {
+#if KWS_BEARLY_CLEAR_SHM_ON_BOOT
+  refresh_mailbox();
+  if (mailbox_writer_ready_seen()) {
+    KWS_BEARLY_LOG("[bearly-kws] skip clear: writer already active magic=0x%08x flags=0x%08x mode=%u prod_frames=%u prod_cases=%u\n",
+                   (unsigned)g_mbox->magic,
+                   (unsigned)g_mbox->flags,
+                   (unsigned)g_mbox->mode,
+                   (unsigned)g_mbox->produced_frames,
+                   (unsigned)g_mbox->produced_cases);
+    return;
+  }
+  clear_shared_scratchpad();
+  KWS_BEARLY_LOG("[bearly-kws] cleared shared scratchpad base=0x%08lx bytes=%u\n",
+                 (unsigned long)KWS_BEARLY_SHM_BASE,
+                 (unsigned)KWS_BEARLY_SHM_BYTES);
+#endif
 }
 
 static void reset_case_assembler(void) {
@@ -202,11 +240,26 @@ static void run_inference_for_case_payload(uint16_t case_id, const volatile int8
 
 static uint32_t wait_for_writer_mode(void) {
   while (1) {
+    g_wait_poll_count++;
     refresh_mailbox();
 
     if ((g_mbox->magic != KWS_MAILBOX_MAGIC) ||
         (g_mbox->version != KWS_PROTO_VERSION) ||
         ((g_mbox->flags & KWS_FLAG_WRITER_READY) == 0u)) {
+#if KWS_BEARLY_WAIT_LOG_EVERY
+      if ((g_wait_poll_count % KWS_BEARLY_WAIT_LOG_EVERY) == 0u) {
+        KWS_BEARLY_LOG("[bearly-kws] polling wait=%u magic=0x%08x ver=%u flags=0x%08x mode=%u prod_frames=%u prod_cases=%u ring_slots=%u slot_bytes=%u\n",
+                       (unsigned)g_wait_poll_count,
+                       (unsigned)g_mbox->magic,
+                       (unsigned)g_mbox->version,
+                       (unsigned)g_mbox->flags,
+                       (unsigned)g_mbox->mode,
+                       (unsigned)g_mbox->produced_frames,
+                       (unsigned)g_mbox->produced_cases,
+                       (unsigned)g_mbox->ring_slots,
+                       (unsigned)g_mbox->slot_bytes);
+      }
+#endif
       __asm__ volatile("nop");
       continue;
     }
@@ -424,6 +477,8 @@ void app_init(void) {
   g_cons_cases = 0u;
   g_cache_sink = 0u;
   g_mailbox_poll_count = 0u;
+  g_wait_poll_count = 0u;
+  maybe_clear_shared_scratchpad();
 
   KWS_BEARLY_LOG("[bearly-kws] startup one-way reader: shm=0x%08lx bytes=%u cache_evict_bytes=%u mailbox_evict_every=%u\n",
                  (unsigned long)KWS_BEARLY_SHM_BASE,

@@ -1,5 +1,7 @@
 #include "main.h"
 
+#include <ctype.h>
+
 _Static_assert((BEARLY_SIMPLETEST_SHM_BYTES > sizeof(simpletest_mailbox_t)),
                "BEARLY_SIMPLETEST_SHM_BYTES must exceed mailbox size.");
 _Static_assert((BEARLY_SIMPLETEST_CACHE_LINE_BYTES & (BEARLY_SIMPLETEST_CACHE_LINE_BYTES - 1u)) == 0u,
@@ -25,6 +27,7 @@ static uint8_t g_cache_evict[BEARLY_SIMPLETEST_CACHE_EVICT_BYTES]
     __attribute__((aligned(BEARLY_SIMPLETEST_CACHE_LINE_BYTES)));
 static volatile uint8_t g_cache_sink;
 static uint32_t g_poll_count;
+static uint32_t g_wait_poll_count;
 static uint32_t g_consumed;
 static rx_stats_t g_stats;
 
@@ -57,11 +60,47 @@ static inline void refresh_mailbox(void) {
   simpletest_fence_rw();
 }
 
+#if BEARLY_SIMPLETEST_CLEAR_SHM_ON_BOOT
+static void clear_shared_scratchpad(void) {
+  volatile uint8_t *shm = (volatile uint8_t *)(uintptr_t)BEARLY_SIMPLETEST_SHM_BASE;
+  for (uint32_t i = 0; i < (uint32_t)BEARLY_SIMPLETEST_SHM_BYTES; ++i) {
+    shm[i] = 0u;
+  }
+  simpletest_fence_rw();
+  cache_evict_all();
+  simpletest_fence_rw();
+}
+
+static inline uint8_t mailbox_writer_ready_seen(void) {
+  return (uint8_t)((g_mbox->magic == SIMPLETEST_MAILBOX_MAGIC) &&
+                   (g_mbox->version == SIMPLETEST_PROTO_VERSION) &&
+                   ((g_mbox->flags & SIMPLETEST_FLAG_WRITER_READY) != 0u));
+}
+#endif
+
+static void maybe_clear_shared_scratchpad(void) {
+#if BEARLY_SIMPLETEST_CLEAR_SHM_ON_BOOT
+  refresh_mailbox();
+  if (mailbox_writer_ready_seen()) {
+    BEARLY_SIMPLETEST_LOG("[bearly-simpletest] skip clear: writer already active magic=0x%08x flags=0x%08x produced=%u\n",
+                          (unsigned)g_mbox->magic,
+                          (unsigned)g_mbox->flags,
+                          (unsigned)g_mbox->produced_msgs);
+    return;
+  }
+  clear_shared_scratchpad();
+  BEARLY_SIMPLETEST_LOG("[bearly-simpletest] cleared shared scratchpad base=0x%08lx bytes=%u\n",
+                        (unsigned long)BEARLY_SIMPLETEST_SHM_BASE,
+                        (unsigned)BEARLY_SIMPLETEST_SHM_BYTES);
+#endif
+}
+
 static void reset_state(void) {
   memset(&g_stats, 0, sizeof(g_stats));
   g_stats.latency_min = UINT64_MAX;
   g_cache_sink = 0u;
   g_poll_count = 0u;
+  g_wait_poll_count = 0u;
   g_consumed = 0u;
 }
 
@@ -69,6 +108,7 @@ static void wait_for_writer_ready(void) {
   const uint32_t max_slots = BEARLY_SIMPLETEST_RING_BYTES / (uint32_t)sizeof(simpletest_slot_t);
   volatile uint32_t *shm = (volatile uint32_t *)(uintptr_t)BEARLY_SIMPLETEST_SHM_BASE;
   while (1) {
+    g_wait_poll_count++;
     refresh_mailbox();
     uint32_t val = shm[0];
     printf("[bearly-poll] 0x%08lx: 0x%08lx\n",
@@ -88,6 +128,7 @@ static void handle_one_message(volatile simpletest_slot_t *slot, uint32_t expect
   uint64_t latency;
   uint32_t msg_len;
   char msg_buf[SIMPLETEST_MSG_MAX_BYTES + 1u];
+  char ascii_buf[SIMPLETEST_MSG_MAX_BYTES + 1u];
 
   simpletest_fence_rw();
   rx_cycle = rdcycle64();
@@ -102,6 +143,11 @@ static void handle_one_message(volatile simpletest_slot_t *slot, uint32_t expect
     msg_buf[i] = slot->msg[i];
   }
   msg_buf[msg_len] = '\0';
+  for (uint32_t i = 0; i < SIMPLETEST_MSG_MAX_BYTES; ++i) {
+    unsigned char c = (unsigned char)slot->msg[i];
+    ascii_buf[i] = (char)(isprint((int)c) ? c : '.');
+  }
+  ascii_buf[SIMPLETEST_MSG_MAX_BYTES] = '\0';
 
   g_stats.received++;
   g_stats.latency_sum += latency;
@@ -119,6 +165,12 @@ static void handle_one_message(volatile simpletest_slot_t *slot, uint32_t expect
                         (unsigned long long)rx_cycle,
                         (unsigned long long)latency,
                         msg_buf);
+  BEARLY_SIMPLETEST_LOG("[bearly-simpletest] recv raw_ascii=\"%s\"\n", ascii_buf);
+  BEARLY_SIMPLETEST_LOG("[bearly-simpletest] recv raw_hex:");
+  for (uint32_t i = 0; i < SIMPLETEST_MSG_MAX_BYTES; ++i) {
+    BEARLY_SIMPLETEST_LOG("%s%02x", (i == 0u) ? " " : " ", (unsigned)(uint8_t)slot->msg[i]);
+  }
+  BEARLY_SIMPLETEST_LOG("\n");
 }
 
 static void process_messages(void) {
@@ -175,6 +227,7 @@ static void process_messages(void) {
 void app_init(void) {
   init_test(target_frequency);
   reset_state();
+  maybe_clear_shared_scratchpad();
   BEARLY_SIMPLETEST_LOG("[bearly-simpletest] start mailbox=0x%08lx ring=0x%08lx evict_bytes=%u\n",
                         (unsigned long)BEARLY_SIMPLETEST_MAILBOX_ADDR,
                         (unsigned long)BEARLY_SIMPLETEST_RING_ADDR,

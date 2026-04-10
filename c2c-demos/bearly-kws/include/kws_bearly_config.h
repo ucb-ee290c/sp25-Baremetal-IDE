@@ -48,16 +48,24 @@
 #define KWS_BEARLY_CACHE_LINE_BYTES 64u
 #endif
 
+#ifndef KWS_BEARLY_CACHE_EVICT_BYTES
+#define KWS_BEARLY_CACHE_EVICT_BYTES (512u * 1024u)
+#endif
+
 /*
- * 0: fence-only fallback (portable)
- * 1: use Zicbom cbo.inval per line (requires assembler/CPU support)
+ * Run one full software cache-eviction sweep every N mailbox polls.
+ * 1 = sweep every poll (strongest coherence, highest overhead).
  */
-#ifndef KWS_BEARLY_CACHE_REFRESH_MODE
-#define KWS_BEARLY_CACHE_REFRESH_MODE 1
+#ifndef KWS_BEARLY_MAILBOX_EVICT_EVERY
+#define KWS_BEARLY_MAILBOX_EVICT_EVERY 1u
 #endif
 
 #ifndef KWS_BEARLY_PROGRESS_EVERY
 #define KWS_BEARLY_PROGRESS_EVERY 10u
+#endif
+
+#ifndef KWS_BEARLY_USE_THREADLIB
+#define KWS_BEARLY_USE_THREADLIB 0
 #endif
 
 #endif /* C2C_BEARLY_KWS_CONFIG_H */

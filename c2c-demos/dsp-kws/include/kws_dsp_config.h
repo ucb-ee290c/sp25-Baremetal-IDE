@@ -64,4 +64,8 @@
 #define KWS_DSP_PROGRESS_EVERY_CASES 10u
 #endif
 
+#ifndef KWS_DSP_USE_THREADLIB
+#define KWS_DSP_USE_THREADLIB 0
+#endif
+
 #endif /* C2C_DSP_KWS_CONFIG_H */

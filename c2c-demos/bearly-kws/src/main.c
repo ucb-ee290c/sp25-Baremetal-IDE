@@ -2,12 +2,23 @@
 
 #include "tensor.h"
 
+#if KWS_BEARLY_USE_THREADLIB
+/* Use explicit threadlib API declarations to avoid picking a legacy hthread.h. */
+void hthread_init(void);
+void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);
+void hthread_join(uint32_t hartid);
+#endif
+
 _Static_assert((KWS_BEARLY_SHM_BYTES > sizeof(kws_mailbox_t)),
                "KWS_BEARLY_SHM_BYTES must be larger than mailbox size.");
 _Static_assert((KWS_BEARLY_RING_SLOTS > 0u),
                "KWS_BEARLY_RING_SLOTS must be greater than 0.");
 _Static_assert(((KWS_BEARLY_CACHE_LINE_BYTES & (KWS_BEARLY_CACHE_LINE_BYTES - 1u)) == 0u),
                "KWS_BEARLY_CACHE_LINE_BYTES must be a power of two.");
+_Static_assert((KWS_BEARLY_CACHE_EVICT_BYTES >= KWS_BEARLY_CACHE_LINE_BYTES),
+               "KWS_BEARLY_CACHE_EVICT_BYTES must be at least one cache line.");
+_Static_assert((KWS_BEARLY_CACHE_EVICT_BYTES % KWS_BEARLY_CACHE_LINE_BYTES) == 0u,
+               "KWS_BEARLY_CACHE_EVICT_BYTES must be a multiple of cache line size.");
 
 typedef struct {
   uint32_t inferences;
@@ -33,8 +44,18 @@ static inference_stats_t g_stats;
 static case_assembler_t g_assembler;
 static uint8_t g_summary_printed;
 static uint32_t g_cons_local;
+static uint8_t g_cache_evict[KWS_BEARLY_CACHE_EVICT_BYTES]
+    __attribute__((aligned(KWS_BEARLY_CACHE_LINE_BYTES)));
+static volatile uint8_t g_cache_sink;
+static uint32_t g_mailbox_poll_count;
 
 uint64_t target_frequency = KWS_BEARLY_TARGET_FREQUENCY_HZ;
+
+#if KWS_BEARLY_USE_THREADLIB
+static void mc_nop_worker(void *arg) {
+  (void)arg;
+}
+#endif
 
 static inline uint64_t rdcycle64(void) {
   uint64_t x;
@@ -42,40 +63,31 @@ static inline uint64_t rdcycle64(void) {
   return x;
 }
 
-static inline uintptr_t align_down_uintptr(uintptr_t addr, uintptr_t align_pow2) {
-  return addr & ~(align_pow2 - 1u);
-}
+static inline void cache_evict_all(void) {
+  volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
+  volatile uint8_t sink = g_cache_sink;
 
-static inline void cache_refresh_line(const void *addr) {
-#if (KWS_BEARLY_CACHE_REFRESH_MODE == 1)
-  const void *line =
-      (const void *)align_down_uintptr((uintptr_t)addr, (uintptr_t)KWS_BEARLY_CACHE_LINE_BYTES);
-  __asm__ volatile("cbo.inval (%0)" : : "r"(line) : "memory");
-#else
-  (void)addr;
-  kws_fence_rw();
-#endif
-}
+  for (uint32_t i = 0; i < (uint32_t)KWS_BEARLY_CACHE_EVICT_BYTES; i += KWS_BEARLY_CACHE_LINE_BYTES) {
+    /* Read+write each cache line to force capacity eviction across sets/ways. */
+    sink ^= buf[i];
+    buf[i] = (uint8_t)(sink + (uint8_t)i);
+  }
 
-static inline void cache_flush_line(const void *addr) {
-#if (KWS_BEARLY_CACHE_REFRESH_MODE == 1)
-  const void *line =
-      (const void *)align_down_uintptr((uintptr_t)addr, (uintptr_t)KWS_BEARLY_CACHE_LINE_BYTES);
-  __asm__ volatile("cbo.flush (%0)" : : "r"(line) : "memory");
-#else
-  (void)addr;
+  g_cache_sink = sink;
   kws_fence_rw();
-#endif
 }
 
 static inline void refresh_mailbox(void) {
-  cache_refresh_line((const void *)g_mbox);
+  if ((KWS_BEARLY_MAILBOX_EVICT_EVERY <= 1u) ||
+      ((g_mailbox_poll_count++ % KWS_BEARLY_MAILBOX_EVICT_EVERY) == 0u)) {
+    cache_evict_all();
+  }
   kws_fence_rw();
 }
 
 static inline void publish_mailbox(void) {
   kws_fence_rw();
-  cache_flush_line((const void *)g_mbox);
+  cache_evict_all();
   kws_fence_rw();
 }
 
@@ -175,12 +187,20 @@ static void process_ring(void) {
   uint32_t prod;
   uint32_t available;
   uint32_t consumed_now = 0u;
-  uintptr_t last_slot_line = UINTPTR_MAX;
 
   refresh_mailbox();
   prod = g_mbox->prod_idx;
   available = prod - g_cons_local;
 
+  if (available == 0u) {
+    return;
+  }
+
+  /* Ensure slot payload reads observe producer updates in non-coherent caches. */
+  cache_evict_all();
+  refresh_mailbox();
+  prod = g_mbox->prod_idx;
+  available = prod - g_cons_local;
   if (available == 0u) {
     return;
   }
@@ -197,13 +217,6 @@ static void process_ring(void) {
     const uint32_t seq = g_cons_local + consumed_now + 1u;
     const uint32_t slot_idx = (g_cons_local + consumed_now) % KWS_BEARLY_RING_SLOTS;
     volatile kws_ring_slot_t *slot = &g_ring[slot_idx];
-    const uintptr_t slot_line =
-        align_down_uintptr((uintptr_t)slot, (uintptr_t)KWS_BEARLY_CACHE_LINE_BYTES);
-
-    if (slot_line != last_slot_line) {
-      cache_refresh_line((const void *)slot_line);
-      last_slot_line = slot_line;
-    }
 
     if (!slot->valid) {
       g_mbox->seq_errors++;
@@ -261,18 +274,28 @@ static void process_ring(void) {
 void app_init(void) {
   init_test(target_frequency);
 
+#if KWS_BEARLY_USE_THREADLIB
+  hthread_init();
+  /* Warm hart1 once so the first multicore inference is not penalized. */
+  hthread_issue(1, mc_nop_worker, NULL);
+  hthread_join(1);
+#endif
+
   reset_stats();
   reset_case_assembler();
   init_mailbox_and_ring();
   g_summary_printed = 0u;
   g_cons_local = 0u;
+  g_cache_sink = 0u;
+  g_mailbox_poll_count = 0u;
 
-  KWS_BEARLY_LOG("[bearly-kws] startup: shm=0x%08lx bytes=%u ring_slots=%u slot_bytes=%u cache_mode=%u\n",
+  KWS_BEARLY_LOG("[bearly-kws] startup: shm=0x%08lx bytes=%u ring_slots=%u slot_bytes=%u cache_evict_bytes=%u mailbox_evict_every=%u\n",
                  (unsigned long)KWS_BEARLY_SHM_BASE,
                  (unsigned)KWS_BEARLY_SHM_BYTES,
                  (unsigned)KWS_BEARLY_RING_SLOTS,
                  (unsigned)sizeof(kws_ring_slot_t),
-                 (unsigned)KWS_BEARLY_CACHE_REFRESH_MODE);
+                 (unsigned)KWS_BEARLY_CACHE_EVICT_BYTES,
+                 (unsigned)KWS_BEARLY_MAILBOX_EVICT_EVERY);
 
   KWS_BEARLY_LOG("[bearly-kws] preparing TinySpeech runtime...\n");
   tinyspeech_prepare_runtime();

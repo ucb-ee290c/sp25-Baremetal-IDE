@@ -4,6 +4,14 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#if KWS_DSP_USE_THREADLIB
+#include "mfcc_driver_mc.h"
+/* Use explicit threadlib API declarations to avoid picking a legacy hthread.h. */
+void hthread_init(void);
+void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);
+void hthread_join(uint32_t hartid);
+#endif
+
 #define KWS_TEMPLATE_CASES 8u
 
 _Static_assert((KWS_DSP_SHARED_BYTES > sizeof(kws_mailbox_t)),
@@ -21,6 +29,12 @@ static volatile kws_ring_slot_t *const g_ring =
     (volatile kws_ring_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
 
 uint64_t target_frequency = KWS_DSP_TARGET_FREQUENCY_HZ;
+
+#if KWS_DSP_USE_THREADLIB
+static void mc_nop_worker(void *arg) {
+  (void)arg;
+}
+#endif
 
 static float32_t clampf_local(float32_t x, float32_t lo, float32_t hi) {
   if (x < lo) {
@@ -187,7 +201,14 @@ static void stream_case_frames(uint32_t ring_slots,
 
     build_window(case_id, frame_idx, g_input_window);
 
+#if KWS_DSP_USE_THREADLIB
+    st = mfcc_driver_run_sp1024x23x12_f32_mc(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+    if (st != MFCC_DRIVER_OK) {
+      st = mfcc_driver_run_sp1024x23x12_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+    }
+#else
     st = mfcc_driver_run_sp1024x23x12_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+#endif
     if (st != MFCC_DRIVER_OK) {
       st = mfcc_driver_run_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
     }
@@ -227,6 +248,13 @@ static void init_remote_mailbox_writer_state(void) {
 
 void app_init(void) {
   init_test(target_frequency);
+
+#if KWS_DSP_USE_THREADLIB
+  hthread_init();
+  /* Warm hart1 once so steady-state dispatch has no cold-start hiccup. */
+  hthread_issue(1, mc_nop_worker, NULL);
+  hthread_join(1);
+#endif
 
   prepare_templates();
   if (mfcc_driver_init(&g_mfcc) != MFCC_DRIVER_OK) {
@@ -279,6 +307,10 @@ void app_main(void) {
               (unsigned)g_mbox->mfcc_failures,
               (unsigned)0u,
               (unsigned long long)total_mfcc_cycles);
+
+#if KWS_DSP_USE_THREADLIB
+  mfcc_driver_mc_shutdown();
+#endif
 
   while (1) {
     __asm__ volatile("wfi");

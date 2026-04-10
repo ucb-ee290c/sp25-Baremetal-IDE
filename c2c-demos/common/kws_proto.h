@@ -61,6 +61,8 @@ typedef struct __attribute__((packed, aligned(16))) {
   volatile uint32_t commit_seq; /* 0 while writer is filling slot; N when case N is committed. */
   volatile uint16_t case_id;
   volatile uint16_t reserved;
+  volatile uint64_t tx_cycle_start;
+  volatile uint64_t tx_cycle_commit;
   volatile int8_t mfcc[KWS_CASE_PAYLOAD_BYTES];
 } kws_fast_case_slot_t;
 

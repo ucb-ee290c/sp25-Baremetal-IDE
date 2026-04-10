@@ -207,6 +207,7 @@ endif()
 #################################
 
 add_subdirectory(app)
+add_subdirectory(testc2c)
 add_subdirectory(bearly25-tests)
 add_subdirectory(bearly25-bmarks)
 add_subdirectory(bearly25-demos)

@@ -68,4 +68,12 @@
 #define KWS_DSP_USE_THREADLIB 0
 #endif
 
+#ifndef KWS_DSP_CACHE_LINE_BYTES
+#define KWS_DSP_CACHE_LINE_BYTES 64u
+#endif
+
+#ifndef KWS_DSP_CACHE_EVICT_BYTES
+#define KWS_DSP_CACHE_EVICT_BYTES (256u * 1024u)
+#endif
+
 #endif /* C2C_DSP_KWS_CONFIG_H */

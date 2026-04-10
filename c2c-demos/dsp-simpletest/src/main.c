@@ -4,11 +4,20 @@ _Static_assert((DSP_SIMPLETEST_SHARED_BYTES > sizeof(simpletest_mailbox_t)),
                "DSP_SIMPLETEST_SHARED_BYTES must exceed mailbox size.");
 _Static_assert((DSP_SIMPLETEST_REMOTE_RING_BYTES > 0u),
                "DSP_SIMPLETEST_REMOTE_RING_BYTES must be positive.");
+_Static_assert((DSP_SIMPLETEST_CACHE_LINE_BYTES & (DSP_SIMPLETEST_CACHE_LINE_BYTES - 1u)) == 0u,
+               "DSP_SIMPLETEST_CACHE_LINE_BYTES must be a power of two.");
+_Static_assert((DSP_SIMPLETEST_CACHE_EVICT_BYTES >= DSP_SIMPLETEST_CACHE_LINE_BYTES),
+               "DSP_SIMPLETEST_CACHE_EVICT_BYTES must be at least one cache line.");
+_Static_assert((DSP_SIMPLETEST_CACHE_EVICT_BYTES % DSP_SIMPLETEST_CACHE_LINE_BYTES) == 0u,
+               "DSP_SIMPLETEST_CACHE_EVICT_BYTES must be a multiple of cache line size.");
 
 static volatile simpletest_mailbox_t *const g_mbox =
     (volatile simpletest_mailbox_t *)(uintptr_t)DSP_SIMPLETEST_REMOTE_MAILBOX_ADDR;
 static volatile simpletest_slot_t *const g_ring =
     (volatile simpletest_slot_t *)(uintptr_t)DSP_SIMPLETEST_REMOTE_RING_ADDR;
+static uint8_t g_cache_evict[DSP_SIMPLETEST_CACHE_EVICT_BYTES]
+    __attribute__((aligned(DSP_SIMPLETEST_CACHE_LINE_BYTES)));
+static volatile uint8_t g_cache_sink;
 
 uint64_t target_frequency = DSP_SIMPLETEST_TARGET_FREQUENCY_HZ;
 
@@ -20,6 +29,19 @@ static inline uint64_t rdcycle64(void) {
 
 static uint32_t ring_slots(void) {
   return DSP_SIMPLETEST_REMOTE_RING_BYTES / (uint32_t)sizeof(simpletest_slot_t);
+}
+
+static inline void cache_writeback_pressure(void) {
+  volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
+  volatile uint8_t sink = g_cache_sink;
+
+  for (uint32_t i = 0; i < (uint32_t)DSP_SIMPLETEST_CACHE_EVICT_BYTES; i += DSP_SIMPLETEST_CACHE_LINE_BYTES) {
+    sink ^= buf[i];
+    buf[i] = (uint8_t)(sink + (uint8_t)i);
+  }
+
+  g_cache_sink = sink;
+  simpletest_fence_rw();
 }
 
 static void init_writer_state(uint32_t slots) {
@@ -35,6 +57,8 @@ static void init_writer_state(uint32_t slots) {
   for (uint32_t i = 0; i < slots; ++i) {
     g_ring[i].commit_seq = 0u;
   }
+  simpletest_fence_rw();
+  cache_writeback_pressure();
   simpletest_fence_rw();
 }
 
@@ -69,6 +93,8 @@ static void send_message(uint32_t seq, uint32_t msg_id, const char *msg, uint32_
   g_mbox->produced_msgs = seq;
   g_mbox->last_seq = seq;
   g_mbox->last_tx_cycle = tx_cycle;
+  cache_writeback_pressure();
+  simpletest_fence_rw();
 
   DSP_SIMPLETEST_LOG("[dsp-simpletest] send seq=%u msg_id=%u cycle=%llu text=\"%s\"\n",
                      (unsigned)seq,
@@ -79,6 +105,7 @@ static void send_message(uint32_t seq, uint32_t msg_id, const char *msg, uint32_
 
 void app_init(void) {
   init_test(target_frequency);
+  g_cache_sink = 0u;
 }
 
 void app_main(void) {
@@ -103,6 +130,8 @@ void app_main(void) {
   (void)DSP_SIMPLETEST_NUM_MESSAGES; /* kept as config knob for future extension */
 
   g_mbox->flags = SIMPLETEST_FLAG_WRITER_READY | SIMPLETEST_FLAG_STREAM_DONE;
+  simpletest_fence_rw();
+  cache_writeback_pressure();
   simpletest_fence_rw();
   DSP_SIMPLETEST_LOG("[dsp-simpletest] done sent=1 (entering keepalive loop)\n");
 

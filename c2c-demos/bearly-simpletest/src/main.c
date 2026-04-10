@@ -67,18 +67,18 @@ static void reset_state(void) {
 
 static void wait_for_writer_ready(void) {
   const uint32_t max_slots = BEARLY_SIMPLETEST_RING_BYTES / (uint32_t)sizeof(simpletest_slot_t);
+  volatile uint32_t *shm = (volatile uint32_t *)(uintptr_t)BEARLY_SIMPLETEST_SHM_BASE;
   while (1) {
     refresh_mailbox();
-    if ((g_mbox->magic == SIMPLETEST_MAILBOX_MAGIC) &&
-        (g_mbox->version == SIMPLETEST_PROTO_VERSION) &&
-        ((g_mbox->flags & SIMPLETEST_FLAG_WRITER_READY) != 0u)) {
-      if ((g_mbox->ring_slots > 0u) &&
-          (g_mbox->ring_slots <= max_slots) &&
-          (g_mbox->slot_bytes == (uint32_t)sizeof(simpletest_slot_t))) {
-        return;
-      }
+    uint32_t val = shm[0];
+    printf("[bearly-poll] 0x%08lx: 0x%08lx\n",
+           (unsigned long)BEARLY_SIMPLETEST_SHM_BASE,
+           (unsigned long)val);
+    if (val == 0xFFFFFFFFu) {
+      printf("[bearly-poll] received 0xFFFFFFFF, starting\n");
+      return;
     }
-    __asm__ volatile("nop");
+    sleep(5);
   }
 }
 

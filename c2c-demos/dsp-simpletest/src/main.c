@@ -104,7 +104,13 @@ void app_main(void) {
 
   g_mbox->flags = SIMPLETEST_FLAG_WRITER_READY | SIMPLETEST_FLAG_STREAM_DONE;
   simpletest_fence_rw();
-  DSP_SIMPLETEST_LOG("[dsp-simpletest] done sent=1 (entering keepalive loop)\n");
+
+  /* Signal bearly by writing 0xFFFFFFFF to the shared base address */
+  volatile uint32_t *shm = (volatile uint32_t *)(uintptr_t)DSP_SIMPLETEST_SHARED_BASE;
+  *shm = 0xFFFFFFFFu;
+  simpletest_fence_rw();
+  DSP_SIMPLETEST_LOG("[dsp-simpletest] done sent=1, wrote 0xFFFFFFFF to 0x%08lx (entering keepalive loop)\n",
+                     (unsigned long)DSP_SIMPLETEST_SHARED_BASE);
 
   while (1) {
 #if DSP_SIMPLETEST_ACTIVE_KEEPALIVE

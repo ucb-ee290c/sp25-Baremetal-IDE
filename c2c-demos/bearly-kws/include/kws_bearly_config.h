@@ -44,6 +44,10 @@
 #define KWS_BEARLY_RING_SLOTS (KWS_BEARLY_RING_BYTES / sizeof(kws_ring_slot_t))
 #endif
 
+#ifndef KWS_BEARLY_EXPECTED_MODE
+#define KWS_BEARLY_EXPECTED_MODE 0xFFFFFFFFu /* Accept writer-selected mode by default. */
+#endif
+
 #ifndef KWS_BEARLY_CACHE_LINE_BYTES
 #define KWS_BEARLY_CACHE_LINE_BYTES 64u
 #endif

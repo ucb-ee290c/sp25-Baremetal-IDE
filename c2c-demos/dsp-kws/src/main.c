@@ -25,10 +25,13 @@ static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
 
 static volatile kws_mailbox_t *const g_mbox =
     (volatile kws_mailbox_t *)(uintptr_t)KWS_DSP_REMOTE_MAILBOX_ADDR;
-static volatile kws_ring_slot_t *const g_ring =
+static volatile kws_ring_slot_t *const g_ring_safe =
     (volatile kws_ring_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
+static volatile kws_fast_case_slot_t *const g_ring_fast =
+    (volatile kws_fast_case_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
 
 uint64_t target_frequency = KWS_DSP_TARGET_FREQUENCY_HZ;
+static uint32_t g_mfcc_fail_local;
 
 #if KWS_DSP_USE_THREADLIB
 static void mc_nop_worker(void *arg) {
@@ -101,149 +104,197 @@ static int8_t quantize_mfcc(float32_t x) {
   return (int8_t)qi;
 }
 
-static uint32_t wait_for_reader_ready(void) {
-  uint32_t iters = 0u;
-
-  while (1) {
-    const uint32_t magic = g_mbox->magic;
-    const uint32_t version = g_mbox->version;
-    const uint32_t flags = g_mbox->flags;
-
-    if ((magic == KWS_MAILBOX_MAGIC) &&
-        (version == KWS_PROTO_VERSION) &&
-        ((flags & KWS_FLAG_READER_READY) != 0u)) {
-      const uint32_t slots = g_mbox->ring_slots;
-      const uint32_t slot_bytes = g_mbox->slot_bytes;
-
-      if (slots == 0u) {
-        KWS_DSP_LOG("[dsp-kws] remote ring_slots invalid=%u\n", (unsigned)slots);
-        return 0u;
-      }
-      if (slots > (KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_ring_slot_t))) {
-        KWS_DSP_LOG("[dsp-kws] remote ring_slots too large=%u max=%u\n",
-                    (unsigned)slots,
-                    (unsigned)(KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_ring_slot_t)));
-        return 0u;
-      }
-      if (slot_bytes != (uint32_t)sizeof(kws_ring_slot_t)) {
-        KWS_DSP_LOG("[dsp-kws] remote slot_bytes mismatch=%u expected=%u\n",
-                    (unsigned)slot_bytes,
-                    (unsigned)sizeof(kws_ring_slot_t));
-        return 0u;
-      }
-      return slots;
-    }
-
-    if ((KWS_DSP_WAIT_READER_READY_ITERS != 0u) && (iters++ >= KWS_DSP_WAIT_READER_READY_ITERS)) {
-      KWS_DSP_LOG("[dsp-kws] timeout waiting for reader-ready\n");
-      return 0u;
-    }
-    __asm__ volatile("nop");
-  }
-}
-
-static void set_flag(uint32_t flag) {
-  uint32_t flags = g_mbox->flags;
-  flags |= flag;
+static void set_flags(uint32_t flags) {
   g_mbox->flags = flags;
   kws_fence_rw();
 }
 
-static void clear_flag(uint32_t flag) {
-  uint32_t flags = g_mbox->flags;
-  flags &= ~flag;
-  g_mbox->flags = flags;
-  kws_fence_rw();
-}
+static void init_writer_mailbox(uint32_t mode, uint32_t ring_slots, uint32_t slot_bytes) {
+  g_mbox->magic = KWS_MAILBOX_MAGIC;
+  g_mbox->version = KWS_PROTO_VERSION;
+  g_mbox->mode = mode;
+  g_mbox->ring_slots = ring_slots;
+  g_mbox->slot_bytes = slot_bytes;
+  g_mbox->num_cases = KWS_DSP_NUM_CASES;
+  g_mbox->frames_per_case = KWS_DSP_FRAMES_PER_CASE;
+  g_mbox->mfcc_dim = KWS_MFCC_DIM;
 
-static void push_frame(uint32_t ring_slots,
-                       uint32_t seq,
-                       uint16_t case_id,
-                       uint8_t frame_idx,
-                       const int8_t *mfcc_q) {
-  const uint32_t prod = g_mbox->prod_idx;
-
-  {
-    const uint32_t slot_idx = prod % ring_slots;
-    volatile kws_ring_slot_t *slot = &g_ring[slot_idx];
-
-    slot->valid = 0u;
-    kws_fence_rw();
-    slot->case_id = case_id;
-    slot->frame_idx = frame_idx;
-    for (uint32_t i = 0; i < KWS_MFCC_DIM; ++i) {
-      slot->mfcc[i] = mfcc_q[i];
-    }
-
-    kws_fence_rw();
-    slot->valid = 1u;
-  }
-
-  kws_fence_rw();
-  g_mbox->prod_idx = prod + 1u;
-  g_mbox->produced_frames++;
-  g_mbox->last_seq = seq;
-  g_mbox->last_case_id = case_id;
-  g_mbox->last_frame_idx = frame_idx;
-}
-
-static void stream_case_frames(uint32_t ring_slots,
-                               uint16_t case_id,
-                               uint32_t *seq_io,
-                               uint64_t *mfcc_cycle_sum_io) {
-  uint32_t seq = *seq_io;
-  float32_t mfcc_f32[MFCC_DRIVER_NUM_DCT];
-  int8_t mfcc_q[KWS_MFCC_DIM];
-
-  for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
-    uint64_t mfcc_cycles = 0;
-    mfcc_driver_status_t st;
-
-    build_window(case_id, frame_idx, g_input_window);
-
-#if KWS_DSP_USE_THREADLIB
-    st = mfcc_driver_run_sp1024x23x12_f32_mc(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
-    if (st != MFCC_DRIVER_OK) {
-      st = mfcc_driver_run_sp1024x23x12_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
-    }
-#else
-    st = mfcc_driver_run_sp1024x23x12_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
-#endif
-    if (st != MFCC_DRIVER_OK) {
-      st = mfcc_driver_run_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
-    }
-
-    if (st != MFCC_DRIVER_OK) {
-      memset(mfcc_q, 0, sizeof(mfcc_q));
-      g_mbox->mfcc_failures++;
-      KWS_DSP_LOG("[dsp-kws] MFCC failed case=%u frame=%u err=%s\n",
-                  (unsigned)case_id,
-                  (unsigned)frame_idx,
-                  mfcc_driver_status_str(st));
-    } else {
-      for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-        mfcc_q[k] = quantize_mfcc(mfcc_f32[k]);
-      }
-      *mfcc_cycle_sum_io += mfcc_cycles;
-    }
-
-    push_frame(ring_slots, seq, case_id, frame_idx, mfcc_q);
-    seq++;
-  }
-
-  *seq_io = seq;
-}
-
-static void init_remote_mailbox_writer_state(void) {
   g_mbox->prod_idx = 0u;
   g_mbox->produced_frames = 0u;
+  g_mbox->produced_cases = 0u;
   g_mbox->mfcc_failures = 0u;
   g_mbox->last_seq = 0u;
   g_mbox->last_case_id = 0u;
   g_mbox->last_frame_idx = 0u;
   g_mbox->producer_wait_loops = 0u;
-  clear_flag(KWS_FLAG_STREAM_DONE);
-  set_flag(KWS_FLAG_WRITER_READY);
+  g_mfcc_fail_local = 0u;
+
+  set_flags(KWS_FLAG_WRITER_READY);
+}
+
+static mfcc_driver_status_t run_one_mfcc(uint16_t case_id,
+                                         uint8_t frame_idx,
+                                         int8_t *mfcc_q_out,
+                                         uint64_t *mfcc_cycles_sum_io) {
+  float32_t mfcc_f32[MFCC_DRIVER_NUM_DCT];
+  uint64_t mfcc_cycles = 0;
+  mfcc_driver_status_t st;
+
+  build_window(case_id, frame_idx, g_input_window);
+
+#if KWS_DSP_USE_THREADLIB
+  st = mfcc_driver_run_sp1024x23x12_f32_mc(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+  if (st != MFCC_DRIVER_OK) {
+    st = mfcc_driver_run_sp1024x23x12_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+  }
+#else
+  st = mfcc_driver_run_sp1024x23x12_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+#endif
+  if (st != MFCC_DRIVER_OK) {
+    st = mfcc_driver_run_f32(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
+  }
+
+  if (st != MFCC_DRIVER_OK) {
+    memset(mfcc_q_out, 0, KWS_MFCC_DIM);
+    g_mfcc_fail_local++;
+    g_mbox->mfcc_failures = g_mfcc_fail_local;
+    KWS_DSP_LOG("[dsp-kws] MFCC failed case=%u frame=%u err=%s\n",
+                (unsigned)case_id,
+                (unsigned)frame_idx,
+                mfcc_driver_status_str(st));
+    return st;
+  }
+
+  for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+    mfcc_q_out[k] = quantize_mfcc(mfcc_f32[k]);
+  }
+  *mfcc_cycles_sum_io += mfcc_cycles;
+  return MFCC_DRIVER_OK;
+}
+
+static void stream_safe(void) {
+  const uint32_t ring_slots = KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_ring_slot_t);
+  uint32_t seq = 1u;
+  uint32_t prod = 0u;
+  uint64_t total_mfcc_cycles = 0u;
+
+  if (ring_slots == 0u) {
+    KWS_DSP_LOG("[dsp-kws] SAFE mode invalid ring_slots=0\n");
+    while (1) {
+      __asm__ volatile("wfi");
+    }
+  }
+
+  init_writer_mailbox(KWS_LINK_MODE_SAFE, ring_slots, (uint32_t)sizeof(kws_ring_slot_t));
+  for (uint32_t i = 0; i < ring_slots; ++i) {
+    g_ring_safe[i].valid = 0u;
+  }
+  kws_fence_rw();
+
+  for (uint16_t case_id = 0; case_id < (uint16_t)KWS_DSP_NUM_CASES; ++case_id) {
+    for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
+      int8_t mfcc_q[KWS_MFCC_DIM];
+      const uint32_t slot_idx = prod % ring_slots;
+      volatile kws_ring_slot_t *slot = &g_ring_safe[slot_idx];
+
+      (void)run_one_mfcc(case_id, frame_idx, mfcc_q, &total_mfcc_cycles);
+
+      slot->valid = 0u;
+      kws_fence_rw();
+      slot->case_id = case_id;
+      slot->frame_idx = frame_idx;
+      for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+        slot->mfcc[k] = mfcc_q[k];
+      }
+      kws_fence_rw();
+      slot->valid = 1u;
+
+      prod++;
+      g_mbox->prod_idx = prod;
+      g_mbox->produced_frames = prod;
+      g_mbox->last_seq = seq++;
+      g_mbox->last_case_id = case_id;
+      g_mbox->last_frame_idx = frame_idx;
+    }
+
+    g_mbox->produced_cases = (uint32_t)case_id + 1u;
+    if (KWS_DSP_LOG_ENABLE && (((uint32_t)case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
+      KWS_DSP_LOG("[dsp-kws] SAFE streamed %u/%u cases\n",
+                  (unsigned)((uint32_t)case_id + 1u),
+                  (unsigned)KWS_DSP_NUM_CASES);
+    }
+  }
+
+  set_flags(KWS_FLAG_WRITER_READY | KWS_FLAG_STREAM_DONE);
+  KWS_DSP_LOG("[dsp-kws] SAFE done: cases=%u produced_frames=%u mfcc_fail=%u mfcc_cycles=%llu\n",
+              (unsigned)KWS_DSP_NUM_CASES,
+              (unsigned)prod,
+              (unsigned)g_mfcc_fail_local,
+              (unsigned long long)total_mfcc_cycles);
+}
+
+static void stream_fast(void) {
+  const uint32_t fast_slots = KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_fast_case_slot_t);
+  uint64_t total_mfcc_cycles = 0u;
+
+  if (fast_slots == 0u) {
+    KWS_DSP_LOG("[dsp-kws] FAST mode invalid fast_slots=0\n");
+    while (1) {
+      __asm__ volatile("wfi");
+    }
+  }
+
+  init_writer_mailbox(KWS_LINK_MODE_FAST, fast_slots, (uint32_t)sizeof(kws_fast_case_slot_t));
+  for (uint32_t i = 0; i < fast_slots; ++i) {
+    g_ring_fast[i].commit_seq = 0u;
+  }
+  kws_fence_rw();
+
+  for (uint16_t case_id = 0; case_id < (uint16_t)KWS_DSP_NUM_CASES; ++case_id) {
+    volatile kws_fast_case_slot_t *slot = &g_ring_fast[((uint32_t)case_id) % fast_slots];
+    const uint32_t commit_seq = (uint32_t)case_id + 1u;
+    uint32_t case_seq = (uint32_t)case_id * KWS_DSP_FRAMES_PER_CASE;
+
+    slot->commit_seq = 0u;
+    kws_fence_rw();
+    slot->case_id = case_id;
+    slot->reserved = 0u;
+
+    for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
+      int8_t mfcc_q[KWS_MFCC_DIM];
+      const uint32_t base = ((uint32_t)frame_idx) * KWS_MFCC_DIM;
+
+      (void)run_one_mfcc(case_id, frame_idx, mfcc_q, &total_mfcc_cycles);
+      for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+        slot->mfcc[base + k] = mfcc_q[k];
+      }
+      case_seq++;
+    }
+
+    kws_fence_rw();
+    slot->commit_seq = commit_seq;
+    kws_fence_rw();
+
+    g_mbox->prod_idx = commit_seq;
+    g_mbox->produced_cases = commit_seq;
+    g_mbox->produced_frames = commit_seq * KWS_DSP_FRAMES_PER_CASE;
+    g_mbox->last_seq = case_seq;
+    g_mbox->last_case_id = case_id;
+    g_mbox->last_frame_idx = KWS_DSP_FRAMES_PER_CASE - 1u;
+
+    if (KWS_DSP_LOG_ENABLE && (((uint32_t)case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
+      KWS_DSP_LOG("[dsp-kws] FAST streamed %u/%u cases\n",
+                  (unsigned)((uint32_t)case_id + 1u),
+                  (unsigned)KWS_DSP_NUM_CASES);
+    }
+  }
+
+  set_flags(KWS_FLAG_WRITER_READY | KWS_FLAG_STREAM_DONE);
+  KWS_DSP_LOG("[dsp-kws] FAST done: cases=%u produced_cases=%u mfcc_fail=%u mfcc_cycles=%llu\n",
+              (unsigned)KWS_DSP_NUM_CASES,
+              (unsigned)KWS_DSP_NUM_CASES,
+              (unsigned)g_mfcc_fail_local,
+              (unsigned long long)total_mfcc_cycles);
 }
 
 void app_init(void) {
@@ -264,49 +315,19 @@ void app_init(void) {
     }
   }
 
-  KWS_DSP_LOG("[dsp-kws] waiting for remote reader at mailbox=0x%08lx ring=0x%08lx\n",
+  KWS_DSP_LOG("[dsp-kws] one-way writer mode=%u mailbox=0x%08lx data=0x%08lx bytes=%u\n",
+              (unsigned)KWS_DSP_LINK_MODE,
               (unsigned long)KWS_DSP_REMOTE_MAILBOX_ADDR,
-              (unsigned long)KWS_DSP_REMOTE_RING_ADDR);
-  KWS_DSP_LOG("[dsp-kws] shared window: base=0x%08lx bytes=%u ring_bytes=%u slot_bytes=%u\n",
-              (unsigned long)KWS_DSP_SHARED_BASE,
-              (unsigned)KWS_DSP_SHARED_BYTES,
-              (unsigned)KWS_DSP_REMOTE_RING_BYTES,
-              (unsigned)sizeof(kws_ring_slot_t));
+              (unsigned long)KWS_DSP_REMOTE_RING_ADDR,
+              (unsigned)KWS_DSP_REMOTE_RING_BYTES);
 }
 
 void app_main(void) {
-  const uint32_t ring_slots = wait_for_reader_ready();
-  uint32_t seq = 1u;
-  uint64_t total_mfcc_cycles = 0u;
-
-  if (ring_slots == 0u) {
-    while (1) {
-      __asm__ volatile("wfi");
-    }
+  if (KWS_DSP_LINK_MODE == KWS_LINK_MODE_FAST) {
+    stream_fast();
+  } else {
+    stream_safe();
   }
-
-  init_remote_mailbox_writer_state();
-
-  for (uint16_t case_id = 0; case_id < (uint16_t)KWS_DSP_NUM_CASES; ++case_id) {
-    stream_case_frames(ring_slots, case_id, &seq, &total_mfcc_cycles);
-
-    if (KWS_DSP_LOG_ENABLE && ((case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
-      KWS_DSP_LOG("[dsp-kws] streamed %u/%u cases\n",
-                  (unsigned)(case_id + 1u),
-                  (unsigned)KWS_DSP_NUM_CASES);
-    }
-  }
-
-  set_flag(KWS_FLAG_STREAM_DONE);
-
-  KWS_DSP_LOG("[dsp-kws] done: cases=%u frames/case=%u produced=%u seq_end=%u mfcc_fail=%u wait_loops=%u mfcc_cycles=%llu\n",
-              (unsigned)KWS_DSP_NUM_CASES,
-              (unsigned)KWS_DSP_FRAMES_PER_CASE,
-              (unsigned)g_mbox->produced_frames,
-              (unsigned)(seq - 1u),
-              (unsigned)g_mbox->mfcc_failures,
-              (unsigned)0u,
-              (unsigned long long)total_mfcc_cycles);
 
 #if KWS_DSP_USE_THREADLIB
   mfcc_driver_mc_shutdown();

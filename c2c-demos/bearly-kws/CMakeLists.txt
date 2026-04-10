@@ -2,6 +2,16 @@ if (NOT TARGET threadlib)
   message(FATAL_ERROR "bearly-kws requires THREAD_LIB=ON (threadlib target missing).")
 endif()
 
+set(KWS_BEARLY_EXPECT_MODE "ANY" CACHE STRING "bearly-kws expected writer mode: ANY, SAFE, FAST")
+set_property(CACHE KWS_BEARLY_EXPECT_MODE PROPERTY STRINGS ANY SAFE FAST)
+if (KWS_BEARLY_EXPECT_MODE STREQUAL "SAFE")
+  set(KWS_BEARLY_EXPECT_MODE_VALUE 0u)
+elseif (KWS_BEARLY_EXPECT_MODE STREQUAL "FAST")
+  set(KWS_BEARLY_EXPECT_MODE_VALUE 1u)
+else()
+  set(KWS_BEARLY_EXPECT_MODE_VALUE 4294967295u)
+endif()
+
 add_executable(bearly-kws
   src/main.c
   ${CMAKE_SOURCE_DIR}/bearly25-bmarks/tinyspeech-mc/src/tinyspeech_model.c
@@ -23,6 +33,7 @@ target_include_directories(bearly-kws PRIVATE
 target_compile_options(bearly-kws PRIVATE -O3)
 target_compile_definitions(bearly-kws PRIVATE
   KWS_BEARLY_USE_THREADLIB=1
+  KWS_BEARLY_EXPECTED_MODE=${KWS_BEARLY_EXPECT_MODE_VALUE}
   TINYSPEECH_OPT_VARIANT_GEMM_RVV=1
   TINYSPEECH_CONV_FUSE_RELU=1
   TINYSPEECH_FUSE_POOL=1

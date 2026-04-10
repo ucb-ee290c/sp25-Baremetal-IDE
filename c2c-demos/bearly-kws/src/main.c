@@ -11,9 +11,7 @@ void hthread_join(uint32_t hartid);
 
 _Static_assert((KWS_BEARLY_SHM_BYTES > sizeof(kws_mailbox_t)),
                "KWS_BEARLY_SHM_BYTES must be larger than mailbox size.");
-_Static_assert((KWS_BEARLY_RING_SLOTS > 0u),
-               "KWS_BEARLY_RING_SLOTS must be greater than 0.");
-_Static_assert(((KWS_BEARLY_CACHE_LINE_BYTES & (KWS_BEARLY_CACHE_LINE_BYTES - 1u)) == 0u),
+_Static_assert((KWS_BEARLY_CACHE_LINE_BYTES & (KWS_BEARLY_CACHE_LINE_BYTES - 1u)) == 0u,
                "KWS_BEARLY_CACHE_LINE_BYTES must be a power of two.");
 _Static_assert((KWS_BEARLY_CACHE_EVICT_BYTES >= KWS_BEARLY_CACHE_LINE_BYTES),
                "KWS_BEARLY_CACHE_EVICT_BYTES must be at least one cache line.");
@@ -29,6 +27,15 @@ typedef struct {
 } inference_stats_t;
 
 typedef struct {
+  uint32_t consumed_frames;
+  uint32_t dropped_frames;
+  uint32_t seq_errors;
+  uint32_t last_seq;
+  uint32_t last_case_id;
+  uint32_t last_frame_idx;
+} stream_stats_t;
+
+typedef struct {
   uint8_t have_case;
   uint16_t case_id;
   uint8_t next_frame_idx;
@@ -37,13 +44,18 @@ typedef struct {
 
 static volatile kws_mailbox_t *const g_mbox =
     (volatile kws_mailbox_t *)(uintptr_t)KWS_BEARLY_MAILBOX_ADDR;
-static volatile kws_ring_slot_t *const g_ring =
+static volatile kws_ring_slot_t *const g_ring_safe =
     (volatile kws_ring_slot_t *)(uintptr_t)KWS_BEARLY_RING_ADDR;
+static volatile kws_fast_case_slot_t *const g_ring_fast =
+    (volatile kws_fast_case_slot_t *)(uintptr_t)KWS_BEARLY_RING_ADDR;
 
 static inference_stats_t g_stats;
+static stream_stats_t g_stream;
 static case_assembler_t g_assembler;
 static uint8_t g_summary_printed;
-static uint32_t g_cons_local;
+static uint32_t g_mode;
+static uint32_t g_cons_frames;
+static uint32_t g_cons_cases;
 static uint8_t g_cache_evict[KWS_BEARLY_CACHE_EVICT_BYTES]
     __attribute__((aligned(KWS_BEARLY_CACHE_LINE_BYTES)));
 static volatile uint8_t g_cache_sink;
@@ -68,7 +80,6 @@ static inline void cache_evict_all(void) {
   volatile uint8_t sink = g_cache_sink;
 
   for (uint32_t i = 0; i < (uint32_t)KWS_BEARLY_CACHE_EVICT_BYTES; i += KWS_BEARLY_CACHE_LINE_BYTES) {
-    /* Read+write each cache line to force capacity eviction across sets/ways. */
     sink ^= buf[i];
     buf[i] = (uint8_t)(sink + (uint8_t)i);
   }
@@ -85,12 +96,6 @@ static inline void refresh_mailbox(void) {
   kws_fence_rw();
 }
 
-static inline void publish_mailbox(void) {
-  kws_fence_rw();
-  cache_evict_all();
-  kws_fence_rw();
-}
-
 static void reset_case_assembler(void) {
   g_assembler.have_case = 0u;
   g_assembler.case_id = 0u;
@@ -100,40 +105,8 @@ static void reset_case_assembler(void) {
 
 static void reset_stats(void) {
   memset(&g_stats, 0, sizeof(g_stats));
+  memset(&g_stream, 0, sizeof(g_stream));
   g_stats.cycle_min = UINT64_MAX;
-}
-
-static void init_mailbox_and_ring(void) {
-  g_mbox->magic = KWS_MAILBOX_MAGIC;
-  g_mbox->version = KWS_PROTO_VERSION;
-  g_mbox->ring_slots = KWS_BEARLY_RING_SLOTS;
-  g_mbox->slot_bytes = (uint32_t)sizeof(kws_ring_slot_t);
-
-  g_mbox->prod_idx = 0u;
-  g_mbox->produced_frames = 0u;
-  g_mbox->mfcc_failures = 0u;
-  g_mbox->last_seq = 0u;
-  g_mbox->last_case_id = 0u;
-  g_mbox->last_frame_idx = 0u;
-  g_mbox->producer_wait_loops = 0u;
-
-  g_mbox->cons_idx = 0u;
-  g_mbox->consumed_frames = 0u;
-  g_mbox->dropped_frames = 0u;
-  g_mbox->seq_errors = 0u;
-
-  g_mbox->flags = KWS_FLAG_READER_READY;
-
-  for (uint32_t i = 0; i < KWS_BEARLY_RING_SLOTS; ++i) {
-    g_ring[i].case_id = 0u;
-    g_ring[i].frame_idx = 0u;
-    g_ring[i].valid = 0u;
-    for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-      g_ring[i].mfcc[k] = 0;
-    }
-  }
-
-  publish_mailbox();
 }
 
 static void run_inference_for_current_case(void) {
@@ -183,43 +156,85 @@ static void run_inference_for_current_case(void) {
   free_tensor(&input);
 }
 
-static void process_ring(void) {
+static void run_inference_for_case_payload(uint16_t case_id, const volatile int8_t *payload) {
+  for (uint32_t i = 0; i < KWS_CASE_PAYLOAD_BYTES; ++i) {
+    g_assembler.window[i] = payload[i];
+  }
+  g_assembler.case_id = case_id;
+  run_inference_for_current_case();
+}
+
+static uint32_t wait_for_writer_mode(void) {
+  while (1) {
+    refresh_mailbox();
+
+    if ((g_mbox->magic != KWS_MAILBOX_MAGIC) ||
+        (g_mbox->version != KWS_PROTO_VERSION) ||
+        ((g_mbox->flags & KWS_FLAG_WRITER_READY) == 0u)) {
+      __asm__ volatile("nop");
+      continue;
+    }
+
+    if ((g_mbox->mode != KWS_LINK_MODE_SAFE) &&
+        (g_mbox->mode != KWS_LINK_MODE_FAST)) {
+      __asm__ volatile("nop");
+      continue;
+    }
+
+    if ((KWS_BEARLY_EXPECTED_MODE != 0xFFFFFFFFu) &&
+        (g_mbox->mode != KWS_BEARLY_EXPECTED_MODE)) {
+      KWS_BEARLY_LOG("[bearly-kws] mode mismatch expected=%u got=%u\n",
+                     (unsigned)KWS_BEARLY_EXPECTED_MODE,
+                     (unsigned)g_mbox->mode);
+      while (1) {
+        __asm__ volatile("wfi");
+      }
+    }
+
+    return g_mbox->mode;
+  }
+}
+
+static void process_safe(void) {
   uint32_t prod;
   uint32_t available;
   uint32_t consumed_now = 0u;
+  uint32_t ring_slots = g_mbox->ring_slots;
+
+  if ((ring_slots == 0u) || (g_mbox->slot_bytes != (uint32_t)sizeof(kws_ring_slot_t))) {
+    return;
+  }
 
   refresh_mailbox();
   prod = g_mbox->prod_idx;
-  available = prod - g_cons_local;
-
+  available = prod - g_cons_frames;
   if (available == 0u) {
     return;
   }
 
-  /* Ensure slot payload reads observe producer updates in non-coherent caches. */
   cache_evict_all();
   refresh_mailbox();
   prod = g_mbox->prod_idx;
-  available = prod - g_cons_local;
+  available = prod - g_cons_frames;
   if (available == 0u) {
     return;
   }
 
-  if (available > KWS_BEARLY_RING_SLOTS) {
-    const uint32_t overflow = available - KWS_BEARLY_RING_SLOTS;
-    g_mbox->dropped_frames += overflow;
-    g_cons_local = prod - KWS_BEARLY_RING_SLOTS;
-    available = KWS_BEARLY_RING_SLOTS;
-    g_mbox->seq_errors++;
+  if (available > ring_slots) {
+    const uint32_t overflow = available - ring_slots;
+    g_stream.dropped_frames += overflow;
+    g_cons_frames = prod - ring_slots;
+    available = ring_slots;
+    g_stream.seq_errors++;
   }
 
   while (consumed_now < available) {
-    const uint32_t seq = g_cons_local + consumed_now + 1u;
-    const uint32_t slot_idx = (g_cons_local + consumed_now) % KWS_BEARLY_RING_SLOTS;
-    volatile kws_ring_slot_t *slot = &g_ring[slot_idx];
+    const uint32_t seq = g_cons_frames + consumed_now + 1u;
+    const uint32_t slot_idx = (g_cons_frames + consumed_now) % ring_slots;
+    volatile kws_ring_slot_t *slot = &g_ring_safe[slot_idx];
 
     if (!slot->valid) {
-      g_mbox->seq_errors++;
+      g_stream.seq_errors++;
       break;
     }
 
@@ -232,17 +247,16 @@ static void process_ring(void) {
 
     if ((slot->case_id != g_assembler.case_id) ||
         (slot->frame_idx != g_assembler.next_frame_idx)) {
-      g_mbox->seq_errors++;
+      g_stream.seq_errors++;
       g_assembler.have_case = 1u;
       g_assembler.case_id = slot->case_id;
       g_assembler.next_frame_idx = 0u;
       memset(g_assembler.window, 0, sizeof(g_assembler.window));
-
       if (slot->frame_idx != 0u) {
-        g_mbox->dropped_frames++;
-        g_mbox->last_seq = seq;
-        g_mbox->last_case_id = slot->case_id;
-        g_mbox->last_frame_idx = slot->frame_idx;
+        g_stream.dropped_frames++;
+        g_stream.last_seq = seq;
+        g_stream.last_case_id = slot->case_id;
+        g_stream.last_frame_idx = slot->frame_idx;
         consumed_now++;
         continue;
       }
@@ -251,7 +265,6 @@ static void process_ring(void) {
     for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
       g_assembler.window[((uint32_t)slot->frame_idx * KWS_MFCC_DIM) + k] = slot->mfcc[k];
     }
-
     g_assembler.next_frame_idx++;
 
     if (g_assembler.next_frame_idx >= KWS_FRAMES_PER_CASE) {
@@ -259,16 +272,68 @@ static void process_ring(void) {
       reset_case_assembler();
     }
 
-    g_mbox->last_seq = seq;
-    g_mbox->last_case_id = slot->case_id;
-    g_mbox->last_frame_idx = slot->frame_idx;
+    g_stream.last_seq = seq;
+    g_stream.last_case_id = slot->case_id;
+    g_stream.last_frame_idx = slot->frame_idx;
     consumed_now++;
   }
 
-  g_cons_local += consumed_now;
-  g_mbox->cons_idx = g_cons_local;
-  g_mbox->consumed_frames += consumed_now;
-  publish_mailbox();
+  g_cons_frames += consumed_now;
+  g_stream.consumed_frames += consumed_now;
+}
+
+static void process_fast(void) {
+  uint32_t produced_cases;
+  uint32_t available_cases;
+  uint32_t ring_slots = g_mbox->ring_slots;
+
+  if ((ring_slots == 0u) || (g_mbox->slot_bytes != (uint32_t)sizeof(kws_fast_case_slot_t))) {
+    return;
+  }
+
+  refresh_mailbox();
+  produced_cases = g_mbox->produced_cases;
+  available_cases = produced_cases - g_cons_cases;
+  if (available_cases == 0u) {
+    return;
+  }
+
+  if (available_cases > ring_slots) {
+    const uint32_t overflow_cases = available_cases - ring_slots;
+    g_cons_cases += overflow_cases;
+    g_stream.dropped_frames += overflow_cases * KWS_FRAMES_PER_CASE;
+    g_stream.seq_errors++;
+    available_cases = ring_slots;
+  }
+
+  cache_evict_all();
+  refresh_mailbox();
+  produced_cases = g_mbox->produced_cases;
+
+  while (g_cons_cases < produced_cases) {
+    const uint32_t expected_seq = g_cons_cases + 1u;
+    const uint32_t slot_idx = g_cons_cases % ring_slots;
+    volatile kws_fast_case_slot_t *slot = &g_ring_fast[slot_idx];
+    const uint32_t commit_seq = slot->commit_seq;
+
+    if (commit_seq < expected_seq) {
+      break;
+    }
+    if (commit_seq > expected_seq) {
+      const uint32_t missed = commit_seq - expected_seq;
+      g_cons_cases += missed;
+      g_stream.dropped_frames += missed * KWS_FRAMES_PER_CASE;
+      g_stream.seq_errors++;
+      continue;
+    }
+
+    run_inference_for_case_payload(slot->case_id, slot->mfcc);
+    g_cons_cases++;
+    g_stream.consumed_frames += KWS_FRAMES_PER_CASE;
+    g_stream.last_seq = g_cons_cases * KWS_FRAMES_PER_CASE;
+    g_stream.last_case_id = slot->case_id;
+    g_stream.last_frame_idx = KWS_FRAMES_PER_CASE - 1u;
+  }
 }
 
 void app_init(void) {
@@ -283,17 +348,16 @@ void app_init(void) {
 
   reset_stats();
   reset_case_assembler();
-  init_mailbox_and_ring();
   g_summary_printed = 0u;
-  g_cons_local = 0u;
+  g_mode = KWS_LINK_MODE_SAFE;
+  g_cons_frames = 0u;
+  g_cons_cases = 0u;
   g_cache_sink = 0u;
   g_mailbox_poll_count = 0u;
 
-  KWS_BEARLY_LOG("[bearly-kws] startup: shm=0x%08lx bytes=%u ring_slots=%u slot_bytes=%u cache_evict_bytes=%u mailbox_evict_every=%u\n",
+  KWS_BEARLY_LOG("[bearly-kws] startup one-way reader: shm=0x%08lx bytes=%u cache_evict_bytes=%u mailbox_evict_every=%u\n",
                  (unsigned long)KWS_BEARLY_SHM_BASE,
                  (unsigned)KWS_BEARLY_SHM_BYTES,
-                 (unsigned)KWS_BEARLY_RING_SLOTS,
-                 (unsigned)sizeof(kws_ring_slot_t),
                  (unsigned)KWS_BEARLY_CACHE_EVICT_BYTES,
                  (unsigned)KWS_BEARLY_MAILBOX_EVICT_EVERY);
 
@@ -303,26 +367,46 @@ void app_init(void) {
 }
 
 void app_main(void) {
+  g_mode = wait_for_writer_mode();
+  KWS_BEARLY_LOG("[bearly-kws] writer detected mode=%s ring_slots=%u slot_bytes=%u num_cases=%u\n",
+                 (g_mode == KWS_LINK_MODE_FAST) ? "FAST" : "SAFE",
+                 (unsigned)g_mbox->ring_slots,
+                 (unsigned)g_mbox->slot_bytes,
+                 (unsigned)g_mbox->num_cases);
+
   while (1) {
-    process_ring();
+    if (g_mode == KWS_LINK_MODE_FAST) {
+      process_fast();
+    } else {
+      process_safe();
+    }
 
     refresh_mailbox();
-    if (!g_summary_printed &&
-        ((g_mbox->flags & KWS_FLAG_STREAM_DONE) != 0u) &&
-        (g_cons_local == g_mbox->prod_idx)) {
-      g_summary_printed = 1u;
-      KWS_BEARLY_LOG("[bearly-kws] stream-end: produced=%u consumed=%u drops=%u seq_err=%u mfcc_fail=%u infer=%u\n",
-                     (unsigned)g_mbox->produced_frames,
-                     (unsigned)g_mbox->consumed_frames,
-                     (unsigned)g_mbox->dropped_frames,
-                     (unsigned)g_mbox->seq_errors,
-                     (unsigned)g_mbox->mfcc_failures,
-                     (unsigned)g_stats.inferences);
-      if (g_stats.inferences > 0u) {
-        KWS_BEARLY_LOG("[bearly-kws] cycle-summary: avg=%llu min=%llu max=%llu\n",
-                       (unsigned long long)(g_stats.cycle_sum / g_stats.inferences),
-                       (unsigned long long)g_stats.cycle_min,
-                       (unsigned long long)g_stats.cycle_max);
+    if (!g_summary_printed && ((g_mbox->flags & KWS_FLAG_STREAM_DONE) != 0u)) {
+      uint8_t done = 0u;
+      if (g_mode == KWS_LINK_MODE_FAST) {
+        done = (g_cons_cases == g_mbox->produced_cases);
+      } else {
+        done = (g_cons_frames == g_mbox->prod_idx);
+      }
+
+      if (done) {
+        g_summary_printed = 1u;
+        KWS_BEARLY_LOG("[bearly-kws] stream-end mode=%s produced_frames=%u produced_cases=%u consumed_frames=%u drops=%u seq_err=%u mfcc_fail=%u infer=%u\n",
+                       (g_mode == KWS_LINK_MODE_FAST) ? "FAST" : "SAFE",
+                       (unsigned)g_mbox->produced_frames,
+                       (unsigned)g_mbox->produced_cases,
+                       (unsigned)g_stream.consumed_frames,
+                       (unsigned)g_stream.dropped_frames,
+                       (unsigned)g_stream.seq_errors,
+                       (unsigned)g_mbox->mfcc_failures,
+                       (unsigned)g_stats.inferences);
+        if (g_stats.inferences > 0u) {
+          KWS_BEARLY_LOG("[bearly-kws] cycle-summary: avg=%llu min=%llu max=%llu\n",
+                         (unsigned long long)(g_stats.cycle_sum / g_stats.inferences),
+                         (unsigned long long)g_stats.cycle_min,
+                         (unsigned long long)g_stats.cycle_max);
+        }
       }
     }
 

@@ -2,9 +2,12 @@
 
 #include "tensor.h"
 
-#if (KWS_BEARLY_RING_SLOTS == 0u) || ((KWS_BEARLY_RING_SLOTS & (KWS_BEARLY_RING_SLOTS - 1u)) != 0u)
-#error "KWS_BEARLY_RING_SLOTS must be a non-zero power of two."
-#endif
+_Static_assert((KWS_BEARLY_SHM_BYTES > sizeof(kws_mailbox_t)),
+               "KWS_BEARLY_SHM_BYTES must be larger than mailbox size.");
+_Static_assert((KWS_BEARLY_RING_SLOTS > 0u),
+               "KWS_BEARLY_RING_SLOTS must be greater than 0.");
+_Static_assert(((KWS_BEARLY_CACHE_LINE_BYTES & (KWS_BEARLY_CACHE_LINE_BYTES - 1u)) == 0u),
+               "KWS_BEARLY_CACHE_LINE_BYTES must be a power of two.");
 
 typedef struct {
   uint32_t inferences;
@@ -29,7 +32,7 @@ static volatile kws_ring_slot_t *const g_ring =
 static inference_stats_t g_stats;
 static case_assembler_t g_assembler;
 static uint8_t g_summary_printed;
-static uint32_t g_last_seq_seen;
+static uint32_t g_cons_local;
 
 uint64_t target_frequency = KWS_BEARLY_TARGET_FREQUENCY_HZ;
 
@@ -37,6 +40,43 @@ static inline uint64_t rdcycle64(void) {
   uint64_t x;
   __asm__ volatile("rdcycle %0" : "=r"(x));
   return x;
+}
+
+static inline uintptr_t align_down_uintptr(uintptr_t addr, uintptr_t align_pow2) {
+  return addr & ~(align_pow2 - 1u);
+}
+
+static inline void cache_refresh_line(const void *addr) {
+#if (KWS_BEARLY_CACHE_REFRESH_MODE == 1)
+  const void *line =
+      (const void *)align_down_uintptr((uintptr_t)addr, (uintptr_t)KWS_BEARLY_CACHE_LINE_BYTES);
+  __asm__ volatile("cbo.inval (%0)" : : "r"(line) : "memory");
+#else
+  (void)addr;
+  kws_fence_rw();
+#endif
+}
+
+static inline void cache_flush_line(const void *addr) {
+#if (KWS_BEARLY_CACHE_REFRESH_MODE == 1)
+  const void *line =
+      (const void *)align_down_uintptr((uintptr_t)addr, (uintptr_t)KWS_BEARLY_CACHE_LINE_BYTES);
+  __asm__ volatile("cbo.flush (%0)" : : "r"(line) : "memory");
+#else
+  (void)addr;
+  kws_fence_rw();
+#endif
+}
+
+static inline void refresh_mailbox(void) {
+  cache_refresh_line((const void *)g_mbox);
+  kws_fence_rw();
+}
+
+static inline void publish_mailbox(void) {
+  kws_fence_rw();
+  cache_flush_line((const void *)g_mbox);
+  kws_fence_rw();
 }
 
 static void reset_case_assembler(void) {
@@ -73,7 +113,6 @@ static void init_mailbox_and_ring(void) {
   g_mbox->flags = KWS_FLAG_READER_READY;
 
   for (uint32_t i = 0; i < KWS_BEARLY_RING_SLOTS; ++i) {
-    g_ring[i].seq = 0u;
     g_ring[i].case_id = 0u;
     g_ring[i].frame_idx = 0u;
     g_ring[i].valid = 0u;
@@ -82,7 +121,7 @@ static void init_mailbox_and_ring(void) {
     }
   }
 
-  kws_fence_rw();
+  publish_mailbox();
 }
 
 static void run_inference_for_current_case(void) {
@@ -133,19 +172,43 @@ static void run_inference_for_current_case(void) {
 }
 
 static void process_ring(void) {
-  while (g_mbox->cons_idx != g_mbox->prod_idx) {
-    const uint32_t cons = g_mbox->cons_idx;
-    const uint32_t slot_idx = cons & (KWS_BEARLY_RING_SLOTS - 1u);
+  uint32_t prod;
+  uint32_t available;
+  uint32_t consumed_now = 0u;
+  uintptr_t last_slot_line = UINTPTR_MAX;
+
+  refresh_mailbox();
+  prod = g_mbox->prod_idx;
+  available = prod - g_cons_local;
+
+  if (available == 0u) {
+    return;
+  }
+
+  if (available > KWS_BEARLY_RING_SLOTS) {
+    const uint32_t overflow = available - KWS_BEARLY_RING_SLOTS;
+    g_mbox->dropped_frames += overflow;
+    g_cons_local = prod - KWS_BEARLY_RING_SLOTS;
+    available = KWS_BEARLY_RING_SLOTS;
+    g_mbox->seq_errors++;
+  }
+
+  while (consumed_now < available) {
+    const uint32_t seq = g_cons_local + consumed_now + 1u;
+    const uint32_t slot_idx = (g_cons_local + consumed_now) % KWS_BEARLY_RING_SLOTS;
     volatile kws_ring_slot_t *slot = &g_ring[slot_idx];
+    const uintptr_t slot_line =
+        align_down_uintptr((uintptr_t)slot, (uintptr_t)KWS_BEARLY_CACHE_LINE_BYTES);
+
+    if (slot_line != last_slot_line) {
+      cache_refresh_line((const void *)slot_line);
+      last_slot_line = slot_line;
+    }
 
     if (!slot->valid) {
+      g_mbox->seq_errors++;
       break;
     }
-
-    if ((g_last_seq_seen != 0u) && (slot->seq != (g_last_seq_seen + 1u))) {
-      g_mbox->seq_errors++;
-    }
-    g_last_seq_seen = slot->seq;
 
     if (!g_assembler.have_case) {
       g_assembler.have_case = 1u;
@@ -164,29 +227,35 @@ static void process_ring(void) {
 
       if (slot->frame_idx != 0u) {
         g_mbox->dropped_frames++;
-        slot->valid = 0u;
-        kws_fence_rw();
-        g_mbox->cons_idx = cons + 1u;
-        g_mbox->consumed_frames++;
+        g_mbox->last_seq = seq;
+        g_mbox->last_case_id = slot->case_id;
+        g_mbox->last_frame_idx = slot->frame_idx;
+        consumed_now++;
         continue;
       }
     }
 
-    for (uint32_t i = 0; i < KWS_MFCC_DIM; ++i) {
-      g_assembler.window[((uint32_t)slot->frame_idx * KWS_MFCC_DIM) + i] = slot->mfcc[i];
+    for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+      g_assembler.window[((uint32_t)slot->frame_idx * KWS_MFCC_DIM) + k] = slot->mfcc[k];
     }
-    g_assembler.next_frame_idx++;
 
-    slot->valid = 0u;
-    kws_fence_rw();
-    g_mbox->cons_idx = cons + 1u;
-    g_mbox->consumed_frames++;
+    g_assembler.next_frame_idx++;
 
     if (g_assembler.next_frame_idx >= KWS_FRAMES_PER_CASE) {
       run_inference_for_current_case();
       reset_case_assembler();
     }
+
+    g_mbox->last_seq = seq;
+    g_mbox->last_case_id = slot->case_id;
+    g_mbox->last_frame_idx = slot->frame_idx;
+    consumed_now++;
   }
+
+  g_cons_local += consumed_now;
+  g_mbox->cons_idx = g_cons_local;
+  g_mbox->consumed_frames += consumed_now;
+  publish_mailbox();
 }
 
 void app_init(void) {
@@ -196,12 +265,14 @@ void app_init(void) {
   reset_case_assembler();
   init_mailbox_and_ring();
   g_summary_printed = 0u;
-  g_last_seq_seen = 0u;
+  g_cons_local = 0u;
 
-  KWS_BEARLY_LOG("[bearly-kws] startup: shm=0x%08lx ring_slots=%u slot_bytes=%u\n",
+  KWS_BEARLY_LOG("[bearly-kws] startup: shm=0x%08lx bytes=%u ring_slots=%u slot_bytes=%u cache_mode=%u\n",
                  (unsigned long)KWS_BEARLY_SHM_BASE,
+                 (unsigned)KWS_BEARLY_SHM_BYTES,
                  (unsigned)KWS_BEARLY_RING_SLOTS,
-                 (unsigned)sizeof(kws_ring_slot_t));
+                 (unsigned)sizeof(kws_ring_slot_t),
+                 (unsigned)KWS_BEARLY_CACHE_REFRESH_MODE);
 
   KWS_BEARLY_LOG("[bearly-kws] preparing TinySpeech runtime...\n");
   tinyspeech_prepare_runtime();
@@ -212,9 +283,10 @@ void app_main(void) {
   while (1) {
     process_ring();
 
+    refresh_mailbox();
     if (!g_summary_printed &&
         ((g_mbox->flags & KWS_FLAG_STREAM_DONE) != 0u) &&
-        (g_mbox->cons_idx == g_mbox->prod_idx)) {
+        (g_cons_local == g_mbox->prod_idx)) {
       g_summary_printed = 1u;
       KWS_BEARLY_LOG("[bearly-kws] stream-end: produced=%u consumed=%u drops=%u seq_err=%u mfcc_fail=%u infer=%u\n",
                      (unsigned)g_mbox->produced_frames,

@@ -12,6 +12,14 @@ extern "C" {
 #define KWS_MFCC_DIM 12u
 #define KWS_FRAMES_PER_CASE 94u
 
+#ifndef KWS_SHARED_BASE_ADDR
+#define KWS_SHARED_BASE_ADDR 0xC0000000UL
+#endif
+
+#ifndef KWS_SHARED_BYTES
+#define KWS_SHARED_BYTES 16384u
+#endif
+
 #define KWS_MAILBOX_MAGIC 0x4B57534Du /* 'KWSM' */
 #define KWS_FLAG_READER_READY (1u << 0)
 #define KWS_FLAG_WRITER_READY (1u << 1)
@@ -43,7 +51,6 @@ typedef struct __attribute__((packed, aligned(64))) {
 } kws_mailbox_t;
 
 typedef struct __attribute__((packed, aligned(16))) {
-  volatile uint32_t seq;
   volatile uint16_t case_id;
   volatile uint8_t frame_idx;
   volatile uint8_t valid;

@@ -6,6 +6,11 @@
 
 #define KWS_TEMPLATE_CASES 8u
 
+_Static_assert((KWS_DSP_SHARED_BYTES > sizeof(kws_mailbox_t)),
+               "KWS_DSP_SHARED_BYTES must be larger than mailbox size.");
+_Static_assert((KWS_DSP_REMOTE_RING_BYTES > 0u),
+               "KWS_DSP_REMOTE_RING_BYTES must be greater than 0.");
+
 static mfcc_driver_t g_mfcc;
 static float32_t g_templates[KWS_TEMPLATE_CASES][MFCC_DRIVER_FFT_LEN];
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
@@ -96,8 +101,14 @@ static uint32_t wait_for_reader_ready(void) {
       const uint32_t slots = g_mbox->ring_slots;
       const uint32_t slot_bytes = g_mbox->slot_bytes;
 
-      if ((slots == 0u) || ((slots & (slots - 1u)) != 0u)) {
+      if (slots == 0u) {
         KWS_DSP_LOG("[dsp-kws] remote ring_slots invalid=%u\n", (unsigned)slots);
+        return 0u;
+      }
+      if (slots > (KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_ring_slot_t))) {
+        KWS_DSP_LOG("[dsp-kws] remote ring_slots too large=%u max=%u\n",
+                    (unsigned)slots,
+                    (unsigned)(KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_ring_slot_t)));
         return 0u;
       }
       if (slot_bytes != (uint32_t)sizeof(kws_ring_slot_t)) {
@@ -136,26 +147,14 @@ static void push_frame(uint32_t ring_slots,
                        uint16_t case_id,
                        uint8_t frame_idx,
                        const int8_t *mfcc_q) {
-  uint32_t prod;
-
-  while (1) {
-    const uint32_t cur_prod = g_mbox->prod_idx;
-    const uint32_t cur_cons = g_mbox->cons_idx;
-
-    if ((cur_prod - cur_cons) < ring_slots) {
-      prod = cur_prod;
-      break;
-    }
-
-    g_mbox->producer_wait_loops++;
-    __asm__ volatile("nop");
-  }
+  const uint32_t prod = g_mbox->prod_idx;
 
   {
-    const uint32_t slot_idx = prod & (ring_slots - 1u);
+    const uint32_t slot_idx = prod % ring_slots;
     volatile kws_ring_slot_t *slot = &g_ring[slot_idx];
 
-    slot->seq = seq;
+    slot->valid = 0u;
+    kws_fence_rw();
     slot->case_id = case_id;
     slot->frame_idx = frame_idx;
     for (uint32_t i = 0; i < KWS_MFCC_DIM; ++i) {
@@ -240,6 +239,11 @@ void app_init(void) {
   KWS_DSP_LOG("[dsp-kws] waiting for remote reader at mailbox=0x%08lx ring=0x%08lx\n",
               (unsigned long)KWS_DSP_REMOTE_MAILBOX_ADDR,
               (unsigned long)KWS_DSP_REMOTE_RING_ADDR);
+  KWS_DSP_LOG("[dsp-kws] shared window: base=0x%08lx bytes=%u ring_bytes=%u slot_bytes=%u\n",
+              (unsigned long)KWS_DSP_SHARED_BASE,
+              (unsigned)KWS_DSP_SHARED_BYTES,
+              (unsigned)KWS_DSP_REMOTE_RING_BYTES,
+              (unsigned)sizeof(kws_ring_slot_t));
 }
 
 void app_main(void) {
@@ -273,7 +277,7 @@ void app_main(void) {
               (unsigned)g_mbox->produced_frames,
               (unsigned)(seq - 1u),
               (unsigned)g_mbox->mfcc_failures,
-              (unsigned)g_mbox->producer_wait_loops,
+              (unsigned)0u,
               (unsigned long long)total_mfcc_cycles);
 
   while (1) {

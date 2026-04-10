@@ -20,12 +20,12 @@
 #define KWS_BEARLY_TARGET_FREQUENCY_HZ 500000000ULL
 #endif
 
-#ifndef KWS_BEARLY_RING_SLOTS
-#define KWS_BEARLY_RING_SLOTS 16384u
+#ifndef KWS_BEARLY_SHM_BASE
+#define KWS_BEARLY_SHM_BASE KWS_SHARED_BASE_ADDR
 #endif
 
-#ifndef KWS_BEARLY_SHM_BASE
-#define KWS_BEARLY_SHM_BASE 0x8FF00000UL
+#ifndef KWS_BEARLY_SHM_BYTES
+#define KWS_BEARLY_SHM_BYTES KWS_SHARED_BYTES
 #endif
 
 #ifndef KWS_BEARLY_MAILBOX_ADDR
@@ -33,7 +33,27 @@
 #endif
 
 #ifndef KWS_BEARLY_RING_ADDR
-#define KWS_BEARLY_RING_ADDR (KWS_BEARLY_SHM_BASE + 0x1000UL)
+#define KWS_BEARLY_RING_ADDR (KWS_BEARLY_MAILBOX_ADDR + sizeof(kws_mailbox_t))
+#endif
+
+#ifndef KWS_BEARLY_RING_BYTES
+#define KWS_BEARLY_RING_BYTES (KWS_BEARLY_SHM_BYTES - sizeof(kws_mailbox_t))
+#endif
+
+#ifndef KWS_BEARLY_RING_SLOTS
+#define KWS_BEARLY_RING_SLOTS (KWS_BEARLY_RING_BYTES / sizeof(kws_ring_slot_t))
+#endif
+
+#ifndef KWS_BEARLY_CACHE_LINE_BYTES
+#define KWS_BEARLY_CACHE_LINE_BYTES 64u
+#endif
+
+/*
+ * 0: fence-only fallback (portable)
+ * 1: use Zicbom cbo.inval per line (requires assembler/CPU support)
+ */
+#ifndef KWS_BEARLY_CACHE_REFRESH_MODE
+#define KWS_BEARLY_CACHE_REFRESH_MODE 1
 #endif
 
 #ifndef KWS_BEARLY_PROGRESS_EVERY

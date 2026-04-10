@@ -32,6 +32,7 @@ static uint8_t g_cache_evict[KWS_BEARLY_CACHE_EVICT_BYTES]
     __attribute__((aligned(0x8000)));
 static volatile uint8_t g_cache_sink;
 static uint32_t g_wait_poll_count;
+static uint8_t g_int8_calibrated;
 
 uint64_t target_frequency = KWS_BEARLY_TARGET_FREQUENCY_HZ;
 
@@ -120,9 +121,12 @@ static void run_one_inference_from_shared(void) {
   int8_t payload[KWS_CASE_PAYLOAD_BYTES];
   uint8_t shape[4] = {1, 1, KWS_MFCC_DIM, KWS_FRAMES_PER_CASE};
   Tensor input;
+  Tensor warm;
   Tensor probs;
+  const tinyspeech_cycle_profile_t *profile = NULL;
   float max_prob = 0.0f;
   int32_t pred;
+  uint64_t model_cycles;
   uint64_t t0;
   uint64_t t1;
 
@@ -134,20 +138,50 @@ static void run_one_inference_from_shared(void) {
   input = create_tensor(shape, 4);
   memcpy(input.data, payload, sizeof(payload));
 
+#if TINYSPEECH_INT8_PIPELINE
+  if (!g_int8_calibrated) {
+    int calib_ok;
+    KWS_BEARLY_LOG("[bearly-kws] int8 calibration (single-case) begin\n");
+    tinyspeech_int8_calibration_begin();
+    warm = tinyspeech_run_inference(&input);
+    free_tensor(&warm);
+    calib_ok = tinyspeech_int8_calibration_end();
+    g_int8_calibrated = 1u;
+    KWS_BEARLY_LOG("[bearly-kws] int8 calibration %s\n", calib_ok ? "done" : "failed");
+
+    /* Warm one fixed-path run so measured cycles are steady-state. */
+    warm = tinyspeech_run_inference(&input);
+    free_tensor(&warm);
+  }
+#endif
+
   t0 = rdcycle64();
   probs = tinyspeech_run_inference(&input);
-  pred = tinyspeech_argmax(&probs, &max_prob);
   t1 = rdcycle64();
+  pred = tinyspeech_argmax(&probs, &max_prob);
+  profile = tinyspeech_last_cycle_profile();
+  model_cycles = (profile != NULL) ? profile->total : (t1 - t0);
 
-  KWS_BEARLY_LOG("[bearly-kws] one-case inference pred=%ld (%s) score=%.4f cycles=%llu payload0=%d payload1=%d payload2=%d payload3=%d\n",
+  KWS_BEARLY_LOG("[bearly-kws] one-case inference pred=%ld (%s) score=%.4f model_cycles=%llu wall_cycles=%llu payload0=%d payload1=%d payload2=%d payload3=%d\n",
                  (long)pred,
                  ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) ? g_labels[pred] : "out-of-range",
                  max_prob,
+                 (unsigned long long)model_cycles,
                  (unsigned long long)(t1 - t0),
                  (int)payload[0],
                  (int)payload[1],
                  (int)payload[2],
                  (int)payload[3]);
+
+  if (profile != NULL) {
+    KWS_BEARLY_LOG("[bearly-kws] layer_cycles input_cast=%llu conv1_pool1=%llu conv2_pool2=%llu conv3_gap=%llu fc=%llu softmax=%llu\n",
+                   (unsigned long long)profile->input_cast,
+                   (unsigned long long)profile->conv1_pool1,
+                   (unsigned long long)profile->conv2_pool2,
+                   (unsigned long long)profile->conv3_gap,
+                   (unsigned long long)profile->fc_logits,
+                   (unsigned long long)profile->softmax);
+  }
 
   free_tensor(&probs);
   free_tensor(&input);
@@ -157,6 +191,7 @@ void app_init(void) {
   init_test(target_frequency);
   g_cache_sink = 0u;
   g_wait_poll_count = 0u;
+  g_int8_calibrated = 0u;
 
 #if KWS_BEARLY_USE_THREADLIB
   hthread_init();

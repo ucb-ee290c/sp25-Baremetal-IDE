@@ -57,6 +57,10 @@
 #define KWS_DSP_MFCC_QUANT_ZERO 0.0f
 #endif
 
+#ifndef KWS_DSP_SIGNAL_HOP_SAMPLES
+#define KWS_DSP_SIGNAL_HOP_SAMPLES 160u
+#endif
+
 #ifndef KWS_DSP_USE_THREADLIB
 #define KWS_DSP_USE_THREADLIB 0
 #endif

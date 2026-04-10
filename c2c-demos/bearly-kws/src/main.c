@@ -24,6 +24,9 @@ static volatile uint32_t *const g_marker =
     (volatile uint32_t *)(uintptr_t)KWS_BEARLY_SIMPLE_MARKER_ADDR;
 static volatile int8_t *const g_payload =
     (volatile int8_t *)(uintptr_t)KWS_BEARLY_SIMPLE_PAYLOAD_ADDR;
+static const char *g_labels[TINYSPEECH_NUM_CLASSES] = {
+    "yes", "no", "on", "off", "stop", "go"
+};
 
 static uint8_t g_cache_evict[KWS_BEARLY_CACHE_EVICT_BYTES]
     __attribute__((aligned(KWS_BEARLY_CACHE_LINE_BYTES)));
@@ -136,8 +139,9 @@ static void run_one_inference_from_shared(void) {
   pred = tinyspeech_argmax(&probs, &max_prob);
   t1 = rdcycle64();
 
-  KWS_BEARLY_LOG("[bearly-kws] one-case inference pred=%ld score=%.4f cycles=%llu payload0=%d payload1=%d payload2=%d payload3=%d\n",
+  KWS_BEARLY_LOG("[bearly-kws] one-case inference pred=%ld (%s) score=%.4f cycles=%llu payload0=%d payload1=%d payload2=%d payload3=%d\n",
                  (long)pred,
+                 ((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES)) ? g_labels[pred] : "out-of-range",
                  max_prob,
                  (unsigned long long)(t1 - t0),
                  (int)payload[0],

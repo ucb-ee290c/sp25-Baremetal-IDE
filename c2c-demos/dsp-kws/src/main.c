@@ -12,8 +12,6 @@ void hthread_join(uint32_t hartid);
 static void mc_nop_worker(void *arg) { (void)arg; }
 #endif
 
-#define KWS_TEMPLATE_CASES 8u
-
 _Static_assert((KWS_DSP_SIMPLE_PAYLOAD_ADDR >= KWS_DSP_SHARED_BASE),
                "KWS_DSP_SIMPLE_PAYLOAD_ADDR must be inside shared region.");
 _Static_assert(((KWS_DSP_SIMPLE_PAYLOAD_ADDR - KWS_DSP_SHARED_BASE) + KWS_CASE_PAYLOAD_BYTES) <= KWS_DSP_SHARED_BYTES,
@@ -26,7 +24,6 @@ _Static_assert((KWS_DSP_CACHE_EVICT_BYTES % KWS_DSP_CACHE_LINE_BYTES) == 0u,
                "KWS_DSP_CACHE_EVICT_BYTES must be a multiple of cache line size.");
 
 static mfcc_driver_t g_mfcc;
-static float32_t g_templates[KWS_TEMPLATE_CASES][MFCC_DRIVER_FFT_LEN];
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
 static uint8_t g_cache_evict[KWS_DSP_CACHE_EVICT_BYTES]
     __attribute__((aligned(KWS_DSP_CACHE_LINE_BYTES)));
@@ -73,46 +70,43 @@ static float32_t clampf_local(float32_t x, float32_t lo, float32_t hi) {
   return x;
 }
 
-static void prepare_templates(void) {
-  uint32_t lcg = 0x12345678u;
+/*
+ * Generate a deterministic "yes-like" utterance frame:
+ * - early quiet region
+ * - voiced section with low harmonics/formants ("ye")
+ * - late high-frequency fricative tail ("s")
+ */
+static void build_yes_like_window(uint8_t frame_idx, float32_t *dst) {
   const float32_t kPi = (float32_t)M_PI;
+  const float32_t p = (float32_t)frame_idx / (float32_t)(KWS_DSP_FRAMES_PER_CASE - 1u);
+  const float32_t voiced_center = 0.48f;
+  const float32_t voiced_width = 0.23f;
+  float32_t voiced_env = expf(-((p - voiced_center) * (p - voiced_center)) / (2.0f * voiced_width * voiced_width));
+  float32_t fric_env = 0.0f;
+  uint32_t lcg = 0x9E3779B9u ^ ((uint32_t)frame_idx * 0x85EBCA6Bu);
+
+  if (p > 0.62f) {
+    const float32_t u = (p - 0.62f) / 0.38f;
+    fric_env = clampf_local(u, 0.0f, 1.0f);
+  }
 
   for (uint32_t n = 0; n < MFCC_DRIVER_FFT_LEN; ++n) {
     const float32_t t = (float32_t)n / MFCC_DRIVER_SAMPLE_RATE_HZ;
-    const float32_t frac = (float32_t)n / (float32_t)(MFCC_DRIVER_FFT_LEN - 1u);
-
-    g_templates[0][n] = 0.0f;
-    g_templates[1][n] = (n == 0u) ? 1.0f : 0.0f;
-    g_templates[2][n] = (n & 1u) ? -0.9f : 0.9f;
-    g_templates[3][n] = 0.9f * sinf(2.0f * kPi * 440.0f * t);
-    g_templates[4][n] = 0.9f * sinf(2.0f * kPi * 3000.0f * t);
-
-    {
-      const float32_t chirp_hz = 100.0f + (2900.0f * frac);
-      g_templates[5][n] = 0.85f * sinf(2.0f * kPi * chirp_hz * t);
-    }
+    const float32_t f0 = 165.0f + (25.0f * sinf(2.0f * kPi * p));
+    const float32_t voiced =
+        0.85f * sinf(2.0f * kPi * f0 * t) +
+        0.35f * sinf(2.0f * kPi * (2.0f * f0) * t) +
+        0.22f * sinf(2.0f * kPi * 520.0f * t) +
+        0.17f * sinf(2.0f * kPi * 2100.0f * t);
+    float32_t fric = 0.0f;
 
     lcg = (1664525u * lcg) + 1013904223u;
     {
-      const float32_t u = ((float32_t)(lcg & 0x00FFFFFFu) / 8388607.5f) - 1.0f;
-      g_templates[6][n] = 0.8f * u;
+      const float32_t noise = ((float32_t)(lcg & 0x00FFFFFFu) / 8388607.5f) - 1.0f;
+      fric = noise * sinf(2.0f * kPi * 3600.0f * t);
     }
 
-    {
-      const float32_t mix =
-          1.4f * sinf(2.0f * kPi * 700.0f * t) + 1.1f * sinf(2.0f * kPi * 1200.0f * t);
-      g_templates[7][n] = clampf_local(mix, -0.7f, 0.7f);
-    }
-  }
-}
-
-static void build_window(uint16_t case_id, uint8_t frame_idx, float32_t *dst) {
-  const uint32_t template_idx = ((uint32_t)case_id + (uint32_t)frame_idx) % KWS_TEMPLATE_CASES;
-  const uint32_t shift = (((uint32_t)case_id * 17u) + ((uint32_t)frame_idx * 11u)) % MFCC_DRIVER_FFT_LEN;
-  const float32_t *src = g_templates[template_idx];
-
-  for (uint32_t i = 0; i < MFCC_DRIVER_FFT_LEN; ++i) {
-    dst[i] = src[(i + shift) % MFCC_DRIVER_FFT_LEN];
+    dst[n] = clampf_local((0.70f * voiced_env * voiced) + (0.40f * fric_env * fric), -1.0f, 1.0f);
   }
 }
 
@@ -136,7 +130,8 @@ static mfcc_driver_status_t run_one_mfcc(uint16_t case_id,
   uint64_t mfcc_cycles = 0;
   mfcc_driver_status_t st;
 
-  build_window(case_id, frame_idx, g_input_window);
+  (void)case_id;
+  build_yes_like_window(frame_idx, g_input_window);
 
 #if KWS_DSP_USE_THREADLIB
   st = mfcc_driver_run_sp1024x23x12_f32_mc(&g_mfcc, g_input_window, mfcc_f32, &mfcc_cycles);
@@ -214,7 +209,6 @@ void app_init(void) {
   hthread_join(1);
 #endif
 
-  prepare_templates();
   if (mfcc_driver_init(&g_mfcc) != MFCC_DRIVER_OK) {
     KWS_DSP_LOG("[dsp-kws] MFCC init failed\n");
     while (1) {
@@ -227,7 +221,7 @@ void app_init(void) {
   kws_fence_rw_local();
   cache_writeback_pressure();
 
-  KWS_DSP_LOG("[dsp-kws] simple mode init marker=0x%08lx payload=0x%08lx bytes=%u\n",
+  KWS_DSP_LOG("[dsp-kws] simple mode init marker=0x%08lx payload=0x%08lx bytes=%u (signal=yes-like synthetic)\n",
               (unsigned long)KWS_DSP_SIMPLE_MARKER_ADDR,
               (unsigned long)KWS_DSP_SIMPLE_PAYLOAD_ADDR,
               (unsigned)KWS_CASE_PAYLOAD_BYTES);

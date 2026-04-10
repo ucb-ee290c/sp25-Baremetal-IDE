@@ -1,5 +1,7 @@
 add_subdirectory(dsp-kws)
 add_subdirectory(bearly-kws)
+add_subdirectory(dsp-kws-rolling)
+add_subdirectory(bearly-kws-rolling)
 add_subdirectory(dsp-simpletest)
 add_subdirectory(bearly-simpletest)
 add_subdirectory(c2c-measure)

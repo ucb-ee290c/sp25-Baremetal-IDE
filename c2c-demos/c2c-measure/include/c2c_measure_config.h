@@ -1,0 +1,67 @@
+#ifndef C2C_MEASURE_CONFIG_H
+#define C2C_MEASURE_CONFIG_H
+
+#include <stdio.h>
+
+#include "chip_config.h"
+
+#ifndef C2C_MEASURE_LOG_ENABLE
+#define C2C_MEASURE_LOG_ENABLE 1
+#endif
+
+#if C2C_MEASURE_LOG_ENABLE
+#define C2C_MEASURE_LOG(...) do { printf(__VA_ARGS__); } while (0)
+#else
+#define C2C_MEASURE_LOG(...) do { } while (0)
+#endif
+
+#ifndef C2C_MEASURE_TARGET_FREQUENCY_HZ
+#define C2C_MEASURE_TARGET_FREQUENCY_HZ 500000000ULL
+#endif
+
+#ifndef C2C_MEASURE_SHM_BASE
+#define C2C_MEASURE_SHM_BASE 0xC0000000UL
+#endif
+
+#ifndef C2C_MEASURE_SHM_BYTES
+#define C2C_MEASURE_SHM_BYTES 16384u
+#endif
+
+#ifndef C2C_MEASURE_CACHE_LINE_BYTES
+#define C2C_MEASURE_CACHE_LINE_BYTES 64u
+#endif
+
+#ifndef C2C_MEASURE_CACHE_EVICT_BYTES
+#define C2C_MEASURE_CACHE_EVICT_BYTES (256u * 1024u)
+#endif
+
+#ifndef C2C_MEASURE_CACHE_EVICT_PASSES
+#define C2C_MEASURE_CACHE_EVICT_PASSES 3u
+#endif
+
+#ifndef C2C_MEASURE_CACHE_FLUSH_TRIALS
+#define C2C_MEASURE_CACHE_FLUSH_TRIALS 64u
+#endif
+
+#ifndef C2C_MEASURE_OVERHEAD_TRIALS
+#define C2C_MEASURE_OVERHEAD_TRIALS 64u
+#endif
+
+/* Uses half the 16KB region for next-index links and half for payload words. */
+#ifndef C2C_MEASURE_PTR_NODES
+#define C2C_MEASURE_PTR_NODES (C2C_MEASURE_SHM_BYTES / 8u)
+#endif
+
+#ifndef C2C_MEASURE_PTR_STEPS
+#define C2C_MEASURE_PTR_STEPS 4096u
+#endif
+
+#ifndef C2C_MEASURE_PTR_TRIALS
+#define C2C_MEASURE_PTR_TRIALS 16u
+#endif
+
+#ifndef C2C_MEASURE_PTR_SHUFFLE_SEED
+#define C2C_MEASURE_PTR_SHUFFLE_SEED 0x00C2C50Au
+#endif
+
+#endif /* C2C_MEASURE_CONFIG_H */

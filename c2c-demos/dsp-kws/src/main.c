@@ -6,18 +6,18 @@
 
 #if KWS_DSP_USE_THREADLIB
 #include "mfcc_driver_mc.h"
-/* Use explicit threadlib API declarations to avoid picking a legacy hthread.h. */
 void hthread_init(void);
 void hthread_issue(uint32_t hartid, void (*fn)(void *), void *arg);
 void hthread_join(uint32_t hartid);
+static void mc_nop_worker(void *arg) { (void)arg; }
 #endif
 
 #define KWS_TEMPLATE_CASES 8u
 
-_Static_assert((KWS_DSP_SHARED_BYTES > sizeof(kws_mailbox_t)),
-               "KWS_DSP_SHARED_BYTES must be larger than mailbox size.");
-_Static_assert((KWS_DSP_REMOTE_RING_BYTES > 0u),
-               "KWS_DSP_REMOTE_RING_BYTES must be greater than 0.");
+_Static_assert((KWS_DSP_SIMPLE_PAYLOAD_ADDR >= KWS_DSP_SHARED_BASE),
+               "KWS_DSP_SIMPLE_PAYLOAD_ADDR must be inside shared region.");
+_Static_assert(((KWS_DSP_SIMPLE_PAYLOAD_ADDR - KWS_DSP_SHARED_BASE) + KWS_CASE_PAYLOAD_BYTES) <= KWS_DSP_SHARED_BYTES,
+               "KWS payload does not fit in shared region.");
 _Static_assert((KWS_DSP_CACHE_LINE_BYTES & (KWS_DSP_CACHE_LINE_BYTES - 1u)) == 0u,
                "KWS_DSP_CACHE_LINE_BYTES must be a power of two.");
 _Static_assert((KWS_DSP_CACHE_EVICT_BYTES >= KWS_DSP_CACHE_LINE_BYTES),
@@ -28,30 +28,39 @@ _Static_assert((KWS_DSP_CACHE_EVICT_BYTES % KWS_DSP_CACHE_LINE_BYTES) == 0u,
 static mfcc_driver_t g_mfcc;
 static float32_t g_templates[KWS_TEMPLATE_CASES][MFCC_DRIVER_FFT_LEN];
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
-
-static volatile kws_mailbox_t *const g_mbox =
-    (volatile kws_mailbox_t *)(uintptr_t)KWS_DSP_REMOTE_MAILBOX_ADDR;
-static volatile kws_ring_slot_t *const g_ring_safe =
-    (volatile kws_ring_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
-static volatile kws_fast_case_slot_t *const g_ring_fast =
-    (volatile kws_fast_case_slot_t *)(uintptr_t)KWS_DSP_REMOTE_RING_ADDR;
 static uint8_t g_cache_evict[KWS_DSP_CACHE_EVICT_BYTES]
     __attribute__((aligned(KWS_DSP_CACHE_LINE_BYTES)));
 static volatile uint8_t g_cache_sink;
-
-uint64_t target_frequency = KWS_DSP_TARGET_FREQUENCY_HZ;
 static uint32_t g_mfcc_fail_local;
 
-#if KWS_DSP_USE_THREADLIB
-static void mc_nop_worker(void *arg) {
-  (void)arg;
-}
-#endif
+static volatile uint32_t *const g_marker =
+    (volatile uint32_t *)(uintptr_t)KWS_DSP_SIMPLE_MARKER_ADDR;
+static volatile int8_t *const g_payload =
+    (volatile int8_t *)(uintptr_t)KWS_DSP_SIMPLE_PAYLOAD_ADDR;
+
+uint64_t target_frequency = KWS_DSP_TARGET_FREQUENCY_HZ;
 
 static inline uint64_t rdcycle64(void) {
   uint64_t x;
   __asm__ volatile("rdcycle %0" : "=r"(x));
   return x;
+}
+
+static inline void kws_fence_rw_local(void) {
+  __asm__ volatile("fence rw, rw" ::: "memory");
+}
+
+static inline void cache_writeback_pressure(void) {
+  volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
+  volatile uint8_t sink = g_cache_sink;
+
+  for (uint32_t i = 0; i < (uint32_t)KWS_DSP_CACHE_EVICT_BYTES; i += KWS_DSP_CACHE_LINE_BYTES) {
+    sink ^= buf[i];
+    buf[i] = (uint8_t)(sink + (uint8_t)i);
+  }
+
+  g_cache_sink = sink;
+  kws_fence_rw_local();
 }
 
 static float32_t clampf_local(float32_t x, float32_t lo, float32_t hi) {
@@ -119,49 +128,6 @@ static int8_t quantize_mfcc(float32_t x) {
   return (int8_t)qi;
 }
 
-static inline void cache_writeback_pressure(void) {
-  volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
-  volatile uint8_t sink = g_cache_sink;
-
-  for (uint32_t i = 0; i < (uint32_t)KWS_DSP_CACHE_EVICT_BYTES; i += KWS_DSP_CACHE_LINE_BYTES) {
-    sink ^= buf[i];
-    buf[i] = (uint8_t)(sink + (uint8_t)i);
-  }
-
-  g_cache_sink = sink;
-  kws_fence_rw();
-}
-
-static void set_flags(uint32_t flags) {
-  g_mbox->flags = flags;
-  kws_fence_rw();
-  cache_writeback_pressure();
-  kws_fence_rw();
-}
-
-static void init_writer_mailbox(uint32_t mode, uint32_t ring_slots, uint32_t slot_bytes) {
-  g_mbox->magic = KWS_MAILBOX_MAGIC;
-  g_mbox->version = KWS_PROTO_VERSION;
-  g_mbox->mode = mode;
-  g_mbox->ring_slots = ring_slots;
-  g_mbox->slot_bytes = slot_bytes;
-  g_mbox->num_cases = KWS_DSP_NUM_CASES;
-  g_mbox->frames_per_case = KWS_DSP_FRAMES_PER_CASE;
-  g_mbox->mfcc_dim = KWS_MFCC_DIM;
-
-  g_mbox->prod_idx = 0u;
-  g_mbox->produced_frames = 0u;
-  g_mbox->produced_cases = 0u;
-  g_mbox->mfcc_failures = 0u;
-  g_mbox->last_seq = 0u;
-  g_mbox->last_case_id = 0u;
-  g_mbox->last_frame_idx = 0u;
-  g_mbox->producer_wait_loops = 0u;
-  g_mfcc_fail_local = 0u;
-
-  set_flags(KWS_FLAG_WRITER_READY);
-}
-
 static mfcc_driver_status_t run_one_mfcc(uint16_t case_id,
                                          uint8_t frame_idx,
                                          int8_t *mfcc_q_out,
@@ -187,7 +153,6 @@ static mfcc_driver_status_t run_one_mfcc(uint16_t case_id,
   if (st != MFCC_DRIVER_OK) {
     memset(mfcc_q_out, 0, KWS_MFCC_DIM);
     g_mfcc_fail_local++;
-    g_mbox->mfcc_failures = g_mfcc_fail_local;
     KWS_DSP_LOG("[dsp-kws] MFCC failed case=%u frame=%u err=%s\n",
                 (unsigned)case_id,
                 (unsigned)frame_idx,
@@ -202,153 +167,49 @@ static mfcc_driver_status_t run_one_mfcc(uint16_t case_id,
   return MFCC_DRIVER_OK;
 }
 
-static void stream_safe(void) {
-  const uint32_t ring_slots = KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_ring_slot_t);
-  uint32_t seq = 1u;
-  uint32_t prod = 0u;
-  uint64_t total_mfcc_cycles = 0u;
+static void build_case_payload(uint16_t case_id, int8_t *payload_out, uint64_t *total_mfcc_cycles) {
+  for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
+    int8_t mfcc_q[KWS_MFCC_DIM];
+    const uint32_t base = ((uint32_t)frame_idx) * KWS_MFCC_DIM;
 
-  if (ring_slots == 0u) {
-    KWS_DSP_LOG("[dsp-kws] SAFE mode invalid ring_slots=0\n");
-    while (1) {
-      __asm__ volatile("wfi");
+    (void)run_one_mfcc(case_id, frame_idx, mfcc_q, total_mfcc_cycles);
+    for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+      payload_out[base + k] = mfcc_q[k];
     }
   }
-
-  init_writer_mailbox(KWS_LINK_MODE_SAFE, ring_slots, (uint32_t)sizeof(kws_ring_slot_t));
-  for (uint32_t i = 0; i < ring_slots; ++i) {
-    g_ring_safe[i].valid = 0u;
-  }
-  kws_fence_rw();
-
-  for (uint16_t case_id = 0; case_id < (uint16_t)KWS_DSP_NUM_CASES; ++case_id) {
-    for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
-      int8_t mfcc_q[KWS_MFCC_DIM];
-      const uint32_t slot_idx = prod % ring_slots;
-      volatile kws_ring_slot_t *slot = &g_ring_safe[slot_idx];
-
-      (void)run_one_mfcc(case_id, frame_idx, mfcc_q, &total_mfcc_cycles);
-
-      slot->valid = 0u;
-      kws_fence_rw();
-      slot->case_id = case_id;
-      slot->frame_idx = frame_idx;
-      for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-        slot->mfcc[k] = mfcc_q[k];
-      }
-      kws_fence_rw();
-      slot->valid = 1u;
-
-      prod++;
-      g_mbox->prod_idx = prod;
-      g_mbox->produced_frames = prod;
-      g_mbox->last_seq = seq++;
-      g_mbox->last_case_id = case_id;
-      g_mbox->last_frame_idx = frame_idx;
-    }
-
-    g_mbox->produced_cases = (uint32_t)case_id + 1u;
-    cache_writeback_pressure();
-    kws_fence_rw();
-    if (KWS_DSP_LOG_ENABLE && (((uint32_t)case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
-      KWS_DSP_LOG("[dsp-kws] SAFE streamed %u/%u cases\n",
-                  (unsigned)((uint32_t)case_id + 1u),
-                  (unsigned)KWS_DSP_NUM_CASES);
-    }
-  }
-
-  set_flags(KWS_FLAG_WRITER_READY | KWS_FLAG_STREAM_DONE);
-  KWS_DSP_LOG("[dsp-kws] SAFE done: cases=%u produced_frames=%u mfcc_fail=%u mfcc_cycles=%llu\n",
-              (unsigned)KWS_DSP_NUM_CASES,
-              (unsigned)prod,
-              (unsigned)g_mfcc_fail_local,
-              (unsigned long long)total_mfcc_cycles);
 }
 
-static void stream_fast(void) {
-  const uint32_t fast_slots = KWS_DSP_REMOTE_RING_BYTES / (uint32_t)sizeof(kws_fast_case_slot_t);
-  uint64_t total_mfcc_cycles = 0u;
+static void publish_case_payload(const int8_t *payload, uint16_t case_id) {
+  *g_marker = 0u;
+  kws_fence_rw_local();
+  cache_writeback_pressure();
 
-  if (fast_slots == 0u) {
-    KWS_DSP_LOG("[dsp-kws] FAST mode invalid fast_slots=0\n");
-    while (1) {
-      __asm__ volatile("wfi");
-    }
+  for (uint32_t i = 0; i < KWS_CASE_PAYLOAD_BYTES; ++i) {
+    g_payload[i] = payload[i];
   }
 
-  init_writer_mailbox(KWS_LINK_MODE_FAST, fast_slots, (uint32_t)sizeof(kws_fast_case_slot_t));
-  for (uint32_t i = 0; i < fast_slots; ++i) {
-    g_ring_fast[i].commit_seq = 0u;
-  }
-  kws_fence_rw();
+  kws_fence_rw_local();
+  cache_writeback_pressure();
+  *g_marker = (uint32_t)KWS_DSP_SIMPLE_MARKER_VALUE;
+  kws_fence_rw_local();
+  cache_writeback_pressure();
+  kws_fence_rw_local();
 
-  for (uint16_t case_id = 0; case_id < (uint16_t)KWS_DSP_NUM_CASES; ++case_id) {
-    volatile kws_fast_case_slot_t *slot = &g_ring_fast[((uint32_t)case_id) % fast_slots];
-    const uint32_t commit_seq = (uint32_t)case_id + 1u;
-    uint32_t case_seq = (uint32_t)case_id * KWS_DSP_FRAMES_PER_CASE;
-    int8_t case_payload[KWS_CASE_PAYLOAD_BYTES];
-    uint64_t tx_cycle_start;
-    uint64_t tx_cycle_commit;
-
-    /* Compute MFCC payload first; stamp cycle counter right before transmission starts. */
-    for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_FRAMES_PER_CASE; ++frame_idx) {
-      int8_t mfcc_q[KWS_MFCC_DIM];
-      const uint32_t base = ((uint32_t)frame_idx) * KWS_MFCC_DIM;
-
-      (void)run_one_mfcc(case_id, frame_idx, mfcc_q, &total_mfcc_cycles);
-      for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-        case_payload[base + k] = mfcc_q[k];
-      }
-      case_seq++;
-    }
-
-    tx_cycle_start = rdcycle64();
-    slot->commit_seq = 0u;
-    kws_fence_rw();
-    slot->case_id = case_id;
-    slot->reserved = 0u;
-    slot->tx_cycle_start = tx_cycle_start;
-    for (uint32_t i = 0; i < KWS_CASE_PAYLOAD_BYTES; ++i) {
-      slot->mfcc[i] = case_payload[i];
-    }
-    tx_cycle_commit = rdcycle64();
-    slot->tx_cycle_commit = tx_cycle_commit;
-
-    kws_fence_rw();
-    slot->commit_seq = commit_seq;
-    kws_fence_rw();
-
-    g_mbox->prod_idx = commit_seq;
-    g_mbox->produced_cases = commit_seq;
-    g_mbox->produced_frames = commit_seq * KWS_DSP_FRAMES_PER_CASE;
-    g_mbox->last_seq = case_seq;
-    g_mbox->last_case_id = case_id;
-    g_mbox->last_frame_idx = KWS_DSP_FRAMES_PER_CASE - 1u;
-    cache_writeback_pressure();
-    kws_fence_rw();
-
-    if (KWS_DSP_LOG_ENABLE && (((uint32_t)case_id + 1u) % KWS_DSP_PROGRESS_EVERY_CASES == 0u)) {
-      KWS_DSP_LOG("[dsp-kws] FAST streamed %u/%u cases\n",
-                  (unsigned)((uint32_t)case_id + 1u),
-                  (unsigned)KWS_DSP_NUM_CASES);
-    }
-  }
-
-  set_flags(KWS_FLAG_WRITER_READY | KWS_FLAG_STREAM_DONE);
-  KWS_DSP_LOG("[dsp-kws] FAST done: cases=%u produced_cases=%u mfcc_fail=%u mfcc_cycles=%llu\n",
-              (unsigned)KWS_DSP_NUM_CASES,
-              (unsigned)KWS_DSP_NUM_CASES,
-              (unsigned)g_mfcc_fail_local,
-              (unsigned long long)total_mfcc_cycles);
+  KWS_DSP_LOG("[dsp-kws] published case=%u marker=0x%08lx marker_addr=0x%08lx payload_addr=0x%08lx bytes=%u\n",
+              (unsigned)case_id,
+              (unsigned long)KWS_DSP_SIMPLE_MARKER_VALUE,
+              (unsigned long)KWS_DSP_SIMPLE_MARKER_ADDR,
+              (unsigned long)KWS_DSP_SIMPLE_PAYLOAD_ADDR,
+              (unsigned)KWS_CASE_PAYLOAD_BYTES);
 }
 
 void app_init(void) {
   init_test(target_frequency);
   g_cache_sink = 0u;
+  g_mfcc_fail_local = 0u;
 
 #if KWS_DSP_USE_THREADLIB
   hthread_init();
-  /* Warm hart1 once so steady-state dispatch has no cold-start hiccup. */
   hthread_issue(1, mc_nop_worker, NULL);
   hthread_join(1);
 #endif
@@ -361,23 +222,33 @@ void app_init(void) {
     }
   }
 
-  KWS_DSP_LOG("[dsp-kws] one-way writer mode=%u mailbox=0x%08lx data=0x%08lx bytes=%u\n",
-              (unsigned)KWS_DSP_LINK_MODE,
-              (unsigned long)KWS_DSP_REMOTE_MAILBOX_ADDR,
-              (unsigned long)KWS_DSP_REMOTE_RING_ADDR,
-              (unsigned)KWS_DSP_REMOTE_RING_BYTES);
+  /* Clear marker so reader does not start early on stale value. */
+  *g_marker = 0u;
+  kws_fence_rw_local();
+  cache_writeback_pressure();
+
+  KWS_DSP_LOG("[dsp-kws] simple mode init marker=0x%08lx payload=0x%08lx bytes=%u\n",
+              (unsigned long)KWS_DSP_SIMPLE_MARKER_ADDR,
+              (unsigned long)KWS_DSP_SIMPLE_PAYLOAD_ADDR,
+              (unsigned)KWS_CASE_PAYLOAD_BYTES);
 }
 
 void app_main(void) {
-  if (KWS_DSP_LINK_MODE == KWS_LINK_MODE_FAST) {
-    stream_fast();
-  } else {
-    stream_safe();
-  }
+  int8_t payload[KWS_CASE_PAYLOAD_BYTES];
+  uint64_t total_mfcc_cycles = 0u;
+  uint64_t t0 = rdcycle64();
 
-#if KWS_DSP_USE_THREADLIB
-  mfcc_driver_mc_shutdown();
-#endif
+  memset(payload, 0, sizeof(payload));
+  build_case_payload(0u, payload, &total_mfcc_cycles);
+  publish_case_payload(payload, 0u);
+
+  {
+    uint64_t t1 = rdcycle64();
+    KWS_DSP_LOG("[dsp-kws] one-case complete mfcc_fail=%u mfcc_cycles=%llu total_cycles=%llu\n",
+                (unsigned)g_mfcc_fail_local,
+                (unsigned long long)total_mfcc_cycles,
+                (unsigned long long)(t1 - t0));
+  }
 
   while (1) {
     __asm__ volatile("wfi");

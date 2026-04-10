@@ -28,40 +28,17 @@
 #define KWS_BEARLY_SHM_BYTES KWS_SHARED_BYTES
 #endif
 
-#ifndef KWS_BEARLY_MAILBOX_ADDR
-#define KWS_BEARLY_MAILBOX_ADDR KWS_BEARLY_SHM_BASE
+/* Simple marker-based synchronization (no mailbox/ring). */
+#ifndef KWS_BEARLY_SIMPLE_MARKER_ADDR
+#define KWS_BEARLY_SIMPLE_MARKER_ADDR KWS_BEARLY_SHM_BASE
 #endif
 
-#ifndef KWS_BEARLY_RING_ADDR
-#define KWS_BEARLY_RING_ADDR (KWS_BEARLY_MAILBOX_ADDR + sizeof(kws_mailbox_t))
+#ifndef KWS_BEARLY_SIMPLE_PAYLOAD_ADDR
+#define KWS_BEARLY_SIMPLE_PAYLOAD_ADDR (KWS_BEARLY_SIMPLE_MARKER_ADDR + 4u)
 #endif
 
-#ifndef KWS_BEARLY_RING_BYTES
-#define KWS_BEARLY_RING_BYTES (KWS_BEARLY_SHM_BYTES - sizeof(kws_mailbox_t))
-#endif
-
-#ifndef KWS_BEARLY_RING_SLOTS
-#define KWS_BEARLY_RING_SLOTS (KWS_BEARLY_RING_BYTES / sizeof(kws_ring_slot_t))
-#endif
-
-#ifndef KWS_BEARLY_EXPECTED_MODE
-#define KWS_BEARLY_EXPECTED_MODE 0xFFFFFFFFu /* Accept writer-selected mode by default. */
-#endif
-
-#ifndef KWS_BEARLY_CACHE_LINE_BYTES
-#define KWS_BEARLY_CACHE_LINE_BYTES 64u
-#endif
-
-#ifndef KWS_BEARLY_CACHE_EVICT_BYTES
-#define KWS_BEARLY_CACHE_EVICT_BYTES (256u * 1024u)
-#endif
-
-/*
- * Run one full software cache-eviction sweep every N mailbox polls.
- * 1 = sweep every poll (strongest coherence, highest overhead).
- */
-#ifndef KWS_BEARLY_MAILBOX_EVICT_EVERY
-#define KWS_BEARLY_MAILBOX_EVICT_EVERY 1u
+#ifndef KWS_BEARLY_SIMPLE_MARKER_VALUE
+#define KWS_BEARLY_SIMPLE_MARKER_VALUE 0xFFFFFFFFu
 #endif
 
 #ifndef KWS_BEARLY_WAIT_LOG_EVERY
@@ -72,8 +49,12 @@
 #define KWS_BEARLY_CLEAR_SHM_ON_BOOT 1u
 #endif
 
-#ifndef KWS_BEARLY_PROGRESS_EVERY
-#define KWS_BEARLY_PROGRESS_EVERY 10u
+#ifndef KWS_BEARLY_CACHE_LINE_BYTES
+#define KWS_BEARLY_CACHE_LINE_BYTES 64u
+#endif
+
+#ifndef KWS_BEARLY_CACHE_EVICT_BYTES
+#define KWS_BEARLY_CACHE_EVICT_BYTES (256u * 1024u)
 #endif
 
 #ifndef KWS_BEARLY_USE_THREADLIB

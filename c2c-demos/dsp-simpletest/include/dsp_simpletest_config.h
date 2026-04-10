@@ -41,12 +41,17 @@
 #endif
 
 #ifndef DSP_SIMPLETEST_NUM_MESSAGES
-#define DSP_SIMPLETEST_NUM_MESSAGES 8u
+#define DSP_SIMPLETEST_NUM_MESSAGES 1u
 #endif
 
 /* Busy-wait cycles between sends so link timing is easier to observe. */
 #ifndef DSP_SIMPLETEST_SLEEP_CYCLES
 #define DSP_SIMPLETEST_SLEEP_CYCLES 2500000ULL
+#endif
+
+/* 1: stay in active nop loop after sending (keeps simulation alive), 0: wfi loop */
+#ifndef DSP_SIMPLETEST_ACTIVE_KEEPALIVE
+#define DSP_SIMPLETEST_ACTIVE_KEEPALIVE 1
 #endif
 
 #endif /* C2C_DSP_SIMPLETEST_CONFIG_H */

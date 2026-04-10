@@ -18,13 +18,6 @@ static inline uint64_t rdcycle64(void) {
   return x;
 }
 
-static void sleep_cycles(uint64_t cycles) {
-  uint64_t start = rdcycle64();
-  while ((rdcycle64() - start) < cycles) {
-    __asm__ volatile("nop");
-  }
-}
-
 static uint32_t ring_slots(void) {
   return DSP_SIMPLETEST_REMOTE_RING_BYTES / (uint32_t)sizeof(simpletest_slot_t);
 }
@@ -90,7 +83,6 @@ void app_init(void) {
 
 void app_main(void) {
   uint32_t slots = ring_slots();
-  char msg_buf[SIMPLETEST_MSG_MAX_BYTES];
 
   if (slots == 0u) {
     DSP_SIMPLETEST_LOG("[dsp-simpletest] invalid ring: slots=0\n");
@@ -106,18 +98,20 @@ void app_main(void) {
                      (unsigned)slots,
                      (unsigned long long)DSP_SIMPLETEST_SLEEP_CYCLES);
 
-  for (uint32_t i = 0; i < DSP_SIMPLETEST_NUM_MESSAGES; ++i) {
-    snprintf(msg_buf, sizeof(msg_buf), "hello world %u from dsp", (unsigned)i);
-    send_message(i + 1u, i, msg_buf, slots);
-    sleep_cycles(DSP_SIMPLETEST_SLEEP_CYCLES);
-  }
+  /* Simple mode: send exactly one message. */
+  send_message(1u, 0u, "hello world from dsp", slots);
+  (void)DSP_SIMPLETEST_NUM_MESSAGES; /* kept as config knob for future extension */
 
   g_mbox->flags = SIMPLETEST_FLAG_WRITER_READY | SIMPLETEST_FLAG_STREAM_DONE;
   simpletest_fence_rw();
-  DSP_SIMPLETEST_LOG("[dsp-simpletest] done sent=%u\n", (unsigned)DSP_SIMPLETEST_NUM_MESSAGES);
+  DSP_SIMPLETEST_LOG("[dsp-simpletest] done sent=1 (entering keepalive loop)\n");
 
   while (1) {
+#if DSP_SIMPLETEST_ACTIVE_KEEPALIVE
+    __asm__ volatile("nop");
+#else
     __asm__ volatile("wfi");
+#endif
   }
 }
 

@@ -78,6 +78,20 @@
   * \return int: 0 on success, -1 if kernel_length is invalid.
   */
  int conv_set_params_kernel_only(uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length);
+
+/**
+ * \brief Begins a preconfigured streaming session for repeated runs.
+ *
+ * This performs one-time MMIO reset deassert, clear deassert, stop, and writes
+ * fixed parameters (length, dilation, kernel length encoding). Use
+ * perform_convolution_1D_preconfigured() for each chunk in the steady-state loop.
+ *
+ * \param input_length Total number of FP32 elements in each input run.
+ * \param dilation Dilation factor used for all runs in this session.
+ * \param kernel_length Number of FP32 elements in the kernel (8 or 16).
+ * \return int: 0 on success, -1 on invalid kernel_length.
+ */
+int conv_begin_preconfigured_session(uint32_t input_length, uint16_t dilation, uint8_t kernel_length);
  
  /**
   * \brief Streams a batch of input data (2 FP32 per 64-bit packet) to the accelerator's FIFO via MMIO.
@@ -173,6 +187,31 @@
   */
  
  uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation);
+
+/**
+ * @brief Perform one run using a preconfigured session.
+ *
+ * Expected usage:
+ *  1) conv_begin_preconfigured_session(...)
+ *  2) In a loop, call perform_convolution_1D_preconfigured(...)
+ *
+ * This function uses the same interleaved MMIO hot loop as perform_convolution_1D
+ * but skips one-time parameter programming per run. Kernel data is still loaded
+ * each run because the accelerator start path expects kernel queue activity.
+ *
+ * \param input Pointer to input FP32 buffer.
+ * \param input_length Input FP32 element count (must match session length).
+ * \param kernel Pointer to kernel FP32 buffer.
+ * \param kernel_length Kernel FP32 element count (must match session length; 8 or 16).
+ * \param output Pointer to output FP32 buffer.
+ * \return uint8_t: Final hardware status, or STATUS_INVALID on session mismatch.
+ */
+uint8_t perform_convolution_1D_preconfigured(
+    uint32_t* input,
+    uint32_t input_length,
+    uint32_t* kernel,
+    uint8_t kernel_length,
+    uint32_t* output);
  
  
  // --- Utility 1D Convolution Driver Functions (Golden Model) ---

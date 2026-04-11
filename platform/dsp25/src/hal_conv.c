@@ -17,6 +17,31 @@ static inline __attribute__((always_inline)) uint64_t conv_read_cycles(void) {
   return c;
 }
 
+static uint8_t g_conv_session_valid = 0U;
+static uint32_t g_conv_session_input_length = 0U;
+static uint8_t g_conv_session_kernel_length = 0U;
+
+static inline int conv_kernel_meta(uint8_t kernel_length, size_t *kernel_packets, uint8_t *kernel_len_encoding) {
+  if (kernel_length == 8U) {
+    *kernel_packets = 4U;
+    *kernel_len_encoding = 0U;
+    return 0;
+  }
+  if (kernel_length == 16U) {
+    *kernel_packets = 8U;
+    *kernel_len_encoding = 1U;
+    return 0;
+  }
+  return -1;
+}
+
+static inline void conv_write_kernel_packets(uint32_t *kernel, size_t kernel_packets) {
+  for (size_t i = 0U; i < kernel_packets; ++i) {
+    size_t element_idx = i * FP32_PER_PACKET;
+    mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + element_idx)));
+  }
+}
+
 static bool dma_wait_till_inactive_timeout(int cycle_no_inflight, uint64_t timeout_cycles) {
   uint64_t start = conv_read_cycles();
   while ((conv_read_cycles() - start) < timeout_cycles) {
@@ -54,6 +79,7 @@ void conv_init() {
   reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);  
   reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);   
   reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 1);
+  g_conv_session_valid = 0U;
 }
 
 // This function now ONLY writes parameters (Length, Dilation, Kernel)
@@ -67,21 +93,42 @@ int conv_set_params_kernel_only(uint32_t input_length, uint16_t dilation, uint32
   reg_write32((uintptr_t)(MMIO_BASE + CONV_LENGTH_ADDR), input_length);
   reg_write16((uintptr_t)(MMIO_BASE + CONV_DILATION_ADDR), dilation);
 
-  // Write kernel data and kernel length encoding (One-time setup)
-  if (kernel_length == 8) {
-    for (int i = 0; i < 8; i += 2) {
-      mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
-    }
-    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 0);
-  } else if (kernel_length == 16) {
-    for (int i = 0; i < 16; i += 2) {
-      mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_KERNEL_ADDR), *((uint64_t*) (kernel + i)));
-    }
-    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), 1);  
-  } else {
-    return -1;  
+  size_t kernel_packets = 0U;
+  uint8_t kernel_len_encoding = 0U;
+  if (conv_kernel_meta(kernel_length, &kernel_packets, &kernel_len_encoding) != 0) {
+    return -1;
   }
 
+  // Write kernel data and kernel length encoding
+  conv_write_kernel_packets(kernel, kernel_packets);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), kernel_len_encoding);
+
+  return 0;
+}
+
+int conv_begin_preconfigured_session(uint32_t input_length, uint16_t dilation, uint8_t kernel_length) {
+  size_t kernel_packets = 0U;
+  uint8_t kernel_len_encoding = 0U;
+  if (conv_kernel_meta(kernel_length, &kernel_packets, &kernel_len_encoding) != 0) {
+    return -1;
+  }
+
+  (void)kernel_packets; // kernel packets are consumed by per-run load, but validate here.
+
+  conv_init();
+
+  // Deassert reset/clear and program fixed run configuration once.
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_MMIO_RESET), 0);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);
+
+  reg_write32((uintptr_t)(MMIO_BASE + CONV_LENGTH_ADDR), input_length);
+  reg_write16((uintptr_t)(MMIO_BASE + CONV_DILATION_ADDR), dilation);
+  reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), kernel_len_encoding);
+
+  g_conv_session_input_length = input_length;
+  g_conv_session_kernel_length = kernel_length;
+  g_conv_session_valid = 1U;
   return 0;
 }
 
@@ -167,6 +214,73 @@ uint8_t perform_convolution_1D(
     }
 
     // 4. Final Status Read (Output fully drained)
+    return get_register_status();
+}
+
+uint8_t perform_convolution_1D_preconfigured(
+    uint32_t* input,
+    uint32_t input_length,
+    uint32_t* kernel,
+    uint8_t kernel_length,
+    uint32_t* output
+) {
+    if (g_conv_session_valid == 0U) {
+        return STATUS_INVALID;
+    }
+
+    if (input_length != g_conv_session_input_length || kernel_length != g_conv_session_kernel_length) {
+        return STATUS_INVALID;
+    }
+
+    if ((input_length % FP32_PER_PACKET) != 0U || (kernel_length % FP32_PER_PACKET) != 0U) {
+        return STATUS_INVALID;
+    }
+
+    size_t kernel_packets = 0U;
+    uint8_t kernel_len_encoding = 0U;
+    if (conv_kernel_meta(kernel_length, &kernel_packets, &kernel_len_encoding) != 0) {
+        return STATUS_INVALID;
+    }
+
+    // Per-run reset of run state, but keep MMIO reset and fixed params intact.
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_START_ADDR), 0);
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 1);
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_CLEAR_ADDR), 0);
+
+    // Re-load kernel each run: start condition in FSM expects kernel queue activity.
+    conv_write_kernel_packets(kernel, kernel_packets);
+    reg_write8((uintptr_t)(MMIO_BASE + CONV_KERNEL_LEN_ADDR), kernel_len_encoding);
+
+    size_t input_packets = input_length / FP32_PER_PACKET;
+    size_t output_packets = input_packets + kernel_packets;
+
+    size_t preload_packets = input_packets;
+    if (preload_packets > FIFO_CAPACITY_PACKETS) {
+        preload_packets = FIFO_CAPACITY_PACKETS;
+    }
+
+    for (size_t i = 0; i < preload_packets; ++i) {
+        size_t element_idx = i * FP32_PER_PACKET;
+        mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + element_idx)));
+    }
+
+    start_conv();
+
+    size_t in_packet_idx = preload_packets;
+    for (size_t out_packet_idx = 0; out_packet_idx < output_packets; ++out_packet_idx) {
+        if (in_packet_idx < input_packets) {
+            size_t in_start_element = in_packet_idx * FP32_PER_PACKET;
+            mmio_write64_fast((uintptr_t)(MMIO_BASE + CONV_INPUT_ADDR), *((uint64_t*) (input + in_start_element)));
+            in_packet_idx++;
+        }
+
+        uint64_t current_out = mmio_read64_fast((uintptr_t)(MMIO_BASE + CONV_OUTPUT_ADDR));
+        uint32_t *unpacked = (uint32_t *) &current_out;
+        size_t out_start_element = out_packet_idx * FP32_PER_PACKET;
+        output[out_start_element] = unpacked[0];
+        output[out_start_element + 1U] = unpacked[1];
+    }
+
     return get_register_status();
 }
 

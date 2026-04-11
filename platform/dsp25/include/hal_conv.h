@@ -55,8 +55,10 @@
  } ConvStatusBits;
  
  
- // Accelerator's FIFO capacity in terms of 64-bit packets (2 FP32 each)
- #define FIFO_CAPACITY_PACKETS 8 
+ // Conservative software preload cap in 64-bit packets (2 FP32 each).
+ // Keep this at 8 for compatibility with taped-out revisions that may stall
+ // on larger pre-start queue fills.
+ #define FIFO_CAPACITY_PACKETS 8
  #define FP32_PER_PACKET 2
  
  // --- Core Driver Functions ---
@@ -76,6 +78,20 @@
   * \return int: 0 on success, -1 if kernel_length is invalid.
   */
  int conv_set_params_kernel_only(uint32_t input_length, uint16_t dilation, uint32_t* kernel, uint8_t kernel_length);
+
+/**
+ * \brief Begins a preconfigured streaming session for repeated runs.
+ *
+ * This performs one-time MMIO reset deassert, clear deassert, stop, and writes
+ * fixed parameters (length, dilation, kernel length encoding). Use
+ * perform_convolution_1D_preconfigured() for each chunk in the steady-state loop.
+ *
+ * \param input_length Total number of FP32 elements in each input run.
+ * \param dilation Dilation factor used for all runs in this session.
+ * \param kernel_length Number of FP32 elements in the kernel (8 or 16).
+ * \return int: 0 on success, -1 on invalid kernel_length.
+ */
+int conv_begin_preconfigured_session(uint32_t input_length, uint16_t dilation, uint8_t kernel_length);
  
  /**
   * \brief Streams a batch of input data (2 FP32 per 64-bit packet) to the accelerator's FIFO via MMIO.
@@ -87,7 +103,6 @@
  
  /**
   * \brief Reads a batch of output data (2 FP32 per 64-bit packet) from the accelerator's FIFO via MMIO.
-  * * This function busy-waits using get_register_out_count() to ensure data is available before reading.
   * \param output Pointer to the output buffer.
   * \param start_element Starting FP32 element index in the output buffer for this batch.
   * \param num_packets Number of 64-bit packets (2 FP32 each) to read.
@@ -135,28 +150,25 @@
  
   
  /**
-  * @brief Perform a 1D convolution using the streaming MMIO hardware accelerator.
+ * @brief Perform a 1D convolution using the streaming MMIO hardware accelerator.
   *
-  * This function first initializes the accelerator and preloads the kernel queue, then starts the accelerator.
-  * Then this function streams input data into the 1D accelerator and retrieves the output in batches of 8 packets (each packet is two FP32 numbers).
+  * This function initializes and configures the accelerator, preloads a bounded
+  * number of input packets, starts the engine, then performs 1:1 interleaved
+  * streaming in the hot loop:
+  *   - write next input packet when available
+  *   - read one output packet
   *
-  * The accelerator has a limited FIFO capacity (FIFO_CAPACITY_PACKETS), so the
-  * function dynamically batches input and output transfers to avoid overflow.
-  * It spin-waits for output availability using get_register_out_count() inside
-  * conv_read_output_batch().
-  * 
-  * FIFO_CAPACITY_PACKETS = 16 because that is the size of the input/output vector queues
+  * No output-count polling is used in the hot loop.
   *
   * Input and output data are transferred using MMIO-based functions:
-  *    - conv_stream_input_batch()
-  *    - conv_read_output_batch()
+  *    - raw 64-bit MMIO packet writes and reads
   *
   * Streaming Protocol Summary:
   *  - Input and kernel values must be packetized (FP32_PER_PACKET floats).
   *  - input_packets  = input_length  / FP32_PER_PACKET
   *  - kernel_packets = kernel_length / FP32_PER_PACKET
   *  - output_packets = input_packets + kernel_packets
-  *  - The hardware begins producing output after enough input data arrives.
+  *  - Output is consumed as packets: 2 FP32 per packet.
   * 
   * FP32_PER_PACKET = 2 because the input/output vector queues are 64 bits wide so two FP32 numbers fit in one entry of the input/output vector queues
   *
@@ -169,13 +181,37 @@
   * \param dilation The dilation factor.
   * \return uint8_t: Hardware status register after output is fully drained.
   *
-  * @note This is an MMIO-based (non-DMA) streaming driver. All synchronization
-  *       is handled via register polling inside the read/write helpers.
+  * @note This is an MMIO-based (non-DMA) streaming driver.
   * @note The output size (in packets) is determined by the hardware protocol.
   * @note The function will block until all expected output packets are read.
   */
  
  uint8_t perform_convolution_1D(uint32_t* input, uint32_t input_length, uint32_t* kernel, uint8_t kernel_length, uint32_t* output, uint16_t dilation);
+
+/**
+ * @brief Perform one run using a preconfigured session.
+ *
+ * Expected usage:
+ *  1) conv_begin_preconfigured_session(...)
+ *  2) In a loop, call perform_convolution_1D_preconfigured(...)
+ *
+ * This function uses the same interleaved MMIO hot loop as perform_convolution_1D
+ * but skips one-time parameter programming per run. Kernel data is still loaded
+ * each run because the accelerator start path expects kernel queue activity.
+ *
+ * \param input Pointer to input FP32 buffer.
+ * \param input_length Input FP32 element count (must match session length).
+ * \param kernel Pointer to kernel FP32 buffer.
+ * \param kernel_length Kernel FP32 element count (must match session length; 8 or 16).
+ * \param output Pointer to output FP32 buffer.
+ * \return uint8_t: Final hardware status, or STATUS_INVALID on session mismatch.
+ */
+uint8_t perform_convolution_1D_preconfigured(
+    uint32_t* input,
+    uint32_t input_length,
+    uint32_t* kernel,
+    uint8_t kernel_length,
+    uint32_t* output);
  
  
  // --- Utility 1D Convolution Driver Functions (Golden Model) ---
@@ -214,7 +250,7 @@
 
 // --- DMA Configuration ---
 #define DMA_INPUT_CORE      3
-#define DMA_KERNEL_CORE     0
+#define DMA_KERNEL_CORE     2
 #define DMA_OUTPUT_CORE     5
 #define DMA_WORD_LOGW       3       // 8 bytes (64-bit)
 #define DMA_WORD_INC        8       // increment in bytes for memory-side address
@@ -226,7 +262,7 @@
 #define FP32_PER_PACKET         2
 
 // TODO: needs documentation
-void dma_1dConvDriver(
+bool dma_1dConvDriver(
     uint32_t *input_buffer_ptr,
     uint32_t *output_buffer_ptr,
     uint32_t *kernel_buffer_ptr,

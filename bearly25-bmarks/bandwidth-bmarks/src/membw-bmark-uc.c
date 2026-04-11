@@ -33,6 +33,40 @@ typedef struct {
   bool correct;
 } memcpy_result_t;
 
+static uint64_t throughput_x100(uint32_t bytes, uint64_t cycles, uint64_t bytes_per_unit) {
+  uint64_t freq_hz;
+  uint64_t numer;
+  uint64_t denom;
+
+  if (cycles == 0u || bytes_per_unit == 0u || chip_freq <= 0) {
+    return 0u;
+  }
+
+  freq_hz = (uint64_t)chip_freq;
+  numer = (uint64_t)bytes * freq_hz * 100u;
+  denom = cycles * bytes_per_unit;
+
+  if (denom == 0u) {
+    return 0u;
+  }
+
+  return numer / denom;
+}
+
+static void log_bandwidth_result(const char *label, const memcpy_result_t *result) {
+  uint64_t mbps_x100 = throughput_x100(TEST_SIZE, result->cycles, 1000000u);
+  uint64_t mibps_x100 = throughput_x100(TEST_SIZE, result->cycles, 1048576u);
+
+  printf("[%s] cycles=%llu bw=%llu.%02llu MB/s (%llu.%02llu MiB/s) pass=%d\n",
+         label,
+         (unsigned long long)result->cycles,
+         (unsigned long long)(mbps_x100 / 100u),
+         (unsigned long long)(mbps_x100 % 100u),
+         (unsigned long long)(mibps_x100 / 100u),
+         (unsigned long long)(mibps_x100 % 100u),
+         result->correct ? 1 : 0);
+}
+
 void init_buffer(volatile uint32_t* buf, uint32_t size, uint32_t seed) {
   MTRand r = seedRand(seed);
   for (int i = 0; i < size/8; i++) {
@@ -87,6 +121,7 @@ void cpu_memcpy(int seed) {
   result.cycles = get_cycles() - time;
   end_roi();
   result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  log_bandwidth_result("cpu_memcpy", &result);
   xmit_payload_packet(&result, 9);
 }
 
@@ -102,6 +137,7 @@ void glibc_memcpy(int seed) {
   result.cycles = get_cycles() - time;
   end_roi();
   result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  log_bandwidth_result("glibc_memcpy", &result);
   xmit_payload_packet(&result, 9);
 }
 
@@ -130,6 +166,7 @@ void rvv_memcpy(int seed) {
   result.cycles = get_cycles() - time;
   end_roi();
   result.correct = check_buffer(dstbuf, TEST_SIZE, seed);
+  log_bandwidth_result("rvv_memcpy", &result);
   xmit_payload_packet(&result, 9);
 }
 

@@ -905,8 +905,17 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
            MFCC_BENCH_ENABLE_SP1024X23X12_F16);
   }
 
+  uint64_t wall_t0, wall_t1;
+  asm volatile("rdcycle %0" : "=r"(wall_t0));
+
   for (uint32_t tc = 0; tc < MFCC_BENCH_NUM_CASES; tc++) {
     run_case(&g_cases[tc], tc);
+  }
+
+  asm volatile("rdcycle %0" : "=r"(wall_t1));
+  if (mfcc_bench_is_print_hart()) {
+    printf("\n  wall-clock cycles (all cases): %llu\n",
+           (unsigned long long)(wall_t1 - wall_t0));
   }
 
   print_global_cycle_summary();
@@ -915,7 +924,14 @@ static void run_suite_for_frequency(uint64_t frequency_hz) {
 
 void app_init(void) {
   init_test(target_frequency);
-  (void)setup_once();
+  if (setup_once() != 0) {
+    if (mfcc_bench_is_print_hart()) {
+      printf("MFCC benchmark setup failed\n");
+    }
+    while (1) {
+      asm volatile("wfi");
+    }
+  }
 }
 
 void app_main(void) {
@@ -953,12 +969,8 @@ int main(void) {
 #endif
 }
 
-int __main(void) {
-#if MFCC_BENCH_ENABLE_PLL_SWEEP
-  return main();
-#else
-  app_init();
-  app_main();
-  return 0;
-#endif
+void __attribute__((weak, noreturn)) __main(void) {
+  while (1) {
+    asm volatile("wfi");
+  }
 }

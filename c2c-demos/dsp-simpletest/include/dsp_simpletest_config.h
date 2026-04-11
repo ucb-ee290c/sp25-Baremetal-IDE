@@ -1,0 +1,65 @@
+#ifndef C2C_DSP_SIMPLETEST_CONFIG_H
+#define C2C_DSP_SIMPLETEST_CONFIG_H
+
+#include <stdio.h>
+
+#include "chip_config.h"
+#include "simpletest_proto.h"
+
+#ifndef DSP_SIMPLETEST_LOG_ENABLE
+#define DSP_SIMPLETEST_LOG_ENABLE 1
+#endif
+
+#if DSP_SIMPLETEST_LOG_ENABLE
+#define DSP_SIMPLETEST_LOG(...) do { printf(__VA_ARGS__); } while (0)
+#else
+#define DSP_SIMPLETEST_LOG(...) do { } while (0)
+#endif
+
+#ifndef DSP_SIMPLETEST_TARGET_FREQUENCY_HZ
+#define DSP_SIMPLETEST_TARGET_FREQUENCY_HZ 500000000ULL
+#endif
+
+#ifndef DSP_SIMPLETEST_SHARED_BASE
+#define DSP_SIMPLETEST_SHARED_BASE SIMPLETEST_SHARED_BASE_ADDR
+#endif
+
+#ifndef DSP_SIMPLETEST_SHARED_BYTES
+#define DSP_SIMPLETEST_SHARED_BYTES SIMPLETEST_SHARED_BYTES
+#endif
+
+#ifndef DSP_SIMPLETEST_REMOTE_MAILBOX_ADDR
+#define DSP_SIMPLETEST_REMOTE_MAILBOX_ADDR DSP_SIMPLETEST_SHARED_BASE
+#endif
+
+#ifndef DSP_SIMPLETEST_REMOTE_RING_ADDR
+#define DSP_SIMPLETEST_REMOTE_RING_ADDR (DSP_SIMPLETEST_REMOTE_MAILBOX_ADDR + sizeof(simpletest_mailbox_t))
+#endif
+
+#ifndef DSP_SIMPLETEST_REMOTE_RING_BYTES
+#define DSP_SIMPLETEST_REMOTE_RING_BYTES (DSP_SIMPLETEST_SHARED_BYTES - sizeof(simpletest_mailbox_t))
+#endif
+
+#ifndef DSP_SIMPLETEST_NUM_MESSAGES
+#define DSP_SIMPLETEST_NUM_MESSAGES 1u
+#endif
+
+/* Busy-wait cycles between sends so link timing is easier to observe. */
+#ifndef DSP_SIMPLETEST_SLEEP_CYCLES
+#define DSP_SIMPLETEST_SLEEP_CYCLES 2500000ULL
+#endif
+
+/* 1: stay in active nop loop after sending (keeps simulation alive), 0: wfi loop */
+#ifndef DSP_SIMPLETEST_ACTIVE_KEEPALIVE
+#define DSP_SIMPLETEST_ACTIVE_KEEPALIVE 1
+#endif
+
+#ifndef DSP_SIMPLETEST_CACHE_LINE_BYTES
+#define DSP_SIMPLETEST_CACHE_LINE_BYTES 64u
+#endif
+
+#ifndef DSP_SIMPLETEST_CACHE_EVICT_BYTES
+#define DSP_SIMPLETEST_CACHE_EVICT_BYTES (256u * 1024u)
+#endif
+
+#endif /* C2C_DSP_SIMPLETEST_CONFIG_H */

@@ -46,6 +46,20 @@ typedef struct {
   uint64_t address;
 } dma_interrupt_t;
 
+#ifndef DMA_CORE_CHANNEL_COUNT
+#define DMA_CORE_CHANNEL_COUNT       (2U)
+#endif
+
+#ifndef DMA_PERIPHERAL_CHANNEL_COUNT
+#define DMA_PERIPHERAL_CHANNEL_COUNT (5U)
+#endif
+
+/* Channel numbering is global:
+ * - core channels are [0, DMA_CORE_CHANNEL_COUNT)
+ * - peripheral channels are [DMA_CORE_CHANNEL_COUNT, DMA_TOTAL_CHANNEL_COUNT)
+ */
+#define DMA_TOTAL_CHANNEL_COUNT (DMA_CORE_CHANNEL_COUNT + DMA_PERIPHERAL_CHANNEL_COUNT)
+
 #define DMA_MODE_INTERRUPT_EN   (0x1U)
 #define DMA_MODE_ADDRESS_GATING (0x2U)
 

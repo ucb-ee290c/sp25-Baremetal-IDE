@@ -207,6 +207,7 @@ endif()
 #################################
 
 add_subdirectory(app)
+add_subdirectory(testc2c)
 add_subdirectory(bearly25-tests)
 add_subdirectory(bearly25-bmarks)
 add_subdirectory(bearly25-demos)
@@ -215,6 +216,7 @@ if(BUILD_DSP25_TESTS)
   add_subdirectory(dsp25-tests)
 endif()
 add_subdirectory(c2c25-tests)
+add_subdirectory(c2c-demos)
 add_subdirectory(dsp25-bmarks)
 
 

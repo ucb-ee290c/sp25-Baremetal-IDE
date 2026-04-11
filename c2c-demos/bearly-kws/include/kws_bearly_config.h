@@ -1,0 +1,64 @@
+#ifndef C2C_BEARLY_KWS_CONFIG_H
+#define C2C_BEARLY_KWS_CONFIG_H
+
+#include <stdio.h>
+
+#include "chip_config.h"
+#include "kws_proto.h"
+
+#ifndef KWS_BEARLY_LOG_ENABLE
+#define KWS_BEARLY_LOG_ENABLE 1
+#endif
+
+#if KWS_BEARLY_LOG_ENABLE
+#define KWS_BEARLY_LOG(...) do { printf(__VA_ARGS__); } while (0)
+#else
+#define KWS_BEARLY_LOG(...) do { } while (0)
+#endif
+
+#ifndef KWS_BEARLY_TARGET_FREQUENCY_HZ
+#define KWS_BEARLY_TARGET_FREQUENCY_HZ 500000000ULL
+#endif
+
+#ifndef KWS_BEARLY_SHM_BASE
+#define KWS_BEARLY_SHM_BASE KWS_SHARED_BASE_ADDR
+#endif
+
+#ifndef KWS_BEARLY_SHM_BYTES
+#define KWS_BEARLY_SHM_BYTES KWS_SHARED_BYTES
+#endif
+
+/* Simple marker-based synchronization (no mailbox/ring). */
+#ifndef KWS_BEARLY_SIMPLE_MARKER_ADDR
+#define KWS_BEARLY_SIMPLE_MARKER_ADDR KWS_BEARLY_SHM_BASE
+#endif
+
+#ifndef KWS_BEARLY_SIMPLE_PAYLOAD_ADDR
+#define KWS_BEARLY_SIMPLE_PAYLOAD_ADDR (KWS_BEARLY_SIMPLE_MARKER_ADDR + 4u)
+#endif
+
+#ifndef KWS_BEARLY_SIMPLE_MARKER_VALUE
+#define KWS_BEARLY_SIMPLE_MARKER_VALUE 0xFFFFFFFFu
+#endif
+
+#ifndef KWS_BEARLY_WAIT_LOG_EVERY
+#define KWS_BEARLY_WAIT_LOG_EVERY 200000u
+#endif
+
+#ifndef KWS_BEARLY_CLEAR_SHM_ON_BOOT
+#define KWS_BEARLY_CLEAR_SHM_ON_BOOT 0u
+#endif
+
+#ifndef KWS_BEARLY_CACHE_LINE_BYTES
+#define KWS_BEARLY_CACHE_LINE_BYTES 64u
+#endif
+
+#ifndef KWS_BEARLY_CACHE_EVICT_BYTES
+#define KWS_BEARLY_CACHE_EVICT_BYTES (256u * 1024u)
+#endif
+
+#ifndef KWS_BEARLY_USE_THREADLIB
+#define KWS_BEARLY_USE_THREADLIB 1
+#endif
+
+#endif /* C2C_BEARLY_KWS_CONFIG_H */

@@ -47,7 +47,7 @@ OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY {
-  SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 32K
+  SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 64K
   FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 16M
   DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 256M
 }
@@ -61,7 +61,7 @@ SECTIONS {
   PROVIDE(__stack_size = __stack_size);
 
   /* Default heap size */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 4K;
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 1M;
   PROVIDE(__heap_size = __heap_size);
   
   /*

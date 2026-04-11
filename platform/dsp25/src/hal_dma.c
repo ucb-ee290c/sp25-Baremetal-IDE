@@ -59,6 +59,14 @@ static uintptr_t dma_channel_offset(uint32_t channel) {
   return ((uintptr_t)channel) * CHANNEL_OFFSET;
 }
 
+static bool dma_channel_is_core(uint32_t channel) {
+  return channel < DMA_CORE_CHANNEL_COUNT;
+}
+
+static bool dma_channel_is_peripheral(uint32_t channel) {
+  return (channel >= DMA_CORE_CHANNEL_COUNT) && (channel < DMA_TOTAL_CHANNEL_COUNT);
+}
+
 static uintptr_t dma_core_offset(size_t mhartid) {
   return ((uintptr_t)mhartid) * INTERRUPT_OFFSET;
 }
@@ -129,6 +137,13 @@ static uint8_t mode_from_transaction(dma_transaction_t transaction) {
   return mode;
 }
 
+static uint8_t default_mode_for_channel(uint32_t channel) {
+  if (dma_channel_is_core(channel)) {
+    return DMA_MODE_INTERRUPT_EN;
+  }
+  return (uint8_t)(DMA_MODE_INTERRUPT_EN | DMA_MODE_ADDRESS_GATING);
+}
+
 static bool set_DMA_common(uint32_t channel, dma_transaction_t transaction, bool retry) {
   uintptr_t channel_offset = dma_channel_offset(channel);
   uint32_t lock_val;
@@ -196,6 +211,14 @@ void machine_external_interrupt_callback(void) {
 
 bool set_DMA_C(uint32_t channel, dma_transaction_t transaction, bool retry) {
   uintptr_t channel_offset = dma_channel_offset(channel);
+  uint8_t mode = mode_from_transaction(transaction);
+
+  if (!dma_channel_is_core(channel)) {
+    printf("[dma] set_DMA_C invalid core channel %u (core channels: 0-%u)\n",
+           (unsigned)channel,
+           (unsigned)(DMA_CORE_CHANNEL_COUNT - 1U));
+    return false;
+  }
 
   if (!set_DMA_common(channel, transaction, retry)) {
     return false;
@@ -203,22 +226,39 @@ bool set_DMA_C(uint32_t channel, dma_transaction_t transaction, bool retry) {
 
   reg_write16(DMA_INC_R + channel_offset, transaction.inc_r);
   reg_write16(DMA_INC_W + channel_offset, transaction.inc_w);
-  reg_write8(DMA_MODE + channel_offset, mode_from_transaction(transaction));
+  if (mode != default_mode_for_channel(channel)) {
+    reg_write8(DMA_MODE + channel_offset, mode);
+  }
 
   return true;
 }
 
 bool set_DMA_P(uint32_t channel, dma_transaction_t transaction, bool retry) {
   uintptr_t channel_offset = dma_channel_offset(channel);
+  uint8_t mode = mode_from_transaction(transaction);
+
+  if (!dma_channel_is_peripheral(channel)) {
+    printf("[dma] set_DMA_P invalid peripheral channel %u (peripheral channels: %u-%u)\n",
+           (unsigned)channel,
+           (unsigned)DMA_CORE_CHANNEL_COUNT,
+           (unsigned)(DMA_TOTAL_CHANNEL_COUNT - 1U));
+    return false;
+  }
 
   if (!set_DMA_common(channel, transaction, retry)) {
     return false;
   }
 
-  reg_write16(DMA_INC_R + channel_offset, transaction.inc_r);
-  reg_write16(DMA_INC_W + channel_offset, transaction.inc_w);
+  if (transaction.inc_r != 0U) {
+    reg_write16(DMA_INC_R + channel_offset, transaction.inc_r);
+  }
+  if (transaction.inc_w != 0U) {
+    reg_write16(DMA_INC_W + channel_offset, transaction.inc_w);
+  }
   reg_write8(DMA_PERIPHERAL_ID + channel_offset, transaction.peripheral_id);
-  reg_write8(DMA_MODE + channel_offset, mode_from_transaction(transaction));
+  if (mode != default_mode_for_channel(channel)) {
+    reg_write8(DMA_MODE + channel_offset, mode);
+  }
 
   return true;
 }
@@ -239,7 +279,9 @@ int dma_status(void) {
 }
 
 void dma_reset(void) {
+  /* Issue a reset pulse; holding this bit high can keep DMA logic in reset. */
   reg_write8(DMA_RESET_REG, 1U);
+  reg_write8(DMA_RESET_REG, 0U);
 }
 
 void dma_wait_till_inactive(int cycle_no_inflight) {

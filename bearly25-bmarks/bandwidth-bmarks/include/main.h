@@ -63,13 +63,13 @@ extern "C" {
 #endif
 
 #ifndef BW_TARGET_FREQUENCY_HZ
-#define BW_TARGET_FREQUENCY_HZ   50000000ULL
+#define BW_TARGET_FREQUENCY_HZ   750000000ULL
 #endif
 
 // 0: single-frequency mode
 // 1: iterate over BW_PLL_FREQ_LIST frequencies
 #ifndef BW_ENABLE_PLL_SWEEP
-#define BW_ENABLE_PLL_SWEEP      1
+#define BW_ENABLE_PLL_SWEEP      0
 #endif
 
 #ifndef BW_PLL_SWEEP_SLEEP_MS
@@ -135,12 +135,45 @@ extern "C" {
 #define BW_CACHE_EVICT_BYTES     (512u * 1024u)
 #endif
 
-#ifndef BW_DRAM_SRC_BASE
-#define BW_DRAM_SRC_BASE         0x8FFE0000UL
+#ifndef BW_DRAM_REGION_BASE
+#define BW_DRAM_REGION_BASE      0x80000000UL
 #endif
 
+#ifndef BW_DRAM_REGION_BYTES
+#define BW_DRAM_REGION_BYTES     (256u * 1024u * 1024u)
+#endif
+
+#ifndef BW_DRAM_REGION_TOP
+#define BW_DRAM_REGION_TOP       (BW_DRAM_REGION_BASE + BW_DRAM_REGION_BYTES)
+#endif
+
+/*
+ * Place src/dst at the top of DRAM so they:
+ * 1) stay far from linked program/heap/stack growth near DRAM base
+ * 2) automatically stay non-overlapping as BW_DRAM_BYTES changes.
+ */
 #ifndef BW_DRAM_DST_BASE
-#define BW_DRAM_DST_BASE         0x8FFF0000UL
+#define BW_DRAM_DST_BASE         (BW_DRAM_REGION_TOP - BW_DRAM_BYTES)
+#endif
+
+#ifndef BW_DRAM_SRC_BASE
+#define BW_DRAM_SRC_BASE         (BW_DRAM_REGION_TOP - (2u * BW_DRAM_BYTES))
+#endif
+
+#if (2u * BW_DRAM_BYTES) > BW_DRAM_REGION_BYTES
+#error "BW_DRAM_BYTES too large: need 2*BW_DRAM_BYTES within BW_DRAM_REGION_BYTES"
+#endif
+
+#if BW_DRAM_SRC_BASE < BW_DRAM_REGION_BASE
+#error "BW_DRAM_SRC_BASE underflows DRAM region"
+#endif
+
+#if (BW_DRAM_SRC_BASE + BW_DRAM_BYTES) > BW_DRAM_DST_BASE
+#error "DRAM src/dst regions overlap; adjust BW_DRAM_BYTES or DRAM base settings"
+#endif
+
+#if (BW_DRAM_DST_BASE + BW_DRAM_BYTES) > BW_DRAM_REGION_TOP
+#error "BW_DRAM_DST_BASE+BW_DRAM_BYTES exceeds DRAM region"
 #endif
 
 #ifndef BW_SCRATCHPAD_BASE

@@ -1,5 +1,8 @@
 ![](docs/logo_b.png)
 
+#FOR SP26 SLICE RETREAT PEOPLE, COMPILE LIKE THIS:
+`make build CHIP=bearly25 PLATFORM=SIMS TARGET=boraiq VECNN=1`
+
 # Chipyard Baremetal-IDE
 
 ![CI-status](https://img.shields.io/github/actions/workflow/status/ucb-bar/Baremetal-IDE/make-examples.yaml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=fff) ![API-Docs-status](https://img.shields.io/github/actions/workflow/status/ucb-bar/Baremetal-IDE/build-docs.yaml?branch=main&style=flat-square&label=Docs&logo=googledocs&logoColor=fff)

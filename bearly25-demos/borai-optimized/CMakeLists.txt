@@ -140,4 +140,6 @@ target_link_libraries(boraiq-optimized PRIVATE
 ## Include Math.h library
 target_link_libraries(boraiq-optimized PRIVATE m)
 
+target_link_options(boraiq-optimized PRIVATE -Wl,--defsym,__heap_size=4194304)
+
 target_include_directories(borai-optimized PRIVATE ${CMAKE_SOURCE_DIR}/bmark-lib)

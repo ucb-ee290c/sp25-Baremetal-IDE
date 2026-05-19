@@ -29,7 +29,7 @@ if(BORAIQ_TRANSPOSED_WEIGHTS)
 endif()
 
 option(BORAIQ_PREFILL_MULTICORE
-  "Enable dual-hart multicore prefill in boraiq (splits attention heads and FFN rows)" ON)
+  "Enable dual-hart multicore prefill in boraiq (splits attention heads and FFN rows)" OFF)
 
 if(BORAIQ_PREFILL_MULTICORE)
   target_compile_definitions(boraiq PRIVATE PREFILL_MULTICORE)

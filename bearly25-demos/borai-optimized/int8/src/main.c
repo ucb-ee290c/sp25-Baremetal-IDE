@@ -51,6 +51,20 @@
 #define BORAIQ_BENCH_STREAM_TOKENS_MIN_STEPS 8
 #endif
 
+/* ---- Diagnostic trap handler (overrides weak handler in glossy/trap.c) ----
+ * Default glossy handlers are silent `while(1){}` loops, so any fault hangs
+ * the simulator with zero output. Print mcause/mepc/mtval before hanging so
+ * we can tell what blew up and where. */
+#include <stdint.h>
+uintptr_t trap_handler(uintptr_t m_epc, uintptr_t m_cause,
+                       uintptr_t m_tval, uintptr_t regs[32]) {
+  (void)regs;
+  printf("\r\n!!! TRAP !!! mcause=0x%lx mepc=0x%lx mtval=0x%lx\r\n",
+         (unsigned long)m_cause, (unsigned long)m_epc, (unsigned long)m_tval);
+  while (1) { /* hang so the message stays on screen */ }
+  return m_epc;
+}
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -443,13 +457,20 @@ void free_transposed_weights_i8(TransformerWeightsT* wt);
 
 void build_transformer(Transformer *t) {
     // read in the Config and the Weights from the checkpoint
+    printf("[bt] read_checkpoint_from_header...\r\n");
     read_checkpoint_from_header(&t->config, &t->weights, &t->data, &t->file_size);
+    printf("[bt] read_checkpoint_from_header done\r\n");
     // allocate the RunState buffers
+    printf("[bt] malloc_run_state...\r\n");
     malloc_run_state(&t->state, &t->config);
+    printf("[bt] malloc_run_state done\r\n");
 #ifdef TRANSPOSED_WEIGHTS
     // transpose all weight matrices once; forward() will use weights_t exclusively
+    printf("[bt] alloc_and_transpose_weights_i8...\r\n");
     alloc_and_transpose_weights_i8(&t->weights_t, &t->weights, &t->config);
+    printf("[bt] alloc_and_transpose_weights_i8 done\r\n");
 #endif
+    printf("[bt] build_transformer complete\r\n");
 }
 
 void free_transformer(Transformer* t) {
@@ -642,18 +663,26 @@ void alloc_and_transpose_weights_i8(
     int hidden_dim = p->hidden_dim;
     int n_layers   = p->n_layers;
     int kv_dim     = (p->dim * p->n_kv_heads) / p->n_heads;
+    printf("[atw] dim=%d hidden=%d n_layers=%d kv_dim=%d\r\n",
+           dim, hidden_dim, n_layers, kv_dim);
 
     /* wq: W[dim × dim], B_pack [(dim+1) × dim] per layer */
+    printf("[atw] wq_T malloc %lu bytes\r\n",
+           (unsigned long)(n_layers * (size_t)(dim + 1) * dim));
     wt->wq_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * dim);
+    printf("[atw] wq_T=%p\r\n", (void*)wt->wq_T);
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wq_T + l * (size_t)(dim + 1) * dim,
                        w->wq[l].q, dim, dim);
+    printf("[atw] wq_T done\r\n");
 
     /* wk: W[kv_dim × dim], B_pack [(dim+1) × kv_dim] per layer */
     wt->wk_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * kv_dim);
+    printf("[atw] wk_T=%p\r\n", (void*)wt->wk_T);
     for (int l = 0; l < n_layers; l++)
         make_b_pack_i8(wt->wk_T + l * (size_t)(dim + 1) * kv_dim,
                        w->wk[l].q, kv_dim, dim);
+    printf("[atw] wk_T done\r\n");
 
     /* wv: same layout as wk */
     wt->wv_T = (unsigned char*)malloc(n_layers * (size_t)(dim + 1) * kv_dim);
@@ -2196,20 +2225,29 @@ void app_main() {
   Transformer _tfm_buf;
   Transformer* p_tfm = &_tfm_buf;
 #endif
+  printf("[app] build_transformer...\r\n");
   build_transformer(p_tfm);
+  printf("[app] build_transformer done, seq_len=%d\r\n", p_tfm->config.seq_len);
   if (steps == 0 || steps > p_tfm->config.seq_len) steps = p_tfm->config.seq_len;
 
   // Import the tokenizer binary
   Tokenizer tokenizer;
+  printf("[app] build_tokenizer_from_header...\r\n");
   build_tokenizer_from_header(&tokenizer, p_tfm->config.vocab_size);
+  printf("[app] build_tokenizer_from_header done\r\n");
 
   // build the Sampler
   Sampler sampler;
+  printf("[app] build_sampler...\r\n");
   build_sampler(&sampler, p_tfm->config.vocab_size, temperature, topp, rng_seed);
+  printf("[app] build_sampler done\r\n");
 
 #ifdef PREFILL_MULTICORE
+  printf("[app] hthread_init...\r\n");
   hthread_init();
+  printf("[app] mc_start_worker...\r\n");
   mc_start_worker(p_tfm);
+  printf("[app] mc_start_worker done\r\n");
 #endif
 
   while (1) {
@@ -2240,17 +2278,17 @@ void app_main() {
 int main(int argc, char **argv) {
   /* MCU Configuration--------------------------------------------------------*/
   
-  configure_pll(PLL, target_frequency/50000000, 0);
-  set_all_clocks(CLOCK_SELECTOR, 1);
+//   configure_pll(PLL, target_frequency/50000000, 0);
+//   set_all_clocks(CLOCK_SELECTOR, 1);
 
   /* USER CODE BEGIN SysInit */
   // Initialize UART0 for Serial Monitor
-  UART_InitType UART0_init_config;
-  UART0_init_config.baudrate = 115200;
-  UART0_init_config.mode = UART_MODE_TX_RX;
-  UART0_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0, &UART0_init_config);
-  UART0->DIV = (target_frequency / 115200) - 1;
+//   UART_InitType UART0_init_config;
+//   UART0_init_config.baudrate = 115200;
+//   UART0_init_config.mode = UART_MODE_TX_RX;
+//   UART0_init_config.stopbits = UART_STOPBITS_2;
+//   uart_init(UART0, &UART0_init_config);
+//   UART0->DIV = (target_frequency / 115200) - 1;
 
   /* USER CODE END SysInit */
 

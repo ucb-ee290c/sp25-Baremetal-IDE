@@ -192,6 +192,7 @@ endif()
 
 if(BUILD_NN_RVV)
   add_subdirectory(nn-rvv)
+  add_subdirectory(nn-rvv-examples)
 endif()
 
 if(THREAD_LIB)

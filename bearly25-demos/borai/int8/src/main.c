@@ -1173,19 +1173,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
             // otherwise use the next token sampled from previous turn
             token = next;
         }
-        // EOS (=2) token ends the Assistant turn
-        // if (token == 2) {
-        //     unsigned long end = READ_CSR("mcycle");
-        //     printf("\r\nBENCHMARK: Total cycles: %lu\r\n", end-start);
-        //     printf("BENCHMARK: Total tokens:\t%d\r\n", pos-1);
-        //     printf("BENCHMARK: Cycles per token:\t%lu\r\n", (unsigned long)(end-start)/(pos-1));
-        //     printf("BENCHMARK: Seconds per token:\t%lu\r\n", (unsigned long)((end-start)/SYS_CLK_FREQ)/(pos-1));
-        //     printf("BENCHMARK: Seconds per token (float):\t%f\r\n", ((float)(end-start)/(float)SYS_CLK_FREQ)/(float)(pos-1));
 
-        //     printf("BENCHMARK: MTIME Frequency:\t%lu\r\n", MTIME_FREQ);
-        //     user_turn = 1;
-        //     start = 0;
-        // }
 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);

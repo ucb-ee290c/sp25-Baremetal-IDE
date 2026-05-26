@@ -1,5 +1,3 @@
-add_subdirectory(mnist)
-add_subdirectory(mnist_cnn_quant)
 add_subdirectory(ope-tests)
 add_subdirectory(convtest)
 add_subdirectory(opetest)

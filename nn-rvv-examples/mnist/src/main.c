@@ -22,8 +22,13 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include <nn_rvv/layers.h>
+#include <nn_rvv/threading.h>
 #include <data/inputs.h>
 #include <data/model_params.h>
+
+#ifndef NN_RVV_N_HARTS
+#  error "nn-rvv-examples requires nn-rvv: build with -DBUILD_NN_RVV=ON"
+#endif
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -71,7 +76,8 @@ void app_init() {
 void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
 
-  printf("Hello world from hart %d: %d\n", mhartid, counter);
+  nn_rvv_threading_init();
+  printf("mnist: hart %lu, NN_RVV_N_HARTS=%d\n", mhartid, (int)NN_RVV_N_HARTS);
 
   /* Intermediate activation buffers */
   static float dense0_out[BATCHES * 64]; /* after Dense-0 + ReLU */

@@ -19,8 +19,8 @@ target_include_directories(mnist_cnn_quant_conv2D PUBLIC include)
 target_link_libraries(mnist_cnn_quant_conv2D PRIVATE 
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
-if(BUILD_VECNN)
-  target_link_libraries(mnist_cnn_quant_conv2D PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(mnist_cnn_quant_conv2D PRIVATE nnrvv)
 endif()
 
 if (PROF_COV)

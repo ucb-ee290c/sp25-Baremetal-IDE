@@ -30,8 +30,8 @@
 #define BENCH_ENABLE_VEC 1
 #endif
 
-#ifndef BENCH_HAS_VECNN
-#define BENCH_HAS_VECNN 0
+#ifndef BENCH_HAS_NN_RVV
+#define BENCH_HAS_NN_RVV 0
 #endif
 
 #ifndef BENCH_VERIFY

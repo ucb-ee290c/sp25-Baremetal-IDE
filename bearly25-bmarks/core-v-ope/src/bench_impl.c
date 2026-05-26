@@ -13,11 +13,11 @@
 #include "bench_config.h"
 #include "hal_ope.h"
 
-#if BENCH_HAS_VECNN
-#include "layers.h"
+#if BENCH_HAS_NN_RVV
+#include "nn_rvv/layers.h"
 #endif
 
-#if BENCH_HAS_VECNN
+#if BENCH_HAS_NN_RVV
 void int8_qgemm(
     size_t M, size_t N, size_t K,
     const int8_t* A, size_t a_row_stride,
@@ -66,7 +66,7 @@ typedef struct {
   ope_mat32_t *ope_C;
 #endif
   int32_t *C_ref;
-#if BENCH_HAS_VECNN
+#if BENCH_HAS_NN_RVV
   int8_t *vec_A;
   int8_t *vec_B;        // Original B matrix (K x N)
   int8_t *vec_B_packed; // Packed B for vecnn: (K+1) x N with zero bias row
@@ -129,7 +129,7 @@ static void bench_case_ctx_destroy(bench_case_ctx_t *ctx) {
   if (ctx->ope_C) ope_mat32_free(ctx->ope_C);
 #endif
   if (ctx->C_ref) free(ctx->C_ref);
-#if BENCH_HAS_VECNN
+#if BENCH_HAS_NN_RVV
   if (ctx->vec_A) free(ctx->vec_A);
   if (ctx->vec_B) free(ctx->vec_B);
   if (ctx->vec_B_packed) free(ctx->vec_B_packed);
@@ -159,7 +159,7 @@ static int bench_case_ctx_init(bench_case_ctx_t *ctx, const OuterSizeCase *cs) {
   bench_fill_int8_small(ctx->ope_B->data, ctx->K, ctx->N, ctx->ope_B->colsU);
 #endif
 
-#if BENCH_HAS_VECNN && BENCH_ENABLE_VEC
+#if BENCH_HAS_NN_RVV && BENCH_ENABLE_VEC
   size_t size_A = (size_t)ctx->M * (size_t)ctx->K;
   size_t size_B = (size_t)ctx->K * (size_t)ctx->N;
   size_t size_B_packed = (size_t)(ctx->K + 1) * (size_t)ctx->N;  // Extra row for bias
@@ -200,7 +200,7 @@ static int bench_case_ctx_init(bench_case_ctx_t *ctx, const OuterSizeCase *cs) {
   int ldA = 0;
   int ldB = 0;
 
-#if BENCH_HAS_VECNN && BENCH_ENABLE_VEC
+#if BENCH_HAS_NN_RVV && BENCH_ENABLE_VEC
   if (ctx->vec_A && ctx->vec_B) {
     ref_A = ctx->vec_A;
     ref_B = ctx->vec_B;
@@ -228,7 +228,7 @@ static int bench_case_ctx_init(bench_case_ctx_t *ctx, const OuterSizeCase *cs) {
                            ctx->M, ctx->N, ctx->K,
                            ldA, ldB, ctx->N);
 
-#if BENCH_HAS_VECNN && BENCH_ENABLE_VEC
+#if BENCH_HAS_NN_RVV && BENCH_ENABLE_VEC
   bench_ref_quant_i32_to_i8(ctx->C_ref, ctx->vec_C_ref,
                             ctx->M, ctx->N,
                             ctx->N, ctx->N,
@@ -244,7 +244,7 @@ static long run_ope_once(bench_case_ctx_t *ctx) {
 }
 #endif
 
-#if BENCH_HAS_VECNN && BENCH_ENABLE_VEC
+#if BENCH_HAS_NN_RVV && BENCH_ENABLE_VEC
 static void run_vec_once(bench_case_ctx_t *ctx, requantization_params_t rqp) {
   // Use packed B which has zero bias row prepended
   int8_qgemm((size_t)ctx->M, (size_t)ctx->N, (size_t)ctx->K,
@@ -263,7 +263,7 @@ static uint64_t run_scalar_ref_once(bench_case_ctx_t *ctx, int32_t *C_out) {
   int ldA = 0;
   int ldB = 0;
 
-#if BENCH_HAS_VECNN && BENCH_ENABLE_VEC
+#if BENCH_HAS_NN_RVV && BENCH_ENABLE_VEC
   if (ctx->vec_A && ctx->vec_B) {
     ref_A = ctx->vec_A;
     ref_B = ctx->vec_B;
@@ -411,7 +411,7 @@ void bench_run_case(const OuterSizeCase *cs) {
 #endif
 
 #if BENCH_ENABLE_VEC
-#if BENCH_HAS_VECNN
+#if BENCH_HAS_NN_RVV
   if (ctx.vec_A && ctx.vec_B && ctx.vec_C && ctx.vec_C_ref && ctx.vec_scale) {
     requantization_params_t rqp;
     rqp.scale = ctx.vec_scale;

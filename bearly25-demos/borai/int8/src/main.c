@@ -32,9 +32,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "nn_rvv/threading.h"
 
-#if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
-#include "layers.h"
+#include "nn_rvv/layers.h"
+
+#ifndef NN_RVV_N_HARTS
+#  error "boraiq requires nn-rvv: build with -DBUILD_NN_RVV=ON"
 #endif
 
 /* Private includes ----------------------------------------------------------*/
@@ -145,9 +148,7 @@ typedef struct {
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
     TransformerWeights weights; // the weights of the model
-#ifdef TRANSPOSED_WEIGHTS
     TransformerWeightsT weights_t; // transposed B_pack copies for vectorized inference
-#endif
     RunState state; // buffers for the "wave" of activations in the forward pass
     // some more state needed to properly clean up the memory mapping (sigh)
     int fd; // file descriptor for memory mapping
@@ -344,15 +345,11 @@ void read_checkpoint_from_header(Config* config, TransformerWeights* weights, fl
 void build_transformer(Transformer *t) {
     read_checkpoint_from_header(&t->config, &t->weights, &t->data, &t->file_size);
     malloc_run_state(&t->state, &t->config);
-#ifdef TRANSPOSED_WEIGHTS
     alloc_and_transpose_weights_i8(&t->weights_t, &t->weights, &t->config);
-#endif
 }
 
 void free_transformer(Transformer* t) {
-#ifdef TRANSPOSED_WEIGHTS
     free_transposed_weights_i8(&t->weights_t);
-#endif
   // Free quantized tensors
     free(t->weights.q_tokens);
     free(t->weights.token_embedding_table);
@@ -374,63 +371,16 @@ void free_transformer(Transformer* t) {
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
 
-void rmsnorm(float* o, float* x, float* weight, int size) {
-    // calculate sum of squares
-    float ss = 0.0f;
-    for (int j = 0; j < size; j++) {
-        ss += x[j] * x[j];
-    }
-    ss /= size;
-    ss += 1e-5f;
-    ss = 1.0f / sqrtf(ss);
-    // normalize and scale
-    for (int j = 0; j < size; j++) {
-        o[j] = weight[j] * (ss * x[j]);
-    }
+/* Thin wrappers around nn-rvv kernels. All math lives in nn-rvv. */
+
+static inline void rmsnorm(float *o, const float *x, const float *weight, int size) {
+    rmsnorm_f32(o, x, weight, (size_t)size);
 }
 
-void softmax(float* x, int size) {
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
+static inline void softmax(float *x, int size) {
+    softmax_f32(x, (size_t)size);
 }
 
-void matmul(float* xout, QuantizedTensor *x, QuantizedTensor *w, int n, int d) {
-    // W (d,n) @ x (n,) -> xout (d,)
-    // by far the most amount of time is spent inside this little function
-    // inputs to this function are both quantized
-
-    int i;
-    for (i = 0; i < d; i++) {
-        float val = 0.0f;
-        int32_t ival = 0;
-        int in = i * n;
-
-        // do the matmul
-        int j;
-        for (j = 0; j <= n; j++) {
-            ival += ((int32_t) x->q[j]) * ((int32_t) w->q[in + j]);
-        }
-
-        xout[i] = ((float) ival) * w->s * x->s;
-    }
-}
-
-#ifdef TRANSPOSED_WEIGHTS
 /* ---------------------------------------------------------------------------
  * make_b_pack_i8 — build a B_pack from a quantized weight matrix.
  *
@@ -559,7 +509,6 @@ static void matmul_t(
         (size_t)n_in, (size_t)n_out, 1,
         xq->q, w_t_pack, xout, scale);
 }
-#endif /* TRANSPOSED_WEIGHTS */
 
 // ----------------------------------------------------------------------------
 // Types needed by both single-core and multicore paths
@@ -596,315 +545,6 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
 char* decode(Tokenizer* t, int prev_token, int token);
 int sample(Sampler* sampler, float* logits);
 
-// ----------------------------------------------------------------------------
-// Multicore prefill support
-#ifdef PREFILL_MULTICORE
-
-static Transformer  _mc_transformer;   /* shared transformer, built by hart 0 */
-static volatile int _mc_token_val = 0;
-static volatile int _mc_pos_val   = 0;
-static volatile int _mc_fwd_rdy   = 0; /* hart 0 sets → hart 1 starts forward */
-static volatile int _mc_all_done  = 0; /* hart 0 sets → hart 1 exits worker  */
-static volatile int _mc_init_done = 0; /* hart 0 sets after init; hart 1 waits */
-
-/* 2-hart sense-reversing barrier.
- * Hart 0: waits for hart 1 to arrive, then flips the shared sense to release.
- * Hart 1: signals arrival, then waits for sense to flip.
- *
- * fence instructions ensure cross-hart visibility on RISC-V RVWMO. */
-static volatile int _bar_h1_arrived = 0;
-static volatile int _bar_sense      = 0;
-
-static void barrier2(int hartid) {
-    int s = _bar_sense;
-    if (hartid == 0) {
-        while (!_bar_h1_arrived) { asm volatile("fence" ::: "memory"); }
-        _bar_h1_arrived = 0;
-        asm volatile("fence" ::: "memory");
-        _bar_sense = !s;
-        asm volatile("fence" ::: "memory");
-    } else {
-        _bar_h1_arrived = 1;
-        asm volatile("fence" ::: "memory");
-        while (_bar_sense == s) { asm volatile("fence" ::: "memory"); }
-    }
-}
-
-/* Scalar matmul over output rows [row_start, row_end).
- * Computes xout[i] = W[i,:] dot x  for i in [row_start, row_end). */
-static void matmul_rows(float* xout, QuantizedTensor* x, QuantizedTensor* w,
-                        int n, int d, int row_start, int row_end) {
-    (void)d;
-    for (int i = row_start; i < row_end; i++) {
-        int32_t ival = 0;
-        int in = i * n;
-        for (int j = 0; j < n; j++) {
-            ival += (int32_t)x->q[j] * (int32_t)w->q[in + j];
-        }
-        xout[i] = (float)ival * w->s * x->s;
-    }
-}
-
-/* forward_mc — parallel forward pass for two harts.
- *
- * Mutual-exclusion assignment: each independent matmul is owned exclusively
- * by one hart, so both harts run full-size (optionally vectorized) kernels
- * simultaneously rather than each computing half-rows of a single matrix.
- *
- * Assignment per layer:
- *   QKV  : hart 0 → wq + wk  |  hart 1 → wv
- *   Attn : both — each handles n_heads/2 heads
- *   FFN  : hart 0 → w1       |  hart 1 → w3  (key parallelism win)
- *   wcls : hart 0 vectorized (TRANSPOSED_WEIGHTS) or both split rows (scalar)
- *
- * All sequential work (rmsnorm, RoPE, kv-store, residual, SwiGLU, w2, wcls
- * when transposed) is done by hart 0; hart 1 spins at barriers.
- *
- * When TRANSPOSED_WEIGHTS is also defined, w1/w3/wq/wk/wv/wo all use the
- * vectorized matmul_t kernel on their full matrices.
- *
- * Returns logits (hart 0) or NULL (hart 1). */
-static float* forward_mc(Transformer* transformer, int token, int pos, int hartid) {
-    Config* p             = &transformer->config;
-    TransformerWeights* w = &transformer->weights;
-    RunState* s           = &transformer->state;
-#ifdef TRANSPOSED_WEIGHTS
-    TransformerWeightsT* wt = &transformer->weights_t;
-#endif
-    float* x        = s->x;
-    int dim         = p->dim;
-    int kv_dim      = (p->dim * p->n_kv_heads) / p->n_heads;
-    int kv_mul      = p->n_heads / p->n_kv_heads;
-    int hidden_dim  = p->hidden_dim;
-    int head_size   = dim / p->n_heads;
-
-    /* embedding copy (hart 0 only; hart 1 waits at first barrier in the loop) */
-    if (hartid == 0) {
-        memcpy(x, w->token_embedding_table + token * dim, dim * sizeof(float));
-    }
-
-    for (int l = 0; l < p->n_layers; l++) {
-
-        /* rmsnorm + quantize input (hart 0) */
-        if (hartid == 0) {
-            rmsnorm(s->xb, x, w->rms_att_weight + l * dim, dim);
-            quantize(&s->xq, s->xb, dim);
-        }
-        barrier2(hartid);
-
-        /* QKV projections — mutual exclusion:
-         *   hart 0 → wq (s->q) + wk (s->k)
-         *   hart 1 → wv (s->v)                              */
-        if (hartid == 0) {
-#ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->q, &s->xq, wt->wq_T + l*(size_t)(dim+1)*dim,    w->wq[l].s, dim, dim);
-            matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
-#else
-            matmul(s->q, &s->xq, w->wq + l, dim, dim);
-            matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
-#endif
-        } else {
-#ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->v, &s->xq, wt->wv_T + l*(size_t)(dim+1)*kv_dim, w->wv[l].s, dim, kv_dim);
-#else
-            matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
-#endif
-        }
-        barrier2(hartid);
-
-        /* RoPE relative positional encoding + KV cache store (hart 0) */
-        if (hartid == 0) {
-            for (int i = 0; i < dim; i += 2) {
-                int head_dim = i % head_size;
-                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-                float val  = pos * freq;
-                float fcr  = cosf(val);
-                float fci  = sinf(val);
-                int rotn = i < kv_dim ? 2 : 1;
-                for (int v = 0; v < rotn; v++) {
-                    float* vec = v == 0 ? s->q : s->k;
-                    float v0 = vec[i];
-                    float v1 = vec[i + 1];
-                    vec[i]     = v0 * fcr - v1 * fci;
-                    vec[i + 1] = v0 * fci + v1 * fcr;
-                }
-            }
-            int loff = l * p->seq_len * kv_dim;
-            memcpy(s->key_cache   + loff + pos * kv_dim, s->k, kv_dim * sizeof(float));
-            memcpy(s->value_cache + loff + pos * kv_dim, s->v, kv_dim * sizeof(float));
-        }
-        barrier2(hartid);
-
-        /* multihead attention — each hart owns n_heads/2 heads exclusively */
-        {
-            int h_start = hartid * (p->n_heads / 2);
-            int h_end   = h_start + p->n_heads / 2;
-            int loff    = l * p->seq_len * kv_dim;
-            for (int h = h_start; h < h_end; h++) {
-                float* q   = s->q   + h * head_size;
-                float* att = s->att + h * p->seq_len;
-                for (int t = 0; t <= pos; t++) {
-                    float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                    float score = 0.0f;
-                    for (int i = 0; i < head_size; i++) score += q[i] * k[i];
-                    att[t] = score / sqrtf(head_size);
-                }
-#ifdef VEC_SOFTMAX
-                softmax_vec(att, att, 1, (size_t)(pos + 1));
-#else
-                softmax(att, pos + 1);
-#endif
-                float* xb = s->xb + h * head_size;
-                memset(xb, 0, head_size * sizeof(float));
-                for (int t = 0; t <= pos; t++) {
-                    float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                    float a  = att[t];
-                    for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
-                }
-            }
-        }
-        barrier2(hartid);
-
-        /* wo matmul + residual + FFN rmsnorm + quantize (hart 0) */
-        if (hartid == 0) {
-            quantize(&s->xq, s->xb, dim);
-#ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->xb2, &s->xq, wt->wo_T + l*(size_t)(dim+1)*dim, w->wo[l].s, dim, dim);
-#else
-            matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
-#endif
-            for (int i = 0; i < dim; i++) x[i] += s->xb2[i];
-            rmsnorm(s->xb, x, w->rms_ffn_weight + l * dim, dim);
-            quantize(&s->xq, s->xb, dim);
-        }
-        barrier2(hartid);
-
-        /* FFN w1 + w3 — mutual exclusion (biggest parallelism win):
-         *   hart 0 → w1 (s->hb)   hart 1 → w3 (s->hb2)
-         * Both run simultaneously on their full output buffer. */
-        if (hartid == 0) {
-#ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->hb,  &s->xq, wt->w1_T + l*(size_t)(dim+1)*hidden_dim, w->w1[l].s, dim, hidden_dim);
-#else
-            matmul(s->hb,  &s->xq, w->w1 + l, dim, hidden_dim);
-#endif
-        } else {
-#ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->hb2, &s->xq, wt->w3_T + l*(size_t)(dim+1)*hidden_dim, w->w3[l].s, dim, hidden_dim);
-#else
-            matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
-#endif
-        }
-        barrier2(hartid);
-
-        /* SwiGLU + quantize hq + w2 matmul + residual (hart 0) */
-        if (hartid == 0) {
-            for (int i = 0; i < hidden_dim; i++) {
-                float val = s->hb[i];
-                val *= 1.0f / (1.0f + expf(-val));
-                val *= s->hb2[i];
-                s->hb[i] = val;
-            }
-            quantize(&s->hq, s->hb, hidden_dim);
-#ifdef TRANSPOSED_WEIGHTS
-            matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
-#else
-            matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
-#endif
-            for (int i = 0; i < dim; i++) x[i] += s->xb[i];
-        }
-        barrier2(hartid);
-    }
-
-    /* final rmsnorm + quantize (hart 0) */
-    if (hartid == 0) {
-        rmsnorm(x, x, w->rms_final_weight, dim);
-        quantize(&s->xq, x, dim);
-    }
-    barrier2(hartid);
-
-    /* wcls:
-     *   TRANSPOSED_WEIGHTS → hart 0 runs full vectorized matmul_t; hart 1 idles.
-     *   scalar             → both harts split vocab_size rows (mutual exclusion
-     *                        via non-overlapping [0, vs_half) / [vs_half, end)). */
-#ifdef TRANSPOSED_WEIGHTS
-    if (hartid == 0) {
-        matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
-    }
-#else
-    {
-        int vs_half  = p->vocab_size / 2;
-        int vs_start = hartid * vs_half;
-        int vs_end   = vs_start + vs_half;
-        matmul_rows(s->logits, &s->xq, w->wcls, dim, p->vocab_size, vs_start, vs_end);
-    }
-#endif
-    barrier2(hartid);
-
-    return hartid == 0 ? s->logits : NULL;
-}
-
-/* generate_mc — same as generate() but uses forward_mc(hartid=0) and
- * signals hart 1 before each token via _mc_fwd_rdy. */
-void generate_mc(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
-                 char *prompt, int steps) {
-    char *empty_prompt = "";
-    if (prompt == NULL) { prompt = empty_prompt; }
-
-    int num_prompt_tokens = 0;
-    int* prompt_tokens = (int*)malloc((strlen(prompt) + 3) * sizeof(int));
-    encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
-    if (num_prompt_tokens < 1) {
-        printf("STDERR: something is wrong, expected at least 1 prompt token\r\n");
-    }
-
-    unsigned long start = 0;
-    int next;
-    int token = prompt_tokens[0];
-    int pos   = 0;
-    while (pos < steps) {
-        /* publish token/pos, then signal hart 1 to start its half */
-        _mc_token_val = token;
-        _mc_pos_val   = pos;
-        asm volatile("fence" ::: "memory");
-        _mc_fwd_rdy   = 1;
-        asm volatile("fence" ::: "memory");
-        float* logits = forward_mc(transformer, token, pos, 0);
-
-        if (pos < num_prompt_tokens - 1) {
-            next = prompt_tokens[pos + 1];
-        } else {
-            next = sample(sampler, logits);
-        }
-        pos++;
-
-        if (next == 1) { break; }
-
-        char* piece = decode(tokenizer, token, next);
-        safe_printf(piece);
-        fflush(stdout);
-        token = next;
-
-        if (start == 0) { start = READ_CSR("mcycle"); }
-    }
-    printf("\r\n");
-
-    _mc_all_done = 1;  /* signal hart 1 worker to exit */
-
-    if (pos > 1) {
-        unsigned long end = READ_CSR("mcycle");
-        unsigned long elapsed = end - start;
-        int toks = pos - 1;
-        printf("\r\n--- %d tokens | %lu cycles | %.2f tok/s @ %u Hz ---\r\n",
-               toks, elapsed,
-               (double)toks / ((double)elapsed / target_frequency),
-               target_frequency);
-    }
-
-    free(prompt_tokens);
-}
-
-#endif /* PREFILL_MULTICORE */
 
 float* forward(Transformer* transformer, int token, int pos) {
 
@@ -912,9 +552,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
     RunState* s = &transformer->state;
-#ifdef TRANSPOSED_WEIGHTS
     TransformerWeightsT* wt = &transformer->weights_t;
-#endif
     float *x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
@@ -933,32 +571,12 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // qkv matmuls for this position
         quantize(&s->xq, s->xb, dim);
-#ifdef TRANSPOSED_WEIGHTS
         matmul_t(s->q, &s->xq, wt->wq_T + l*(size_t)(dim+1)*dim,    w->wq[l].s, dim, dim);
         matmul_t(s->k, &s->xq, wt->wk_T + l*(size_t)(dim+1)*kv_dim, w->wk[l].s, dim, kv_dim);
         matmul_t(s->v, &s->xq, wt->wv_T + l*(size_t)(dim+1)*kv_dim, w->wv[l].s, dim, kv_dim);
-#else
-        matmul(s->q, &s->xq, w->wq + l, dim, dim);
-        matmul(s->k, &s->xq, w->wk + l, dim, kv_dim);
-        matmul(s->v, &s->xq, w->wv + l, dim, kv_dim);
-#endif
 
-        // RoPE relative positional encoding: complex-valued rotate q and k in each head
-        for (int i = 0; i < dim; i+=2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
-            int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-            for (int v = 0; v < rotn; v++) {
-                float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-                float v0 = vec[i];
-                float v1 = vec[i+1];
-                vec[i]   = v0 * fcr - v1 * fci;
-                vec[i+1] = v0 * fci + v1 * fcr;
-            }
-        }
+        // RoPE: rotate q and k in place. Parallelizes across pair-indices.
+        rope_f32(s->q, s->k, p->n_heads, p->n_kv_heads, head_size, pos);
 
         // save key,value at this time step (pos) to our kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
@@ -967,57 +585,23 @@ float* forward(Transformer* transformer, int token, int pos) {
         memcpy(key_cache_row, s->k, kv_dim * sizeof(*key_cache_row));
         memcpy(value_cache_row, s->v, kv_dim * sizeof(*value_cache_row));
 
-        // multihead attention. iterate over all heads
-        int h;
-        #pragma omp parallel for private(h)
-        for (h = 0; h < p->n_heads; h++) {
-            // get the query vector for this head
-            float* q = s->q + h * head_size;
-            // attention scores for this head
-            float* att = s->att + h * p->seq_len;
-            // iterate over all timesteps, including the current one
-            for (int t = 0; t <= pos; t++) {
-                // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                // calculate the attention score as the dot product of q and k
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
-                }
-                score /= sqrtf(head_size);
-                // save the score to the attention buffer
-                att[t] = score;
-            }
-
-            // softmax the scores to get attention weights, from 0..pos inclusively
-#ifdef VEC_SOFTMAX
-            softmax_vec(att, att, 1, (size_t)(pos + 1));
-#else
-            softmax(att, pos + 1);
-#endif
-
-            // weighted sum of the values, store back into xb
-            float* xb = s->xb + h * head_size;
-            memset(xb, 0, head_size * sizeof(float));
-            for (int t = 0; t <= pos; t++) {
-                // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                // get the attention weight for this timestep
-                float a = att[t];
-                // accumulate the weighted value into xb
-                for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
-                }
-            }
-        }
+        // multihead causal self-attention via nn-rvv. Heads are split across
+        // NN_RVV_N_HARTS via parallel_for (single-core fallback when N_HARTS==1).
+        // Replaces the prior inline loop + VEC_SOFTMAX path — nn-rvv's
+        // softmax_f32 is already vectorized over pos+1.
+        attention_mc_f32(
+            s->q,
+            s->key_cache + loff,
+            s->value_cache + loff,
+            p->n_heads, p->n_kv_heads, head_size,
+            pos,
+            s->att, p->seq_len,
+            s->xb
+        );
 
         // final matmul to get the output of the attention
         quantize(&s->xq, s->xb, dim);
-#ifdef TRANSPOSED_WEIGHTS
         matmul_t(s->xb2, &s->xq, wt->wo_T + l*(size_t)(dim+1)*dim, w->wo[l].s, dim, dim);
-#else
-        matmul(s->xb2, &s->xq, w->wo + l, dim, dim);
-#endif
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -1030,13 +614,8 @@ float* forward(Transformer* transformer, int token, int pos) {
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
         quantize(&s->xq, s->xb, dim);
-#ifdef TRANSPOSED_WEIGHTS
         matmul_t(s->hb,  &s->xq, wt->w1_T + l*(size_t)(dim+1)*hidden_dim,    w->w1[l].s, dim, hidden_dim);
         matmul_t(s->hb2, &s->xq, wt->w3_T + l*(size_t)(dim+1)*hidden_dim,    w->w3[l].s, dim, hidden_dim);
-#else
-        matmul(s->hb, &s->xq, w->w1 + l, dim, hidden_dim);
-        matmul(s->hb2, &s->xq, w->w3 + l, dim, hidden_dim);
-#endif
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
@@ -1050,11 +629,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // final matmul to get the output of the ffn
         quantize(&s->hq, s->hb, hidden_dim);
-#ifdef TRANSPOSED_WEIGHTS
         matmul_t(s->xb, &s->hq, wt->w2_T + l*(size_t)(hidden_dim+1)*dim, w->w2[l].s, hidden_dim, dim);
-#else
-        matmul(s->xb, &s->hq, w->w2 + l, hidden_dim, dim);
-#endif
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -1067,11 +642,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
     // classifier into logits
     quantize(&s->xq, x, dim);
-#ifdef TRANSPOSED_WEIGHTS
     matmul_t(s->logits, &s->xq, wt->wcls_T, w->wcls[0].s, dim, p->vocab_size);
-#else
-    matmul(s->logits, &s->xq, w->wcls, dim, p->vocab_size);
-#endif
     return s->logits;
 }
 
@@ -1648,6 +1219,17 @@ void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
   printf("Started BorAIq (Int8 Quantized) Inference Engine on hart ID %lu\r\n", mhartid);
 
+  /* Bring up nn-rvv's multi-hart runtime so the int8 quant matmul kernels
+   * (qgemm_int32bias, qgemm_int32bias_conv1x1, qgemm_fout, …) fan out work
+   * across NN_RVV_N_HARTS. No-op when NN_RVV_N_HARTS == 1.
+   *
+   * NOTE: incompatible with PREFILL_MULTICORE — both runtimes try to own
+   * hart 1 via __main. The CMakeLists forces BORAIQ_PREFILL_MULTICORE off
+   * when NN_RVV_N_HARTS > 1; if you somehow built with both, the link will
+   * fail on a duplicate __main symbol. */
+  nn_rvv_threading_init();
+  printf("nn-rvv threading: NN_RVV_N_HARTS=%d\r\n", (int)NN_RVV_N_HARTS);
+
   // Parameters //
   float temperature = 0.8f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
   float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
@@ -1664,12 +1246,8 @@ void app_main() {
   if (steps < 0) steps = 0;
 
   // Import from transformer binary
-#ifdef PREFILL_MULTICORE
-  Transformer* p_tfm = &_mc_transformer;
-#else
   Transformer _tfm_buf;
   Transformer* p_tfm = &_tfm_buf;
-#endif
   build_transformer(p_tfm);
   if (steps == 0 || steps > p_tfm->config.seq_len) steps = p_tfm->config.seq_len;
 
@@ -1681,24 +1259,12 @@ void app_main() {
   Sampler sampler;
   build_sampler(&sampler, p_tfm->config.vocab_size, temperature, topp, rng_seed);
 
-#ifdef PREFILL_MULTICORE
-  // Signal hart 1 that initialization is complete and it's safe to poll
-  asm volatile("fence" ::: "memory");
-  _mc_init_done = 1;
-  asm volatile("fence" ::: "memory");
-#endif
-
   while (1) {
     sampler.rng_state = CLINT->MTIME;
 
     // run!
     if (mode == GENERATE) {
-#ifdef PREFILL_MULTICORE
-        _mc_all_done = 0;
-        generate_mc(p_tfm, &tokenizer, &sampler, prompt, steps);
-#else
         generate(p_tfm, &tokenizer, &sampler, prompt, steps);
-#endif
     } else {
         chat(p_tfm, &tokenizer, &sampler, NULL, NULL, steps);
     }
@@ -1715,17 +1281,17 @@ void app_main() {
 int main(int argc, char **argv) {
   /* MCU Configuration--------------------------------------------------------*/
   
-  configure_pll(PLL, target_frequency/50000000, 0);
-  set_all_clocks(CLOCK_SELECTOR, 1);
+//   configure_pll(PLL, target_frequency/50000000, 0);
+//   set_all_clocks(CLOCK_SELECTOR, 1);
 
-  /* USER CODE BEGIN SysInit */
-  // Initialize UART0 for Serial Monitor
-  UART_InitType UART0_init_config;
-  UART0_init_config.baudrate = 115200;
-  UART0_init_config.mode = UART_MODE_TX_RX;
-  UART0_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0, &UART0_init_config);
-  UART0->DIV = (target_frequency / 115200) - 1;
+//   /* USER CODE BEGIN SysInit */
+//   // Initialize UART0 for Serial Monitor
+//   UART_InitType UART0_init_config;
+//   UART0_init_config.baudrate = 115200;
+//   UART0_init_config.mode = UART_MODE_TX_RX;
+//   UART0_init_config.stopbits = UART_STOPBITS_2;
+//   uart_init(UART0, &UART0_init_config);
+//   UART0->DIV = (target_frequency / 115200) - 1;
 
   /* USER CODE END SysInit */
 
@@ -1737,31 +1303,13 @@ int main(int argc, char **argv) {
 
 
 // Alternative HART runner. Multithreading, anyone?
+#if NN_RVV_N_HARTS <= 1
+/* Single-hart build: secondary harts (if any) just park in wfi. When
+ * NN_RVV_N_HARTS > 1, nn-rvv ships its own strong __main (the work-stealing
+ * scheduler) and we must not define one here. */
 void __attribute__((noreturn)) __main(void) {
-#ifdef PREFILL_MULTICORE
-  unsigned long long hartid;
-  asm volatile("csrr %0, mhartid" : "=r"(hartid));
-  if (hartid == 1) {
-    /* Wait for hart 0 to finish BSS init and transformer setup.
-     * Without this gate, hart 1 can read _mc_fwd_rdy before BSS is
-     * zeroed, enter forward_mc with garbage, and trap-hang. */
-    while (!_mc_init_done) { asm volatile("fence" ::: "memory"); }
-
-    /* Hart 1 worker: spin until hart 0 signals work, then execute the
-     * hart-1 half of each forward pass alongside hart 0.
-     * Outer loop re-arms after each generate_mc() round so hart 1
-     * survives the app_main while(1) loop. */
-    while (1) {
-      asm volatile("fence" ::: "memory");
-      if (_mc_fwd_rdy) {
-        _mc_fwd_rdy = 0;
-        asm volatile("fence" ::: "memory");
-        forward_mc(&_mc_transformer, _mc_token_val, _mc_pos_val, 1);
-      }
-    }
-  }
-#endif
   while (1) {
     asm volatile ("wfi");
   }
 }
+#endif /* NN_RVV_N_HARTS <= 1 */

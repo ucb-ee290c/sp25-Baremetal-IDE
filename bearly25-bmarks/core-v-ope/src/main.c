@@ -33,7 +33,7 @@ static void print_config(void) {
   printf("  OPE: disabled\n");
 #endif
 #if BENCH_ENABLE_VEC
-#if BENCH_HAS_VECNN
+#if BENCH_HAS_NN_RVV
   printf("  VEC: enabled (vecnn)\n");
 #else
   printf("  VEC: disabled (vecnn not built)\n");

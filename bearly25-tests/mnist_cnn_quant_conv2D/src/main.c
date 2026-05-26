@@ -22,7 +22,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "math.h"
-#include <layers.h>
+#include <nn_rvv/layers.h>
 #include "hal_2d_conv.h"
 #include "chip_config.h"
 #include <data/inputs.h>

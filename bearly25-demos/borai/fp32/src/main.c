@@ -29,8 +29,13 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "pll.h"
-#include "layers.h"
+#include "nn_rvv/layers.h"
+#include "nn_rvv/threading.h"
 #include "simple_setup.h"
+
+#ifndef NN_RVV_N_HARTS
+#  error "borai requires nn-rvv: build with -DBUILD_NN_RVV=ON"
+#endif
 
 uint64_t target_frequency = 500000000l;
 
@@ -167,88 +172,20 @@ void free_transformer(Transformer* t) {
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
 
-void rmsnorm(float* o, float* x, float* weight, int size) {
-    // calculate sum of squares
-    float ss = 0.0f;
-    for (int j = 0; j < size; j++) {
-        ss += x[j] * x[j];
-    }
-    ss /= size;
-    ss += 1e-5f;
-    ss = 1.0f / sqrtf(ss);
-    // normalize and scale
-    for (int j = 0; j < size; j++) {
-        o[j] = weight[j] * (ss * x[j]);
-    }
+/* Thin wrappers around nn-rvv kernels. All math lives in nn-rvv. */
+
+static inline void rmsnorm(float *o, const float *x, const float *weight, int size) {
+    rmsnorm_f32(o, x, weight, (size_t)size);
 }
 
-void softmax(float* x, int size) {
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
+static inline void softmax(float *x, int size) {
+    softmax_f32(x, (size_t)size);
 }
 
-// void matmul(float* xout, float* x, float* w, int n, int d) {
-//     // W (d,n) @ x (n,) -> xout (d,)
-//     // by far the most amount of time is spent inside this little function
-//     int i;
-//     for (i = 0; i < d; i++) {
-//         float val = 0.0f;
-//         for (int j = 0; j < n; j++) {
-//             val += w[i * n + j] * x[j];
-//         }
-//         xout[i] = val;
-//     }
-// }
-
-void matmul(float* xout, float* x, float* w, int n, int d) {
-    fully_connected_f32_nobias(
-        (size_t)n,          // input_size
-        (size_t)1,          // output_size
-        (size_t)d,          // batches
-        w,                  // input
-        (const float*)x,    // weights_with_bias (see NOTE below)
-        xout,               // output
-        0                   // relu off
-    );
-}
-
-/* ---------------------------------------------------------------------------
- * Transpose a [rows × cols] float matrix in-place into out [cols × rows].
- * out[j * rows + i] = in[i * cols + j]
- * ------------------------------------------------------------------------- */
-static void transpose_f32(const float* in, float* out, int rows, int cols) {
-    for (int i = 0; i < rows; i++)
-        for (int j = 0; j < cols; j++)
-            out[j * rows + i] = in[i * cols + j];
-}
-
-/* ---------------------------------------------------------------------------
- * matmul_t: vectorized matmul using pre-transposed weights.
- *
- * Computes xout(d,) = W(d,n) @ x(n,) exactly like matmul(), but expects
- * w_t to be W stored transposed as W_T[n×d].
- *
- * Reformulated as:  xout(1,d) = x(1,n) @ W_T(n,d)
- *   → f32_gemm(M=1, N=d, K=n)
- *   → nc-loop runs with vl = min(d, VLMAX) instead of vl=1.
- *   → For dim=288, VLMAX=16: 16 output elements per vector iteration.
- * ------------------------------------------------------------------------- */
-void matmul_t(float* xout, const float* x, const float* w_t, int n, int d) {
+/* matmul_t: xout(d,) = W(d,n) @ x(n,) with W pre-transposed as W_T[n × d].
+ *   Reformulated as xout(1,d) = x(1,n) @ W_T(n,d) → f32_gemm M=1, N=d, K=n
+ *   (vectorizes the output dim, parallelizes rows when NN_RVV_N_HARTS > 1). */
+static inline void matmul_t(float *xout, const float *x, const float *w_t, int n, int d) {
     fully_connected_f32_nobias(
         (size_t)n,          // input_size  = n (reduction dimension)
         (size_t)d,          // output_size = d (vectorized over this)
@@ -308,14 +245,15 @@ void alloc_and_transpose_weights(TransformerWeightsT* wt,
         transpose_f32(w->wq + l * dim * dim,
                       wt->wq_T + l * dim * dim,
                       dim, dim);
-        /* wk: [dim × kv_dim] */
+        /* wk: actual layout is [kv_dim × dim] (matmul interprets as [d × n]
+         * with d=kv_dim, n=dim — output-first storage). */
         transpose_f32(w->wk + l * dim * kv_dim,
                       wt->wk_T + l * kv_dim * dim,
-                      dim, kv_dim);
-        /* wv: [dim × kv_dim] */
+                      kv_dim, dim);
+        /* wv: same as wk. */
         transpose_f32(w->wv + l * dim * kv_dim,
                       wt->wv_T + l * kv_dim * dim,
-                      dim, kv_dim);
+                      kv_dim, dim);
         /* wo: [dim × dim] */
         transpose_f32(w->wo + l * dim * dim,
                       wt->wo_T + l * dim * dim,
@@ -334,8 +272,9 @@ void alloc_and_transpose_weights(TransformerWeightsT* wt,
                       hidden_dim, dim);
     }
 
-    /* wcls: [dim × vocab_size] */
-    transpose_f32(w->wcls, wt->wcls_T, dim, vocab_size);
+    /* wcls: actual layout is [vocab_size × dim]
+     * (matmul classifier call uses n=dim, d=vocab_size). */
+    transpose_f32(w->wcls, wt->wcls_T, vocab_size, dim);
 }
 
 void free_transposed_weights(TransformerWeightsT* wt) {
@@ -383,61 +322,21 @@ float* forward(Transformer* transformer, int token, int pos) {
         matmul_t(s->k,  s->xb, wt->wk_T + l*kv_dim*dim, dim, kv_dim);
         matmul_t(s->v,  s->xb, wt->wv_T + l*kv_dim*dim, dim, kv_dim);
 
-        // RoPE relative positional encoding: complex-valued rotate q and k in each head
-        for (int i = 0; i < dim; i+=2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
-            int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-            for (int v = 0; v < rotn; v++) {
-                float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-                float v0 = vec[i];
-                float v1 = vec[i+1];
-                vec[i]   = v0 * fcr - v1 * fci;
-                vec[i+1] = v0 * fci + v1 * fcr;
-            }
-        }
+        // RoPE: rotate q and k in place. Parallelizes across pair-indices.
+        rope_f32(s->q, s->k, p->n_heads, p->n_kv_heads, head_size, pos);
 
-        // multihead attention. iterate over all heads
-        int h;
-        for (h = 0; h < p->n_heads; h++) {
-            // get the query vector for this head
-            float* q = s->q + h * head_size;
-            // attention scores for this head
-            float* att = s->att + h * p->seq_len;
-            // iterate over all timesteps, including the current one
-            for (int t = 0; t <= pos; t++) {
-                // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                // calculate the attention score as the dot product of q and k
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
-                }
-                score /= sqrtf(head_size);
-                // save the score to the attention buffer
-                att[t] = score;
-            }
-
-            // softmax the scores to get attention weights, from 0..pos inclusively
-            softmax(att, pos + 1);
-
-            // weighted sum of the values, store back into xb
-            float* xb = s->xb + h * head_size;
-            memset(xb, 0, head_size * sizeof(float));
-            for (int t = 0; t <= pos; t++) {
-                // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                // get the attention weight for this timestep
-                float a = att[t];
-                // accumulate the weighted value into xb
-                for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
-                }
-            }
-        }
+        // multihead causal self-attention via nn-rvv. Heads are split across
+        // NN_RVV_N_HARTS via parallel_for (degenerates to single-core when
+        // NN_RVV_N_HARTS == 1, same result either way).
+        attention_mc_f32(
+            s->q,
+            s->key_cache + loff,
+            s->value_cache + loff,
+            p->n_heads, p->n_kv_heads, head_size,
+            pos,
+            s->att, p->seq_len,
+            s->xb
+        );
 
         // final matmul to get the output of the attention
         matmul_t(s->xb2, s->xb, wt->wo_T + l*dim*dim, dim, dim);
@@ -1025,6 +924,12 @@ void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
   printf("Started BorAI Inference Engine on hart ID %lu\r\n", mhartid);
 
+  /* Bring up nn-rvv's multi-hart runtime so the matmul kernels in
+   * fully_connected_f32_nobias can fan out work across NN_RVV_N_HARTS.
+   * No-op when NN_RVV_N_HARTS == 1. */
+  nn_rvv_threading_init();
+  printf("nn-rvv threading: NN_RVV_N_HARTS=%d\r\n", (int)NN_RVV_N_HARTS);
+
   // Parameters //
   float temperature = 0.8f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
   float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
@@ -1087,7 +992,7 @@ int main(int argc, char **argv) {
 //   UART0_init_config.stopbits = UART_STOPBITS_2;
 //   uart_init(UART0, &UART0_init_config);
 //   UART0->DIV = (target_frequency / 115200) - 1;
-  init_test(target_frequency);
+//   init_test(target_frequency);
 
 // #ifdef ENABLE_BORAVOICE_INTEG
 //   // Initialize UART1 for BoraVoice

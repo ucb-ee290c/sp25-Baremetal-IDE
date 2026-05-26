@@ -29,7 +29,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "pll.h"
-#include "layers.h"
+#include "nn_rvv/layers.h"
 #include "simple_setup.h"
 
 uint64_t target_frequency = 500000000l;

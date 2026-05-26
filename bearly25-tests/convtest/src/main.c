@@ -28,7 +28,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
-#include "layers.h"
+#include "nn_rvv/layers.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */

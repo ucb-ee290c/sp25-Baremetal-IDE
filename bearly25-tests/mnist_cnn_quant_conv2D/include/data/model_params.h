@@ -8,7 +8,7 @@
 #define MODELPARAMS_H
 
 #include <stdint.h>
-#include "layers.h"
+#include "nn_rvv/layers.h"
 
 #define BATCHES 1
 

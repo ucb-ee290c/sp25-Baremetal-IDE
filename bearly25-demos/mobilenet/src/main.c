@@ -12,7 +12,7 @@
 
 #include "../include/model_params_self.h"
 #include "../include/inputs.h"
-#include "layers.h"
+#include "nn_rvv/layers.h"
 #include "compare.h"
 
 /* -------------------------------------------------------------------------- */

@@ -9,7 +9,7 @@ add_executable(borai-optimized
 target_include_directories(borai-optimized PUBLIC fp32/include)
 
 option(BORAI_TESTQ_TRANSPOSED_WEIGHTS
-  "Enable transposed-weight vectorized matmul in boraiq-optimized (requires vecnn)" ON)
+  "Enable transposed-weight vectorized matmul in boraiq-optimized (requires nnrvv)" ON)
 
 add_executable(boraiq-optimized
   int8/src/main.c
@@ -86,12 +86,12 @@ if(BORAI_TESTQ_DEBUG_NUMERIC)
 endif()
 
 if(BORAI_TESTQ_TRANSPOSED_WEIGHTS)
-  if(BUILD_VECNN)
+  if(BUILD_NN_RVV)
     target_compile_definitions(boraiq-optimized PRIVATE TRANSPOSED_WEIGHTS)
-    target_include_directories(boraiq-optimized PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
-    target_link_libraries(boraiq-optimized PRIVATE vecnn)
+    target_include_directories(boraiq-optimized PRIVATE ${CMAKE_SOURCE_DIR}/nn-rvv/include)
+    target_link_libraries(boraiq-optimized PRIVATE nnrvv)
   else()
-    message(STATUS "boraiq-optimized: BUILD_VECNN is OFF, disabling TRANSPOSED_WEIGHTS.")
+    message(STATUS "boraiq-optimized: BUILD_NN_RVV is OFF, disabling TRANSPOSED_WEIGHTS.")
   endif()
 endif()
 
@@ -110,22 +110,22 @@ if(BORAI_TESTQ_PREFILL_MULTICORE)
 endif()
 
 option(BORAI_TESTQ_VEC_SOFTMAX
-  "Use vectorized RVV softmax for attention in boraiq-optimized (requires vecnn)" ON)
+  "Use vectorized RVV softmax for attention in boraiq-optimized (requires nnrvv)" ON)
 
 if(BORAI_TESTQ_VEC_SOFTMAX)
-  if(BUILD_VECNN)
+  if(BUILD_NN_RVV)
     target_compile_definitions(boraiq-optimized PRIVATE VEC_SOFTMAX)
-    target_include_directories(boraiq-optimized PRIVATE ${CMAKE_SOURCE_DIR}/vec-nn/include)
-    target_link_libraries(boraiq-optimized PRIVATE vecnn)
+    target_include_directories(boraiq-optimized PRIVATE ${CMAKE_SOURCE_DIR}/nn-rvv/include)
+    target_link_libraries(boraiq-optimized PRIVATE nnrvv)
   else()
-    message(STATUS "boraiq-optimized: BUILD_VECNN is OFF, disabling VEC_SOFTMAX.")
+    message(STATUS "boraiq-optimized: BUILD_NN_RVV is OFF, disabling VEC_SOFTMAX.")
   endif()
 endif()
 
 ### Dependencies ###
 
-if(BUILD_VECNN)
-  target_link_libraries(borai-optimized PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(borai-optimized PRIVATE nnrvv)
 endif()
 
 target_link_libraries(borai-optimized PRIVATE 

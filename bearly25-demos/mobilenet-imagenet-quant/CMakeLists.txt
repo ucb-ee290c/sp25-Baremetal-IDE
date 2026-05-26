@@ -33,8 +33,8 @@ target_link_libraries(mobilenet-imagenet-quant PRIVATE
 # Link math library
 target_link_libraries(mobilenet-imagenet-quant PRIVATE m)
 
-if(BUILD_VECNN)
-  target_link_libraries(mobilenet-imagenet-quant PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(mobilenet-imagenet-quant PRIVATE nnrvv)
 endif()
 
 if (PROF_COV)

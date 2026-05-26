@@ -34,7 +34,7 @@
 #include "main.h"
 
 #if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
-#include "layers.h"
+#include "nn_rvv/layers.h"
 #endif
 #ifdef BORAIQ_TINY_SHAPE_GEMM
 #include "tiny_gemm_i8_rvv.h"

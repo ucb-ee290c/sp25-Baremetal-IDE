@@ -208,13 +208,8 @@ void build_transformer(Transformer *t);
 void free_transformer(Transformer* t);
 
 // Neural Net Logic (Transformer Dynamics)
-// Utilizes fp32 forward pass
-void rmsnorm(float* o, float* x, float* weight, int size);
-void softmax(float* x, int size);
-void matmul(float* xout, float* x, float* w, int n, int d);
-// matmul_t: same semantics as matmul() but w_t is pre-transposed [n×d].
-// Calls f32_gemm(M=1, N=d, K=n) so the nc-loop vectorizes over d.
-void matmul_t(float* xout, const float* x, const float* w_t, int n, int d);
+// rmsnorm / softmax / matmul_t are thin static inline wrappers around
+// nn-rvv kernels — defined directly in main.c, no extern prototype here.
 void alloc_and_transpose_weights(TransformerWeightsT* wt,
                                   const TransformerWeights* w,
                                   const Config* p);

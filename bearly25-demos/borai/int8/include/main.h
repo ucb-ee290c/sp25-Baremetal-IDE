@@ -107,14 +107,11 @@ typedef enum {
  *     Rows 1..K   : n_out int8 bytes per row (rows of W_T, pre-converted
  *                   from uint8 to int8 by subtracting 128 at startup)
  *
- * Enabled when -DTRANSPOSED_WEIGHTS is passed at compile time.
  * Allocated once in build_transformer(); freed in free_transformer().
  *
  * Memory overhead: total weight bytes × 1 (same element count as originals,
  * just reordered) + 1 extra bias row per weight matrix (negligible).
  */
-#ifdef TRANSPOSED_WEIGHTS
-
 typedef struct {
     unsigned char* wq_T;    /* (n_layers, dim+1, dim)         B_pack for wq  */
     unsigned char* wk_T;    /* (n_layers, dim+1, kv_dim)      B_pack for wk  */
@@ -125,7 +122,6 @@ typedef struct {
     unsigned char* w3_T;    /* (n_layers, dim+1, hidden_dim)  B_pack for w3  */
     unsigned char* wcls_T;  /* (dim+1, vocab_size)            B_pack for wcls*/
 } TransformerWeightsT;
-#endif /* TRANSPOSED_WEIGHTS */
 
 int main(int argc, char** argv);
 void __main();

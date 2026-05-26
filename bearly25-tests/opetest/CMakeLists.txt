@@ -23,8 +23,8 @@ target_link_libraries(opetest PRIVATE
   chip-config
 )
 
-if(BUILD_VECNN)
-  target_link_libraries(opetest PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(opetest PRIVATE nnrvv)
 endif()
 
 if (PROF_COV)

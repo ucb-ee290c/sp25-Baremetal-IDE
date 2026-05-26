@@ -19,8 +19,8 @@ target_include_directories(mnist PUBLIC include)
 target_link_libraries(mnist PRIVATE 
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
-if(BUILD_VECNN)
-  target_link_libraries(mnist PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(mnist PRIVATE nnrvv)
 endif()
 
 if (PROF_COV)

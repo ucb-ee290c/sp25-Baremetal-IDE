@@ -38,8 +38,8 @@ target_link_libraries(mobilenet-imagenet PRIVATE
 # Link math library (equivalent to -lm in Makefile)
 target_link_libraries(mobilenet-imagenet PRIVATE m)
 
-if(BUILD_VECNN)
-  target_link_libraries(mobilenet-imagenet PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(mobilenet-imagenet PRIVATE nnrvv)
 endif()
 
 if (PROF_COV)

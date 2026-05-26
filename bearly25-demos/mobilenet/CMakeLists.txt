@@ -20,8 +20,8 @@ target_link_libraries(mobilenet PRIVATE
   -L${CMAKE_BINARY_DIR}/glossy -Wl,--whole-archive glossy -Wl,--no-whole-archive
 )
 
-if(BUILD_VECNN)
-  target_link_libraries(mobilenet PRIVATE vecnn)
+if(BUILD_NN_RVV)
+  target_link_libraries(mobilenet PRIVATE nnrvv)
 endif()
 
 if (PROF_COV)

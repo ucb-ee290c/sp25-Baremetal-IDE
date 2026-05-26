@@ -21,7 +21,7 @@
  */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <layers.h>
+#include <nn_rvv/layers.h>
 #include <riscv_vector.h> 
 #include <stdlib.h>
 

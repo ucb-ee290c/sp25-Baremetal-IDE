@@ -37,6 +37,8 @@ static volatile int8_t *const g_frame =
     (volatile int8_t *)(uintptr_t)KWS_BEARLY_ROLLING_FRAME_ADDR;
 static volatile int8_t *const g_window_tcm =
     (volatile int8_t *)(uintptr_t)KWS_BEARLY_ROLLING_TCM_WINDOW_ADDR;
+static volatile uint32_t *const g_done_marker =
+    (volatile uint32_t *)(uintptr_t)KWS_BEARLY_ROLLING_DONE_ADDR;
 
 static const char *g_labels[TINYSPEECH_NUM_CLASSES] = {
     "yes", "no", "on", "off", "stop", "go"
@@ -284,6 +286,11 @@ static void run_inference_from_tcm(uint32_t seq, uint64_t rx_cycle, uint32_t pol
   }
 #endif
 
+  *g_done_marker = KWS_ROLLING_BEARLY_DONE_MAGIC;
+  kws_fence_rw_local();
+  cache_evict_all();
+  kws_fence_rw_local();
+
   free_tensor(&probs);
   free_tensor(&input);
 }
@@ -313,13 +320,19 @@ void app_init(void) {
   g_last_seq = *g_commit_seq;
   clear_tcm_window();
 
+  *g_done_marker = 0u;
+  kws_fence_rw_local();
+  cache_evict_all();
+  kws_fence_rw_local();
+
   KWS_BEARLY_ROLLING_LOG(
       "[bearly-kws-rolling] init seq_addr=0x%08lx frame_addr=0x%08lx "
-      "frame_bytes=%u baseline_seq=%u window_tcm=0x%08lx window_bytes=%u\n",
+      "frame_bytes=%u baseline_seq=%u done_addr=0x%08lx window_tcm=0x%08lx window_bytes=%u\n",
       (unsigned long)KWS_BEARLY_ROLLING_COMMIT_SEQ_ADDR,
       (unsigned long)KWS_BEARLY_ROLLING_FRAME_ADDR,
       (unsigned)KWS_ROLLING_FRAME_BYTES,
       (unsigned)g_last_seq,
+      (unsigned long)KWS_BEARLY_ROLLING_DONE_ADDR,
       (unsigned long)KWS_BEARLY_ROLLING_TCM_WINDOW_ADDR,
       (unsigned)KWS_ROLLING_WINDOW_BYTES);
 

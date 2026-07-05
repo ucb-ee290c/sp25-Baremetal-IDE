@@ -29,6 +29,12 @@ extern "C" {
 #define KWS_ROLLING_FRAME_BYTES KWS_MFCC_DIM
 #endif
 
+#ifndef KWS_ROLLING_BEARLY_DONE_ADDR
+#define KWS_ROLLING_BEARLY_DONE_ADDR (KWS_ROLLING_SHARED_BASE_ADDR + 0x10u)
+#endif
+
+#define KWS_ROLLING_BEARLY_DONE_MAGIC 0xFFFFFFFFu
+
 #define KWS_ROLLING_WINDOW_BYTES KWS_CASE_PAYLOAD_BYTES
 
 static inline void kws_rolling_fence_rw(void) {

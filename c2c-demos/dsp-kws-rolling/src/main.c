@@ -34,6 +34,8 @@ static volatile uint32_t *const g_commit_seq =
     (volatile uint32_t *)(uintptr_t)KWS_DSP_ROLLING_COMMIT_SEQ_ADDR;
 static volatile int8_t *const g_frame =
     (volatile int8_t *)(uintptr_t)KWS_DSP_ROLLING_FRAME_ADDR;
+static volatile uint32_t *const g_bearly_done =
+    (volatile uint32_t *)(uintptr_t)KWS_DSP_ROLLING_BEARLY_DONE_ADDR;
 
 uint64_t target_frequency = KWS_DSP_ROLLING_TARGET_FREQUENCY_HZ;
 
@@ -171,13 +173,15 @@ void app_init(void) {
   }
 
   *g_commit_seq = 0u;
+  *g_bearly_done = 0u;
   kws_fence_rw_local();
   cache_writeback_pressure();
 
-  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] init seq_addr=0x%08lx frame_addr=0x%08lx frame_bytes=%u signal=%s\n",
+  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] init seq_addr=0x%08lx frame_addr=0x%08lx frame_bytes=%u done_addr=0x%08lx signal=%s\n",
                       (unsigned long)KWS_DSP_ROLLING_COMMIT_SEQ_ADDR,
                       (unsigned long)KWS_DSP_ROLLING_FRAME_ADDR,
                       (unsigned)KWS_ROLLING_FRAME_BYTES,
+                      (unsigned long)KWS_DSP_ROLLING_BEARLY_DONE_ADDR,
                       KWS_DSP_YES005_MEMBER);
 }
 
@@ -238,6 +242,15 @@ void app_main(void) {
     uint64_t mfcc_cycles = 0u;
     mfcc_driver_status_t st;
 
+    cache_writeback_pressure();
+    kws_fence_rw_local();
+    if (*g_bearly_done == KWS_ROLLING_BEARLY_DONE_MAGIC) {
+      KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] bearly done detected at seq=%u total_frames=%llu\n",
+                          (unsigned)g_commit_seq_local,
+                          (unsigned long long)total_frames);
+      break;
+    }
+
     maybe_wait_send_interval(&next_send_cycle);
     st = compute_one_mfcc_frame((uint8_t)KWS_DSP_ROLLING_STEADY_FRAME_IDX, mfcc_q, &mfcc_cycles);
     publish_one_frame(mfcc_q);
@@ -255,6 +268,11 @@ void app_main(void) {
                           (unsigned)g_mfcc_fail_local);
     }
   }
+
+  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] finished total_frames=%llu avg_mfcc_cycles/frame=%llu fails=%u\n",
+                      (unsigned long long)total_frames,
+                      (unsigned long long)(total_frames ? (total_mfcc_cycles / total_frames) : 0u),
+                      (unsigned)g_mfcc_fail_local);
 }
 
 int main(void) {

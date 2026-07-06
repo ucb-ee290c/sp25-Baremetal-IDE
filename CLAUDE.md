@@ -49,10 +49,26 @@ seconds.
 
 ## C2C link & shared-memory model
 
-- The two chips communicate through a **shared memory window at `0xC0000000`**
-  (`*_SHARED_BASE_ADDR`, default `0xC0000000`, `*_SHARED_BYTES` = 16 KiB). Both chips address
-  the same window; the C2C link routes accesses across the die boundary.
-- **DSP writes, Bearly reads.** The DSP side is the producer; Bearly polls for changes.
+- **Two scratchpads, one adjacent to each chip:**
+  - **`0xC0000000` — DSP-adjacent scratchpad.** (`*_SHARED_BASE_ADDR`, 16 KiB.)
+  - **`0xD0000000` — BML-adjacent scratchpad.**
+- **Golden access rule — you may READ only your own adjacent spad; you may WRITE to both.**
+  - DSP: reads `0xC0000000` (local); writes `0xC0000000` **and** `0xD0000000`.
+  - BML: reads `0xD0000000` (local); writes `0xD0000000` **and** `0xC0000000`.
+  - **Neither chip can read across the link.** To send data you *write into the other chip's
+    spad*; that chip then reads it locally from its own spad. Never issue a load to the remote
+    spad — it is not readable.
+- **Cross-spad (remote) writes are the unstable ones** — repeat every write into the *other*
+  chip's spad several times to make it stick (see unstable-access bug). Writes to your own spad
+  are local/stable. Every read of your own spad still needs a **full cache flush first**,
+  because the remote wrote it behind your cache's back.
+- **DSP writes, Bearly reads (data direction unchanged).** DSP is the producer.
+- **Handshake** (finalized): DSP writes the case **into `0xD0000000` (BML's spad)** and sets a
+  `data_ready` flag there. BML polls `0xD0000000` locally, reads the case, runs inference, then
+  **clears `data_ready` in `0xD0000000`** (local write) and **sets a `rx_ready` flag by writing
+  into `0xC0000000` (DSP's spad)**. DSP polls `0xC0000000` locally for `rx_ready` before sending
+  the next case. (Note: this is the *physically forced* mapping — a receiver can only read its
+  own spad, so payload for BML must live in BML's spad `0xD0000000`.)
 - **Coherence is not automatic across the link, and access is unreliable.** See the
   **cache-manipulation** and **unstable-access** entries in the bug log — those two hardware
   facts dictate the shape of all shared-memory code. In short: every access (read *or* write,
@@ -182,12 +198,13 @@ Software defects to fix later (distinct from the hardware quirks below).
   access. Do not treat a plain load/store to `0xC0000000` as sufficient.
 - **Status:** worked-around (hardware behavior; the flush is mandatory, not an optimization).
 
-### [C2C link] Shared-region reads/writes are unstable — repeat writes  (discovered 2026-07-05)
-- **Symptom:** an individual read or write across the link is not reliable; a single write may
-  not "take," and a single read may return a wrong/torn value.
-- **Scope:** every shared-region access on either chip; all C2C demos.
-- **Workaround / rule:** **write the intended data several times** (and/or re-read and confirm)
-  rather than assuming one access succeeds. Sync protocols must tolerate this — prefer
-  idempotent writes and confirm-by-reread over single-shot handshakes. Keep this in mind when
-  designing the bidirectional link: a value is not "sent" until it has been repeated/confirmed.
+### [C2C link] Cross-spad (remote) writes are unstable — repeat them  (discovered 2026-07-05)
+- **Symptom:** a single write into the *other* chip's scratchpad across the link is not reliable
+  — it may not "take."
+- **Scope:** writes into the remote spad (DSP→`0xD0000000`, BML→`0xC0000000`); all C2C demos.
+  Writes to your own adjacent spad are local and stable.
+- **Workaround / rule:** **repeat every remote-spad write several times** so it sticks. A value
+  is not "sent" until it has been written repeatedly. Sync protocols must be idempotent
+  (flags/counters that tolerate duplicate writes). Local reads of your own spad still need a full
+  cache flush first (remote wrote it behind your cache).
 - **Status:** open / worked-around. *(Quantify how many repeats are needed in practice.)*

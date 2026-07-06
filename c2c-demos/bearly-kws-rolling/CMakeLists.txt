@@ -148,6 +148,7 @@ set(KWS_BEARLY_ROLLING_TINYSPEECH_INT8_MULTICORE_VALUE ${KWS_BEARLY_ROLLING_USE_
 
 add_executable(bearly-kws-rolling
   src/main.c
+  ${CMAKE_SOURCE_DIR}/c2c-demos/common/c2c_shm.c
   ${CMAKE_SOURCE_DIR}/bearly25-bmarks/tinyspeech-mc/src/tinyspeech_model.c
   ${CMAKE_SOURCE_DIR}/bearly25-bmarks/tinyspeech-mc/src/tinyspeech_int8.c
   ${CMAKE_SOURCE_DIR}/bearly25-bmarks/tinyspeech-mc/src/tensor.c

@@ -5,6 +5,8 @@
 
 #include "chip_config.h"
 #include "kws_rolling_proto.h"
+#include "kws_stream_proto.h"
+#include "c2c_shm.h"
 
 #ifndef KWS_BEARLY_ROLLING_LOG_ENABLE
 #define KWS_BEARLY_ROLLING_LOG_ENABLE 1
@@ -42,6 +44,18 @@
 
 #ifndef KWS_BEARLY_ROLLING_RX_LOG_EVERY
 #define KWS_BEARLY_ROLLING_RX_LOG_EVERY 1u
+#endif
+
+/* Re-ack an already-consumed case (covers a dropped ack) at most once per this many polls, so BML
+ * does not continuously write 0xC — continuous cross-link writes block the peer from booting. */
+#ifndef KWS_BEARLY_ROLLING_REACK_EVERY
+#define KWS_BEARLY_ROLLING_REACK_EVERY 20000u
+#endif
+
+/* After booting, wait this many cycles before the first cross-link write (bml_ready -> 0xC), so
+ * DSP has time to boot too. Writing a peer's spad while it is still booting kills it. */
+#ifndef KWS_BEARLY_ROLLING_STARTUP_GRACE_CYCLES
+#define KWS_BEARLY_ROLLING_STARTUP_GRACE_CYCLES 1000000000ULL
 #endif
 
 #ifndef KWS_BEARLY_ROLLING_INFER_LOG_EVERY

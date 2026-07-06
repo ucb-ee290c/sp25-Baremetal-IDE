@@ -187,6 +187,46 @@ Software defects to fix later (distinct from the hardware quirks below).
 - **Status:** open / worked-around / fixed-in-hw / under-investigation.
 ```
 
+### [C2C link] A cross-link write to an absent/wedged peer hangs the writer  (discovered 2026-07-05, observed on silicon)
+- **Symptom:** a chip hangs on boot (needs an FPGA reset to recover) if it writes the peer's spad
+  while the peer is powered off or the link is wedged. BML hung rebooting with DSP off because its
+  `app_init` did a cross-link write (the boot-clear) to `0xC` before anything confirmed DSP was up.
+- **Scope:** any store to the *other* chip's spad. Local reads/writes of your own spad are safe.
+- **Workaround / rule:** **do no cross-link (peer-spad) writes in `app_init`** — only local setup
+  there. Defer every write to the peer's spad into `app_main`, after the core has fully booted and
+  printed. (DSP's identity/epoch write and BML's ack are now the first peer-spad writes, both in
+  `app_main`.) A powered, booted-but-idle peer is fine to write to; a powered-off/wedged one is not.
+- **Status:** worked-around (moved all peer-spad writes out of init).
+
+### [C2C link] A cross-link write into a chip while it is BOOTING kills that chip  (discovered 2026-07-05, observed on silicon)
+- **Symptom:** whichever chip comes up **second** dies — prints nothing, and the FPGA has to be
+  reset. It is **not** poll-vs-write contention and **not** about *continuous* writes: even a
+  **single** write from the first chip into the second chip's spad, landing during the second's
+  boot, kills it. Fully symmetric (DSP-first kills BML; BML-first kills DSP). Confirmed: DSP did
+  one `publish` to `0xD` while BML was still booting (not yet polling) and BML's FPGA died.
+- **Scope:** both chips; any store into the peer's spad while the peer has not finished booting.
+- **Workaround / rule:** **boot barrier.** No chip writes the peer's spad until the peer signals
+  it has fully booted. Implemented as: BML boots, waits a grace, then writes `bml_ready`
+  (`KWS_STREAM_READY_MAGIC`) into the DSP spad; DSP polls its **local** `0xC` for `bml_ready` and
+  does not touch `0xD` until it sees it. Also keep steady-state traffic **link-quiet** (write the
+  peer's spad only in brief, infrequent bursts; poll your own spad in between —
+  `KWS_DSP_ROLLING_ACK_POLL_BUDGET`, `KWS_BEARLY_ROLLING_REACK_EVERY`). Prefer starting **DSP
+  first** (it waits indefinitely for `bml_ready`), then BML.
+- **Status:** worked-around with a boot barrier. *(Open: what exactly the peer must reach before
+  it can safely receive a write — is `bml_ready` after runtime prep enough, or is a longer settle
+  needed?)*
+
+### [C2C link] Scratchpads are 32-bit-access-only — byte/half accesses hang  (discovered 2026-07-05, confirmed on silicon)
+- **Symptom:** a **byte-granular** store to a scratchpad (`0xC`/`0xD`) hangs the core. BML hung on
+  the first byte of a `memcpy`-style block write to `0xC`; switching that path to 32-bit word
+  stores fixed it and BML progressed all the way to inference.
+- **Scope:** all spad accesses on both chips. Word (32-bit) accesses work; byte/half do not.
+- **Workaround / rule:** only ever access the spads with **aligned 32-bit** loads/stores.
+  `c2c_shm`'s block helpers assemble/disassemble bytes and move whole words; callers pass
+  4-aligned addresses and 4-byte-multiple lengths. Never `memcpy` to/from a spad.
+- **Status:** worked-around (hardware constraint). Likely also explains earlier "DSP published but
+  BML never received" — the byte-wise payload write was mangling data sub-word.
+
 ### [C2C link] Shared-region access requires a full cache flush every time  (discovered 2026-07-05)
 - **Symptom:** data written to / read from the `0xC0000000` shared region is not made visible
   across the die by an ordinary load/store. Stale data is returned otherwise.

@@ -5,6 +5,8 @@
 
 #include "chip_config.h"
 #include "kws_rolling_proto.h"
+#include "kws_stream_proto.h"
+#include "c2c_shm.h"
 
 #ifndef KWS_DSP_ROLLING_LOG_ENABLE
 #define KWS_DSP_ROLLING_LOG_ENABLE 1
@@ -66,6 +68,19 @@
 
 #ifndef KWS_DSP_ROLLING_LOG_EVERY
 #define KWS_DSP_ROLLING_LOG_EVERY 1u
+#endif
+
+/* Ack polls to wait after a publish before re-publishing the same case (self-heal on drops).
+ * Between publishes DSP only reads its LOCAL 0xC spad (no link writes), so keep this large: the
+ * peer must be able to boot + prep + run inference in the gap without DSP driving the link. */
+#ifndef KWS_DSP_ROLLING_ACK_POLL_BUDGET
+#define KWS_DSP_ROLLING_ACK_POLL_BUDGET 20000u
+#endif
+
+/* Diagnostic: publish exactly one case, then stop touching the link (wfi). Lets us test whether
+ * a single transfer succeeds while BML is concurrently running, isolating link contention. */
+#ifndef KWS_DSP_ROLLING_PUBLISH_ONCE
+#define KWS_DSP_ROLLING_PUBLISH_ONCE 0
 #endif
 
 #ifndef KWS_DSP_ROLLING_DEBUG_WRITE_ENABLE

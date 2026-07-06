@@ -9,6 +9,7 @@ endif()
 
 add_executable(dsp-kws-rolling
   src/main.c
+  ${CMAKE_SOURCE_DIR}/c2c-demos/common/c2c_shm.c
   ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c
 )
 

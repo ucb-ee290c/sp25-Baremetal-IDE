@@ -1,6 +1,9 @@
 #include "main.h"
 #include "yes_test_005_signal.h"
 
+#include "c2c_shm.h"
+#include "kws_stream_proto.h"
+
 #if KWS_DSP_ROLLING_USE_THREADLIB
 #include "mfcc_driver_mc.h"
 void hthread_init(void);
@@ -9,33 +12,24 @@ void hthread_join(uint32_t hartid);
 static void mc_nop_worker(void *arg) { (void)arg; }
 #endif
 
-_Static_assert((KWS_DSP_ROLLING_FRAME_ADDR >= KWS_DSP_ROLLING_SHARED_BASE),
-               "KWS_DSP_ROLLING_FRAME_ADDR must be inside shared region.");
-_Static_assert(((KWS_DSP_ROLLING_FRAME_ADDR - KWS_DSP_ROLLING_SHARED_BASE) + KWS_ROLLING_FRAME_BYTES) <= KWS_DSP_ROLLING_SHARED_BYTES,
-               "Rolling frame payload does not fit in shared region.");
-_Static_assert((KWS_DSP_ROLLING_CACHE_LINE_BYTES & (KWS_DSP_ROLLING_CACHE_LINE_BYTES - 1u)) == 0u,
-               "KWS_DSP_ROLLING_CACHE_LINE_BYTES must be a power of two.");
-_Static_assert((KWS_DSP_ROLLING_CACHE_EVICT_BYTES >= KWS_DSP_ROLLING_CACHE_LINE_BYTES),
-               "KWS_DSP_ROLLING_CACHE_EVICT_BYTES must be at least one cache line.");
-_Static_assert((KWS_DSP_ROLLING_CACHE_EVICT_BYTES % KWS_DSP_ROLLING_CACHE_LINE_BYTES) == 0u,
-               "KWS_DSP_ROLLING_CACHE_EVICT_BYTES must be a multiple of cache line size.");
 _Static_assert(KWS_DSP_YES005_NUM_SAMPLES >= ((((uint32_t)KWS_DSP_ROLLING_FRAMES_PER_CASE - 1u) * KWS_DSP_ROLLING_SIGNAL_HOP_SAMPLES) + MFCC_DRIVER_FFT_LEN),
                "Embedded yes_test_005 signal does not cover all requested MFCC frames.");
+_Static_assert((KWS_DSP_ROLLING_FRAMES_PER_CASE * KWS_MFCC_DIM) == KWS_CASE_PAYLOAD_BYTES,
+               "Frames*dim must equal the case payload size.");
+
+/* BML-adjacent spad (0xD): DSP remote-writes here.  DSP-adjacent spad (0xC): DSP local-reads. */
+static kws_stream_bml_spad_t *const g_bml =
+    (kws_stream_bml_spad_t *)(uintptr_t)KWS_STREAM_BML_SPAD_BASE;
+static kws_stream_dsp_spad_t *const g_dsp =
+    (kws_stream_dsp_spad_t *)(uintptr_t)KWS_STREAM_DSP_SPAD_BASE;
 
 static mfcc_driver_t g_mfcc;
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
-static uint8_t g_cache_evict[KWS_DSP_ROLLING_CACHE_EVICT_BYTES]
-    __attribute__((aligned(0x8000)));
-static volatile uint8_t g_cache_sink;
+static int8_t g_case[KWS_CASE_PAYLOAD_BYTES];
 static uint32_t g_mfcc_fail_local;
-static uint32_t g_commit_seq_local;
-
-static volatile uint32_t *const g_commit_seq =
-    (volatile uint32_t *)(uintptr_t)KWS_DSP_ROLLING_COMMIT_SEQ_ADDR;
-static volatile int8_t *const g_frame =
-    (volatile int8_t *)(uintptr_t)KWS_DSP_ROLLING_FRAME_ADDR;
-static volatile uint32_t *const g_bearly_done =
-    (volatile uint32_t *)(uintptr_t)KWS_DSP_ROLLING_BEARLY_DONE_ADDR;
+static uint32_t g_case_index;
+static uint32_t g_epoch;
+static uint32_t g_case_checksum;
 
 uint64_t target_frequency = KWS_DSP_ROLLING_TARGET_FREQUENCY_HZ;
 
@@ -43,26 +37,6 @@ static inline uint64_t rdcycle64(void) {
   uint64_t x;
   __asm__ volatile("rdcycle %0" : "=r"(x));
   return x;
-}
-
-static inline void kws_fence_rw_local(void) {
-  __asm__ volatile("fence rw, rw" ::: "memory");
-}
-
-static inline void cache_writeback_pressure(void) {
-  volatile uint8_t *buf = (volatile uint8_t *)g_cache_evict;
-  volatile uint8_t sink = g_cache_sink;
-
-  for (uint32_t pass = 0; pass < 3u; ++pass) {
-    for (uint32_t i = 0; i < (uint32_t)KWS_DSP_ROLLING_CACHE_EVICT_BYTES; i += KWS_DSP_ROLLING_CACHE_LINE_BYTES) {
-      sink ^= buf[i];
-      buf[i] = (uint8_t)(sink + (uint8_t)i + (uint8_t)pass);
-    }
-    kws_fence_rw_local();
-  }
-
-  g_cache_sink = sink;
-  kws_fence_rw_local();
 }
 
 static void load_yes005_window(uint8_t frame_idx, float32_t *dst) {
@@ -122,42 +96,122 @@ static mfcc_driver_status_t compute_one_mfcc_frame(uint8_t frame_idx,
   return MFCC_DRIVER_OK;
 }
 
-static void publish_one_frame(const int8_t *mfcc_q) {
-  for (uint32_t i = 0; i < KWS_ROLLING_FRAME_BYTES; ++i) {
-    g_frame[i] = mfcc_q[i];
+/* Compute a full 94-frame case into g_case (frame-major: g_case[frame*DIM + k]). */
+static void compute_full_case(void) {
+  uint64_t total_mfcc_cycles = 0u;
+
+  for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_ROLLING_FRAMES_PER_CASE; ++frame_idx) {
+    int8_t mfcc_q[KWS_MFCC_DIM];
+    uint64_t mfcc_cycles = 0u;
+    (void)compute_one_mfcc_frame(frame_idx, mfcc_q, &mfcc_cycles);
+
+    for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
+      g_case[((uint32_t)frame_idx * KWS_MFCC_DIM) + k] = mfcc_q[k];
+    }
+    total_mfcc_cycles += mfcc_cycles;
   }
 
-  kws_fence_rw_local();
-  cache_writeback_pressure();
+  g_case_checksum = c2c_checksum(g_case, KWS_CASE_PAYLOAD_BYTES);
 
-  g_commit_seq_local++;
-  *g_commit_seq = g_commit_seq_local;
-
-  kws_fence_rw_local();
-  cache_writeback_pressure();
-  kws_fence_rw_local();
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] case computed frames=%u checksum=0x%08lx avg_mfcc_cycles/frame=%llu fails=%u\n",
+                      (unsigned)KWS_DSP_ROLLING_FRAMES_PER_CASE,
+                      (unsigned long)g_case_checksum,
+                      (unsigned long long)(total_mfcc_cycles / KWS_DSP_ROLLING_FRAMES_PER_CASE),
+                      (unsigned)g_mfcc_fail_local);
 }
 
-static void maybe_wait_send_interval(uint64_t *next_send_cycle_io) {
-#if KWS_DSP_ROLLING_SEND_INTERVAL_CYCLES
-  uint64_t now;
+/* First cross-link write: identity + epoch into BML's spad. Called from app_main (after boot),
+ * NEVER from app_init — a cross-link write to an absent/wedged peer hangs the core. */
+static void publish_identity(void) {
+  c2c_remote_write_u32(&g_bml->magic, KWS_STREAM_MAGIC_BML);
+  c2c_remote_write_u32(&g_bml->version, KWS_STREAM_PROTO_VERSION);
+  c2c_remote_write_u32(&g_bml->payload_bytes, (uint32_t)KWS_CASE_PAYLOAD_BYTES);
+  c2c_remote_write_u32(&g_bml->case_index, 0u);
+  c2c_remote_write_u32(&g_bml->epoch, g_epoch); /* epoch announces the producer */
+}
 
-  while ((now = rdcycle64()) < *next_send_cycle_io) {
-    (void)now;
-    __asm__ volatile("nop");
+/* Remote-commit the current g_case as case `idx`. case_index (the commit) is written LAST. */
+static void publish_case(uint32_t idx) {
+  uint64_t tx_cycle = rdcycle64();
+
+  c2c_remote_write_block(g_bml->case_payload, g_case, KWS_CASE_PAYLOAD_BYTES);
+  c2c_remote_write_u32(&g_bml->payload_checksum, g_case_checksum);
+  c2c_remote_write_block(&g_bml->dsp_tx_cycle, &tx_cycle, sizeof(tx_cycle));
+  c2c_remote_write_u32(&g_bml->case_index, idx); /* commit */
+}
+
+/* Block (polling our LOCAL 0xC only — no cross-link writes) until BML announces it has booted.
+ * We must not write BML's spad before this, or the write lands during BML's boot and kills it. */
+static void wait_for_bml_ready(void) {
+  uint32_t loops = 0u;
+
+  while (1) {
+    uint32_t ready = c2c_local_read_u32(&g_dsp->bml_ready);
+    if (ready == KWS_STREAM_READY_MAGIC) {
+      KWS_DSP_ROLLING_LOG("[dsp-kws-stream] bml_ready seen after %u polls\n", (unsigned)loops);
+      return;
+    }
+    if ((loops % 100000u) == 0u) {
+      KWS_DSP_ROLLING_LOG("[dsp-kws-stream] waiting for bml_ready (0xC=0x%08lx) polls=%u\n",
+                          (unsigned long)ready, (unsigned)loops);
+    }
+    loops++;
   }
+}
 
-  *next_send_cycle_io += KWS_DSP_ROLLING_SEND_INTERVAL_CYCLES;
-#else
-  (void)next_send_cycle_io;
-#endif
+/* True once BML has acked case `idx` under our epoch. */
+static int ack_seen(uint32_t idx) {
+  uint32_t epoch_echo;
+  uint32_t ack_index;
+
+  c2c_full_flush();
+  epoch_echo = g_dsp->epoch_echo;
+  ack_index = g_dsp->ack_index;
+
+  return (epoch_echo == g_epoch) && (ack_index >= idx);
+}
+
+/* Publish case `idx`, then wait for its ack; re-publish on timeout until acked. */
+static void publish_until_acked(uint32_t idx) {
+  uint32_t republishes = 0u;
+
+  while (1) {
+    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] DEBUG publish case_index=%u -> 0xD (payload %u bytes)\n",
+                        (unsigned)idx, (unsigned)KWS_CASE_PAYLOAD_BYTES);
+    publish_case(idx);
+    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] DEBUG publish done; polling 0xC for ack\n");
+
+    for (uint32_t poll = 0; poll < KWS_DSP_ROLLING_ACK_POLL_BUDGET; ++poll) {
+      if (ack_seen(idx)) {
+        if ((KWS_DSP_ROLLING_LOG_EVERY != 0u) && ((idx % KWS_DSP_ROLLING_LOG_EVERY) == 0u)) {
+          KWS_DSP_ROLLING_LOG("[dsp-kws-stream] acked case_index=%u republishes=%u\n",
+                              (unsigned)idx, (unsigned)republishes);
+        }
+        return;
+      }
+    }
+
+    republishes++;
+    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] no ack for case_index=%u after %u polls; republishing (#%u)\n",
+                        (unsigned)idx,
+                        (unsigned)KWS_DSP_ROLLING_ACK_POLL_BUDGET,
+                        (unsigned)republishes);
+  }
 }
 
 void app_init(void) {
   init_test(target_frequency);
-  g_cache_sink = 0u;
   g_mfcc_fail_local = 0u;
-  g_commit_seq_local = 0u;
+  g_case_index = 0u;
+
+  /* Per-boot epoch nonce (nonzero) so BML rebaselines and ignores any prior-run state. */
+  g_epoch = (uint32_t)rdcycle64();
+  if (g_epoch == 0u) {
+    g_epoch = 1u;
+  }
+
+  /* NOTE: app_init does NO cross-link (spad) writes. Touching the peer's spad before the peer is
+   * up hangs the core. All 0xD writes happen in app_main, after we have fully booted. */
 
 #if KWS_DSP_ROLLING_USE_THREADLIB
   hthread_init();
@@ -166,113 +220,50 @@ void app_init(void) {
 #endif
 
   if (mfcc_driver_init(&g_mfcc) != MFCC_DRIVER_OK) {
-    KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] MFCC init failed\n");
+    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] MFCC init failed\n");
     while (1) {
       __asm__ volatile("wfi");
     }
   }
 
-  *g_commit_seq = 0u;
-  *g_bearly_done = 0u;
-  kws_fence_rw_local();
-  cache_writeback_pressure();
-
-  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] init seq_addr=0x%08lx frame_addr=0x%08lx frame_bytes=%u done_addr=0x%08lx signal=%s\n",
-                      (unsigned long)KWS_DSP_ROLLING_COMMIT_SEQ_ADDR,
-                      (unsigned long)KWS_DSP_ROLLING_FRAME_ADDR,
-                      (unsigned)KWS_ROLLING_FRAME_BYTES,
-                      (unsigned long)KWS_DSP_ROLLING_BEARLY_DONE_ADDR,
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] init bml_spad=0x%08lx dsp_spad=0x%08lx epoch=0x%08lx payload_bytes=%u signal=%s\n",
+                      (unsigned long)KWS_STREAM_BML_SPAD_BASE,
+                      (unsigned long)KWS_STREAM_DSP_SPAD_BASE,
+                      (unsigned long)g_epoch,
+                      (unsigned)KWS_CASE_PAYLOAD_BYTES,
                       KWS_DSP_YES005_MEMBER);
 }
 
 void app_main(void) {
-  uint64_t total_frames = 0u;
-  uint64_t total_mfcc_cycles = 0u;
-  uint64_t next_send_cycle = rdcycle64();
+  /* Milestone 3: compute one case, then stream it in a loop with a reliable per-case handshake.
+   * (Milestone 4 will recompute per-iteration and gate on a VAD threshold.) */
+  compute_full_case();
 
-#if KWS_DSP_ROLLING_DEBUG_WRITE_ENABLE
-  {
-    volatile uint32_t *debug_word =
-        (volatile uint32_t *)(uintptr_t)KWS_DSP_ROLLING_COMMIT_SEQ_ADDR;
-    *debug_word = 0xDEADBEEFu;
-    kws_fence_rw_local();
-    cache_writeback_pressure();
-    kws_fence_rw_local();
-    KWS_DSP_ROLLING_LOG(
-        "[dsp-kws-rolling] DEBUG wrote 0xDEADBEEF to seq addr=0x%08lx\n",
-        (unsigned long)KWS_DSP_ROLLING_COMMIT_SEQ_ADDR);
-    *debug_word = 0u;
-    kws_fence_rw_local();
-    cache_writeback_pressure();
-    kws_fence_rw_local();
+  /* Boot barrier: do NOT write BML's spad until BML says it has booted. */
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] waiting for BML boot barrier before touching 0xD\n");
+  wait_for_bml_ready();
+
+  /* First cross-link write happens here — BML is booted, so writing 0xD is safe. */
+  publish_identity();
+
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] streaming epoch=0x%08lx\n", (unsigned long)g_epoch);
+
+#if KWS_DSP_ROLLING_PUBLISH_ONCE
+  /* Diagnostic: write one case into 0xD, then stop all link activity so BML has an uncontended
+   * window to read it. If BML receives+infers this, the wedge is concurrent/continuous link use. */
+  g_case_index = 1u;
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] PUBLISH_ONCE: writing case_index=1 then idling (no republish)\n");
+  publish_case(g_case_index);
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] PUBLISH_ONCE: done; entering wfi (link idle)\n");
+  while (1) {
+    __asm__ volatile("wfi");
+  }
+#else
+  while (1) {
+    g_case_index++;
+    publish_until_acked(g_case_index);
   }
 #endif
-
-  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] priming %u frames\n",
-                      (unsigned)KWS_DSP_ROLLING_FRAMES_PER_CASE);
-
-  for (uint8_t frame_idx = 0; frame_idx < (uint8_t)KWS_DSP_ROLLING_FRAMES_PER_CASE; ++frame_idx) {
-    int8_t mfcc_q[KWS_MFCC_DIM];
-    uint64_t mfcc_cycles = 0u;
-    mfcc_driver_status_t st;
-
-    maybe_wait_send_interval(&next_send_cycle);
-    st = compute_one_mfcc_frame(frame_idx, mfcc_q, &mfcc_cycles);
-    publish_one_frame(mfcc_q);
-
-    total_frames++;
-    total_mfcc_cycles += mfcc_cycles;
-
-    if ((KWS_DSP_ROLLING_LOG_EVERY != 0u) &&
-        ((total_frames % KWS_DSP_ROLLING_LOG_EVERY) == 0u)) {
-      KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] prime seq=%u frame_idx=%u mfcc_cycles=%llu mfcc_status=%s avg_mfcc_cycles/frame=%llu\n",
-                          (unsigned)g_commit_seq_local,
-                          (unsigned)frame_idx,
-                          (unsigned long long)mfcc_cycles,
-                          mfcc_driver_status_str(st),
-                          (unsigned long long)(total_mfcc_cycles / total_frames));
-    }
-  }
-
-  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] steady-state frame_idx=%u (recomputed+sent repeatedly)\n",
-                      (unsigned)KWS_DSP_ROLLING_STEADY_FRAME_IDX);
-
-  while (1) {
-    int8_t mfcc_q[KWS_MFCC_DIM];
-    uint64_t mfcc_cycles = 0u;
-    mfcc_driver_status_t st;
-
-    cache_writeback_pressure();
-    kws_fence_rw_local();
-    if (*g_bearly_done == KWS_ROLLING_BEARLY_DONE_MAGIC) {
-      KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] bearly done detected at seq=%u total_frames=%llu\n",
-                          (unsigned)g_commit_seq_local,
-                          (unsigned long long)total_frames);
-      break;
-    }
-
-    maybe_wait_send_interval(&next_send_cycle);
-    st = compute_one_mfcc_frame((uint8_t)KWS_DSP_ROLLING_STEADY_FRAME_IDX, mfcc_q, &mfcc_cycles);
-    publish_one_frame(mfcc_q);
-
-    total_frames++;
-    total_mfcc_cycles += mfcc_cycles;
-
-    if ((KWS_DSP_ROLLING_LOG_EVERY != 0u) &&
-        ((total_frames % KWS_DSP_ROLLING_LOG_EVERY) == 0u)) {
-      KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] steady seq=%u mfcc_cycles/frame=%llu mfcc_status=%s avg_mfcc_cycles/frame=%llu fails=%u\n",
-                          (unsigned)g_commit_seq_local,
-                          (unsigned long long)mfcc_cycles,
-                          mfcc_driver_status_str(st),
-                          (unsigned long long)(total_mfcc_cycles / total_frames),
-                          (unsigned)g_mfcc_fail_local);
-    }
-  }
-
-  KWS_DSP_ROLLING_LOG("[dsp-kws-rolling] finished total_frames=%llu avg_mfcc_cycles/frame=%llu fails=%u\n",
-                      (unsigned long long)total_frames,
-                      (unsigned long long)(total_frames ? (total_mfcc_cycles / total_frames) : 0u),
-                      (unsigned)g_mfcc_fail_local);
 }
 
 int main(void) {

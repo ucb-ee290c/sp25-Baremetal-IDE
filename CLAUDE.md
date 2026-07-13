@@ -9,16 +9,21 @@ the living record of hardware behavior we've discovered on silicon. Respect it.
 
 ### Current focus
 
-- **Actively developing the rolling KWS demo** — `c2c-demos/dsp-kws-rolling` (producer) and
-  `c2c-demos/bearly-kws-rolling` (consumer). DSP streams quantized MFCC frames through the
-  shared region; Bearly maintains a rolling window in TCM and runs TinySpeech inference.
-- **Goal: make the C2C link bidirectional with easier synchronization.** Today each chip runs
-  its own program and they talk one-way through the shared region, with only a minimal
-  back-channel (Bearly writes a `done_marker` at `+0x10`). We want a cleaner two-way sync.
-  - **Producer/consumer roles do NOT change** — DSP produces, Bearly consumes. Only the
-    synchronization gets easier/bidirectional.
-  - **The shared region at `0xC0000000` is non-negotiable** — it stays the transport. The
-    internal layout/protocol within it is open to redesign during planning.
+- **Reliable C2C turn-taking sync — PROVEN on silicon (2026-07-12).** A robust bidirectional
+  handshake now works end-to-end in `c2c-demos/hello-wfi` (single-chip wfi/MSIP sanity) and
+  `c2c-demos/dsp-hello-wfi` + `c2c-demos/bearly-hello-wfi` (two-chip interrupt ping-pong). Shared
+  implementation: `c2c-demos/common/hello_wfi_link.h`. **This is the template for all future C2C
+  sync.** See the "Reliable C2C turn-taking synchronization" section below for the recipe.
+- **NEXT PLAN: port the KWS demos to this exact sync strategy.** Migrate
+  `c2c-demos/dsp-kws-rolling` (producer) and `c2c-demos/bearly-kws-rolling` (consumer) to the
+  turn-register + CLINT-MSIP-wake + timer-safety-net handshake. Plan:
+  `.claude/plans/002-kws-turn-taking-sync.md`. Producer/consumer roles do NOT change (DSP
+  produces MFCC cases, Bearly runs TinySpeech inference); only the synchronization is replaced.
+- **Rolling KWS demo** — `c2c-demos/dsp-kws-rolling` streams quantized MFCC cases through the
+  shared region; Bearly maintains a rolling window / runs TinySpeech. Its old turn-taking + park
+  handshake had a first-case wake race; the proven hello-wfi strategy supersedes it.
+- **The shared region / two scratchpads are non-negotiable** — they stay the transport. The
+  internal layout/protocol within them is open (the turn register + baton layout is the new one).
 
 ---
 
@@ -62,6 +67,20 @@ seconds.
   chip's spad several times to make it stick (see unstable-access bug). Writes to your own spad
   are local/stable. Every read of your own spad still needs a **full cache flush first**,
   because the remote wrote it behind your cache's back.
+- **Reaching the peer across the link (addressing).** You cannot READ the remote spad, but to
+  WRITE the peer's spad or ring its MSIP, take the peer-local address and **prepend a leading `1`
+  (bit 32)**:
+  - Peer spad: from BML, DSP's `0xC000_0000` is reached at **`0x1_C000_0000`**; from DSP, BML's
+    `0xD000_0000` is reached at **`0x1_D000_0000`**.
+  - Peer CLINT MSIP: own MSIP is `0x0200_0000` (CLINT base, hart 0); the peer's is
+    **`0x1_0200_0000`**. Writing `1` there raises a machine software interrupt on the peer.
+- **Cross-chip wake = CLINT MSIP + `wfi`.** A sleeping core waits in `wfi` with `mie.MSIE` set and
+  `mstatus.MIE=0` (so the interrupt wakes it but is NOT taken as a trap — no handler; execution
+  resumes after `wfi`). The peer wakes it by writing its MSIP across the link. CLINT layout: MSIP
+  @ `+0x0000`, `mtimecmp` @ `+0x4000`, `mtime` @ `+0xBFF8`; `MTIME_FREQ = 50 kHz` (20 us/tick).
+- **The cache flush must be force-eviction.** Writing `1` to the cache-controller flush register
+  (`0x02010200`) does **NOT** evict on this silicon — always use the 256 KiB buffer-walk
+  (`cache_evict_all` / `hwfi_cache_flush`).
 - **DSP writes, Bearly reads (data direction unchanged).** DSP is the producer.
 - **Handshake** (finalized): DSP writes the case **into `0xD0000000` (BML's spad)** and sets a
   `data_ready` flag there. BML polls `0xD0000000` locally, reads the case, runs inference, then
@@ -92,6 +111,58 @@ seconds.
 
 ---
 
+## Reliable C2C turn-taking synchronization (proven on silicon 2026-07-12)
+
+The robust bidirectional sync we converged on after several failed attempts. Proven end-to-end in
+`c2c-demos/hello-wfi` (single-chip `wfi`/MSIP sanity) and `c2c-demos/dsp-hello-wfi` +
+`c2c-demos/bearly-hello-wfi` (two-chip interrupt ping-pong that counts a shared "baton" back and
+forth forever). Shared implementation: **`c2c-demos/common/hello_wfi_link.h`**. **Reuse this
+template for all future C2C sync** — next up is porting the KWS demos to it
+(`.claude/plans/002-kws-turn-taking-sync.md`).
+
+Why the earlier attempts failed: a one-shot MSIP edge into a core asleep in `wfi` is
+**unrecoverable** if that single cross-link write drops — and cross-link writes drop
+non-deterministically. No amount of "write it more times" removes the tail; you also need the
+receiver to re-check independently, and a way to ignore wakes that aren't for it.
+
+Three layers, each covering a distinct failure mode:
+
+1. **Turn register (correctness / who-goes-next).** One word at **offset `0x00` of each spad**:
+   `0 = DSP's turn`, `1 = BML's turn`. A chip reads it from its OWN spad (local, flush-first) and
+   runs ONLY when the value equals its own id; any other value → back to `wfi`. Every wake is
+   self-checking, so spurious / duplicate / early wakes never cause double-processing.
+2. **CLINT timer (liveness / dropped-wake recovery).** Both cores arm a periodic machine-timer
+   interrupt (`mie.MTIE`) alongside `MSIE`, with `mstatus.MIE=0` (wakes, never traps). So a
+   sleeper re-checks its turn register at least every `HELLO_WFI_POLL_INTERVAL_TICKS` (~50 ms)
+   even if the wake MSIP was dropped — a dropped MSIP costs latency, not liveness.
+3. **Hardened cross-link writes (delivery).** Every cross-link store (data + turn register + MSIP)
+   is repeated `HELLO_WFI_WRITE_REPEATS` times (fenced) then flushed, to fight the
+   unstable-remote-write quirk.
+
+**Spad layout:** turn register @ `0x00`, baton/data @ `0x04` (both 32-bit; spads are
+32-bit-access-only).
+
+**Handoff order (commit discipline):** write **data** into peer spad → set **turn register** in
+peer spad (the commit; data is resident before the peer sees its turn) → set turn register in OWN
+spad to the peer's id (so a later spurious wake of ours reads "not my turn") → raise peer **MSIP**.
+
+**Wait path:** `wfi`; on every wake (MSIP or timer) clear own MSIP, flush, re-read own turn
+register; proceed only when it is our turn.
+
+**Boot:** each chip clears its own spad (baton + turn) and sets its own turn register to the
+PEER's id, so it stays asleep until explicitly handed to (also defeats stale spad SRAM across a
+chip-only reset).
+
+**Residual / operational notes:**
+- The one thing that must land is the **turn-register write** (hardened by repeats); the timer
+  recovers a dropped MSIP but not a dropped turn write. If that shows up, raise
+  `HELLO_WFI_WRITE_REPEATS` or add periodic retransmit.
+- **Start DSP first (or together).** There is no retransmit; boot-init sets the turn to "peer", so
+  a chip that boots AFTER the peer's first handoff already landed would overwrite the incoming
+  turn and stall.
+
+---
+
 ## Building & running
 
 Build uses CMake driven by the top-level `Makefile`. Pick `CHIP` and a `TARGET`:
@@ -105,8 +176,10 @@ make build CHIP=bearly25 TARGET=c2c-transfer-bearly
 
 C2C demo targets (`c2c-demos/CMakeLists.txt`): `dsp-kws`, `bearly-kws`, `dsp-kws-rolling`,
 `bearly-kws-rolling`, `dsp-simpletest`, `bearly-simpletest`, `c2c-measure`,
-`c2c-transfer-dsp`, `c2c-transfer-bearly`. Each `<chip>-*` target must be built with the
-matching `CHIP=`. Output ELF lands in `build/c2c-demos/<target>/<target>.elf`.
+`c2c-transfer-dsp`, `c2c-transfer-bearly`, `hello-wfi` (single-chip `wfi`/MSIP sanity — build
+with either `CHIP`), `dsp-hello-wfi`, `bearly-hello-wfi` (two-chip turn-taking ping-pong; the
+reference sync implementation). Each `<chip>-*` target must be built with the matching `CHIP=`.
+Output ELF lands in `build/c2c-demos/<target>/<target>.elf`.
 
 Flash / run on real silicon over UART (see `Makefile`):
 
@@ -149,7 +222,9 @@ handshakes for multi-word payloads, and structured single-line log records
 ## Planning docs & skills
 
 - Longer design/planning docs for C2C work go in `.claude/plans/` (e.g. one file per feature
-  or investigation). Keep CLAUDE.md itself lean; link out to plans.
+  or investigation). Keep CLAUDE.md itself lean; link out to plans. Current plans:
+  `001-full-c2c-kws-stream.md` (KWS streaming design), `002-kws-turn-taking-sync.md` (port the
+  KWS demos to the proven turn-taking sync — the active next task).
 - If a repeatable workflow emerges (e.g. "bring up a new C2C demo", "parse a transfer log"),
   capture it as a skill rather than re-explaining each time.
 
@@ -186,6 +261,30 @@ Software defects to fix later (distinct from the hardware quirks below).
 - **Workaround / rule:** what C2C (or other) code must do because of it.
 - **Status:** open / worked-around / fixed-in-hw / under-investigation.
 ```
+
+### [C2C link] Cross-chip wake via CLINT MSIP works, but a single wake can drop and a dropped wake into a sleeping core is unrecoverable  (discovered 2026-07-12, proven on silicon)
+- **Symptom:** a chip can wake a `wfi`-sleeping peer by writing the peer's CLINT MSIP across the
+  link (`0x1_0200_0000` — own MSIP `0x0200_0000` with a leading 1). But a **single** MSIP write
+  drops non-deterministically; when it does, the sleeping peer never wakes and the exchange
+  deadlocks (nothing re-drives an edge into a sleeping core). Repeating the write helped (1 → a
+  few exchanges) but never reached 100%.
+- **Scope:** any cross-chip wake; both directions. Same unstable-write family as remote-spad writes.
+- **Workaround / rule:** the **turn-register + timer** pattern (see "Reliable C2C turn-taking
+  synchronization"). Wait in `wfi` with `mie.MSIE` + `mie.MTIE` set and `mstatus.MIE=0`; a
+  periodic machine timer re-wakes the sleeper so it re-reads a persistent **turn register** in its
+  own spad — recovering any dropped MSIP within one interval instead of deadlocking. Harden the
+  turn-register + MSIP writes with repeats. Start DSP first (no retransmit; boot-init marks the
+  turn as the peer's). CLINT: MSIP `+0x0000`, `mtimecmp` `+0x4000`, `mtime` `+0xBFF8`, MTIME_FREQ 50 kHz.
+- **Status:** worked-around (proven reliable in `hello-wfi` / `*-hello-wfi`).
+
+### [C2C link] Writing the cache-controller flush register does NOT evict — must force-evict  (discovered 2026-07-12, observed on silicon)
+- **Symptom:** writing `1` to the cache-controller flush register (`0x02010200`) did not make a
+  peer's cross-link write visible; the reader kept seeing stale data.
+- **Scope:** every own-spad read after a remote write; both chips.
+- **Workaround / rule:** keep using the **force-eviction buffer walk** (touch one byte per 64-byte
+  line across a 256 KiB aligned buffer, several passes, + `fence rw,rw`) — `cache_evict_all` /
+  `hwfi_cache_flush`. The register write is not a substitute.
+- **Status:** worked-around (hardware behavior).
 
 ### [C2C link] A cross-link write to an absent/wedged peer hangs the writer  (discovered 2026-07-05, observed on silicon)
 - **Symptom:** a chip hangs on boot (needs an FPGA reset to recover) if it writes the peer's spad

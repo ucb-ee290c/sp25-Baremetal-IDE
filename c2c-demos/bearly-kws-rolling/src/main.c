@@ -167,72 +167,92 @@ void app_main(void) {
     __asm__ volatile("nop");
   }
 
+  /* Wipe stale commit signals left in OUR OWN 0xD spad from a previous run BEFORE announcing
+   * ready. Scratchpad SRAM survives a chip-only reset, so a prior run's epoch/case_index/payload
+   * are still here and self-consistent (same static signal -> same checksum) — without this, BML
+   * would "receive" and infer a case the current DSP never sent. These are LOCAL writes into our
+   * own spad (safe). Clearing epoch=0 alone makes the poll loop wait, but we clear case_index too
+   * so a fresh epoch can't pair with a stale index. Done before bml_ready so it is guaranteed to
+   * land before DSP (which waits for bml_ready) writes anything into 0xD. */
+  c2c_local_write_u32(&g_bml->epoch, 0u);
+  c2c_local_write_u32(&g_bml->case_index, 0u);
+  KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] DEBUG cleared stale epoch/case_index in own 0xD spad\n");
+
   KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] DEBUG grace done; announcing bml_ready -> 0x%08lx\n",
                          (unsigned long)KWS_STREAM_DSP_SPAD_BASE);
   c2c_remote_write_u32(&g_dsp->bml_ready, KWS_STREAM_READY_MAGIC);
   KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] DEBUG bml_ready announced; polling own spad 0x%08lx\n",
                          (unsigned long)KWS_STREAM_BML_SPAD_BASE);
 
+  /* Turn-taking consumer loop. Each round: ARM (tell DSP we want the next case and are parking) ->
+   * PARK (go fully quiet so DSP's 0xD write lands uncontended) -> READ our own 0xD (now stable) ->
+   * verify + infer -> ack. We touch 0xD ONLY after the park, never while DSP might be writing it,
+   * which is what eliminates the payload/poll collision that was wedging the link. */
   while (1) {
+    uint32_t want = g_last_consumed + 1u;
     uint32_t epoch;
     uint32_t idx;
     uint32_t checksum;
 
     g_poll_count++;
 
-    /* One flush, then read the commit signals from our own spad. */
+    /* ARM: writes into the DSP spad (0xC) only. rx_seq (which case we want) first, then rx_ready
+     * (the magic DSP polls on) last. DSP will not write 0xD until it sees rx_ready. */
+    c2c_remote_write_u32(&g_dsp->rx_seq, want);
+    c2c_remote_write_u32(&g_dsp->rx_ready, KWS_STREAM_RX_READY_MAGIC);
+
+    /* PARK: no 0xD access, no link access — pure spin — long enough for DSP to detect the arm and
+     * finish its (possibly full-payload) write into our spad. */
+    {
+      uint64_t p0 = rdcycle64();
+      while ((rdcycle64() - p0) < (uint64_t)KWS_BEARLY_ROLLING_RX_PARK_CYCLES) {
+        __asm__ volatile("nop");
+      }
+    }
+
+    /* READ: DSP has finished writing and is now polling its own 0xC for our next arm, so 0xD is
+     * uncontended. One flush, then the commit signals. */
     c2c_full_flush();
     epoch = g_bml->epoch;
     idx = g_bml->case_index;
     checksum = g_bml->payload_checksum;
 
-    if (g_poll_count == 1u) {
-      KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] DEBUG first poll: epoch=0x%08lx case_index=%u checksum=0x%08lx\n",
-                             (unsigned long)epoch, (unsigned)idx, (unsigned long)checksum);
+    if ((KWS_BEARLY_ROLLING_WAIT_LOG_EVERY != 0u) &&
+        ((g_poll_count % KWS_BEARLY_ROLLING_WAIT_LOG_EVERY) == 0u)) {
+      KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] arm want=%u -> park-read epoch=0x%08lx case_index=%u checksum=0x%08lx round=%llu\n",
+                             (unsigned)want, (unsigned long)epoch, (unsigned)idx,
+                             (unsigned long)checksum, (unsigned long long)g_poll_count);
     }
 
     if (epoch == 0u) {
-      continue; /* producer not up yet */
+      continue; /* DSP has not written identity yet; re-arm and park again */
     }
 
-    /* New producer epoch -> rebaseline; leftover state can't fool us. */
+    /* New producer epoch -> rebaseline; restart the case sequence at 1 under the new epoch. */
     if (epoch != g_last_epoch) {
       g_last_epoch = epoch;
       g_last_consumed = 0u;
       KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] new epoch=0x%08lx (rebaselined)\n",
                              (unsigned long)epoch);
-    }
-
-    if (idx == 0u) {
-      if ((KWS_BEARLY_ROLLING_WAIT_LOG_EVERY != 0u) &&
-          ((g_poll_count % KWS_BEARLY_ROLLING_WAIT_LOG_EVERY) == 0u)) {
-        KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] waiting for first case epoch=0x%08lx polls=%llu\n",
-                               (unsigned long)epoch, (unsigned long long)g_poll_count);
-      }
       continue;
     }
 
-    if (idx > g_last_consumed) {
-      int ok = c2c_local_read_block_verify(g_case, g_bml->case_payload,
-                                           KWS_CASE_PAYLOAD_BYTES, checksum);
-      if (!ok) {
-        /* Torn/partial payload; DSP is still (re)publishing this case, so retry next poll. */
-        KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] verify FAILED case_index=%u checksum=0x%08lx; retrying\n",
-                               (unsigned)idx, (unsigned long)checksum);
-        continue;
-      }
-
-      run_inference(epoch, idx);
-      g_last_consumed = idx;
-      send_ack(epoch, idx);
-    } else if (idx == g_last_consumed) {
-      /* Duplicate/re-publish of an already-consumed case: re-ack in case the previous ack dropped,
-       * but only occasionally — continuous 0xC writes would keep the peer from booting. */
-      if ((KWS_BEARLY_ROLLING_REACK_EVERY != 0u) &&
-          ((g_poll_count % KWS_BEARLY_ROLLING_REACK_EVERY) == 0u)) {
-        send_ack(epoch, idx);
-      }
+    if (idx != want) {
+      /* DSP hasn't committed the case we asked for yet (slow write / missed the park). Re-arm the
+       * same `want`; DSP resends the full payload when it sees a repeated request. */
+      continue;
     }
+
+    if (!c2c_local_read_block_verify(g_case, g_bml->case_payload, KWS_CASE_PAYLOAD_BYTES, checksum)) {
+      /* Torn payload (rare now that reads are uncontended). Re-arm same want -> DSP resends full. */
+      KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] verify FAILED want=%u checksum=0x%08lx; re-arming\n",
+                             (unsigned)want, (unsigned long)checksum);
+      continue;
+    }
+
+    run_inference(epoch, want);
+    g_last_consumed = want;
+    send_ack(epoch, want);
   }
 }
 

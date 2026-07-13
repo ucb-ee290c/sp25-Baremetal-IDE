@@ -52,6 +52,14 @@
 #define KWS_BEARLY_ROLLING_REACK_EVERY 20000u
 #endif
 
+/* Turn-taking park window (core cycles). After arming (rx_ready -> DSP), BML spins quietly for this
+ * long with NO 0xD/link access so DSP can write the next case uncontended, then reads its own spad.
+ * Must exceed DSP's detect latency + its (possibly full-payload) write time. Generous by default for
+ * bring-up reliability; tune DOWN once the link is proven stable to raise throughput. */
+#ifndef KWS_BEARLY_ROLLING_RX_PARK_CYCLES
+#define KWS_BEARLY_ROLLING_RX_PARK_CYCLES 50000000ULL
+#endif
+
 /* After booting, wait this many cycles before the first cross-link write (bml_ready -> 0xC), so
  * DSP has time to boot too. Writing a peer's spad while it is still booting kills it. */
 #ifndef KWS_BEARLY_ROLLING_STARTUP_GRACE_CYCLES

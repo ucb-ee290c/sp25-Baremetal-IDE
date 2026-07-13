@@ -51,6 +51,12 @@ extern "C" {
  * NOT write BML's spad until it sees this — a cross-link write into a still-booting chip kills it. */
 #define KWS_STREAM_READY_MAGIC 0x52454459u /* 'REDY' */
 
+/* Turn-taking: BML writes this into the DSP spad (`rx_ready`) when it has ARMED and is about to
+ * PARK (go quiet, no 0xD access). Only then may DSP write 0xD — the payload burst then lands into
+ * a quiescent BML instead of racing its polling. DSP local-clears rx_ready when it consumes an arm;
+ * `rx_seq` says which case number BML wants (re-armed unchanged on a torn/late read -> DSP resends). */
+#define KWS_STREAM_RX_READY_MAGIC 0x52585259u /* 'RXRY' */
+
 /* Bytes at the top of each spad to wipe on boot (control block, excludes payload). */
 #define KWS_STREAM_CONTROL_CLEAR_BYTES 0x40u
 
@@ -77,7 +83,9 @@ typedef struct __attribute__((packed)) {
   volatile uint32_t bml_pred_score_q; /* 0x10  quantized score (optional) */
   volatile uint32_t bml_ready;        /* 0x14  KWS_STREAM_READY_MAGIC once BML has booted */
   volatile uint64_t bml_rx_cycle;     /* 0x18  rdcycle at ack */
-  volatile uint32_t reserved[8];      /* 0x20..0x3F */
+  volatile uint32_t rx_ready;         /* 0x20  KWS_STREAM_RX_READY_MAGIC: BML armed & about to park */
+  volatile uint32_t rx_seq;           /* 0x24  case number BML is ready to receive */
+  volatile uint32_t reserved[6];      /* 0x28..0x3F */
 } kws_stream_dsp_spad_t;
 
 _Static_assert(sizeof(kws_stream_bml_spad_t) == (0x40u + KWS_CASE_PAYLOAD_BYTES),
@@ -88,6 +96,12 @@ _Static_assert(offsetof(kws_stream_bml_spad_t, case_index) == 0x14u,
                "case_index must sit at offset 0x14.");
 _Static_assert(offsetof(kws_stream_dsp_spad_t, ack_index) == 0x08u,
                "ack_index must sit at offset 0x08.");
+_Static_assert(offsetof(kws_stream_dsp_spad_t, rx_ready) == 0x20u,
+               "rx_ready must sit at offset 0x20.");
+_Static_assert(offsetof(kws_stream_dsp_spad_t, rx_seq) == 0x24u,
+               "rx_seq must sit at offset 0x24.");
+_Static_assert(sizeof(kws_stream_dsp_spad_t) == 0x40u,
+               "kws_stream_dsp_spad_t control block must stay 0x40 bytes.");
 
 #ifdef __cplusplus
 }

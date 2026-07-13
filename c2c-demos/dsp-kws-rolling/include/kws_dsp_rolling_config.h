@@ -70,6 +70,37 @@
 #define KWS_DSP_ROLLING_LOG_EVERY 1u
 #endif
 
+/* Static-payload fast path: this milestone streams ONE precomputed case repeatedly. Writing the
+ * full 1128-byte payload into 0xD every round (x C2C_SHM_WRITE_REPEATS ~= 4500 word-writes) floods
+ * the link; over many rounds one of those cross-link writes eventually collides with BML's polling
+ * and wedges the link (the "stops after several cases" symptom). With this set, DSP ships the
+ * payload+checksum ONCE, then each round only re-commits case_index (one word) to re-trigger
+ * inference on the payload already resident in BML's spad. Set 0 to restore full-payload-per-round
+ * (required once the payload actually changes, e.g. the VAD milestone). Retries always resend full. */
+#ifndef KWS_DSP_ROLLING_STATIC_PAYLOAD
+#define KWS_DSP_ROLLING_STATIC_PAYLOAD 1
+#endif
+
+/* Optional quiet gap (core cycles) between receiving an ack and committing the next case. 0 = off.
+ * A lever to further reduce sustained concurrent link access if wedges persist. */
+#ifndef KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES
+#define KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES 0ULL
+#endif
+
+/* How often (in poll iterations) to log while waiting for BML to arm (rx_ready). 0 = never. */
+#ifndef KWS_DSP_ROLLING_RX_WAIT_LOG_EVERY
+#define KWS_DSP_ROLLING_RX_WAIT_LOG_EVERY 200000u
+#endif
+
+/* Settle margin after seeing bml_ready before the first cross-link write into 0xD. bml_ready only
+ * means BML SET the flag, not that it has finished its first cache flush + reached its steady
+ * read-only poll loop; writing 0xD inside that window collides with BML and wedges it (and then
+ * hangs us on the wedged-peer write). This gap makes the handshake independent of how early DSP
+ * happens to catch the flag. Increase if low-poll-count runs still wedge. */
+#ifndef KWS_DSP_ROLLING_POST_READY_SETTLE_CYCLES
+#define KWS_DSP_ROLLING_POST_READY_SETTLE_CYCLES 50000000ULL
+#endif
+
 /* Ack polls to wait after a publish before re-publishing the same case (self-heal on drops).
  * Between publishes DSP only reads its LOCAL 0xC spad (no link writes), so keep this large: the
  * peer must be able to boot + prep + run inference in the gap without DSP driving the link. */

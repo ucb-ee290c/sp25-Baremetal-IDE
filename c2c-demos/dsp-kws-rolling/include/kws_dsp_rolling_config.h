@@ -81,10 +81,12 @@
 #define KWS_DSP_ROLLING_STATIC_PAYLOAD 1
 #endif
 
-/* Optional quiet gap (core cycles) between receiving an ack and committing the next case. 0 = off.
- * A lever to further reduce sustained concurrent link access if wedges persist. */
+/* Pacing delay (core cycles) between receiving BML's ack and granting the next case. This spaces
+ * out how often a new prediction is published so the stream is readable, and stays link-quiet
+ * (DSP touches nothing during the spin; BML is parked awaiting its turn), so it cannot race the
+ * handoff. ~500M cycles is ~1 s @ 500 MHz (~10 s @ 50 MHz); set 0 to run flat-out. Tune to taste. */
 #ifndef KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES
-#define KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES 0ULL
+#define KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES 500000000ULL
 #endif
 
 /* How often (in poll iterations) to log while waiting for BML to arm (rx_ready). 0 = never. */

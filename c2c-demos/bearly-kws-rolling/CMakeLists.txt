@@ -146,6 +146,29 @@ endif()
 
 set(KWS_BEARLY_ROLLING_TINYSPEECH_INT8_MULTICORE_VALUE ${KWS_BEARLY_ROLLING_USE_THREADLIB_VALUE})
 
+# DIAGNOSTIC (2026-07): conv2 int8 activation max (M2) came back as garbage (~INT32_MAX) while
+# conv1/conv3 were sane, poisoning calibration -> wrong + non-deterministic predictions. The
+# multicore+RVV conv2 path is the prime suspect (never exercised by the Spike reference). Set this
+# ON to force the int8 pipeline single-core to isolate the multicore conv2 kernel. Revert (comment
+# out) once the kernel is fixed or the source is confirmed.
+option(KWS_BEARLY_ROLLING_FORCE_SINGLECORE_INT8 "Force int8 pipeline single-core (conv2 debug)" ON)
+if (KWS_BEARLY_ROLLING_FORCE_SINGLECORE_INT8)
+  set(KWS_BEARLY_ROLLING_TINYSPEECH_INT8_MULTICORE_VALUE 0)
+  message(STATUS "bearly-kws-rolling: forcing TINYSPEECH_INT8_MULTICORE=0 (conv2 single-core debug)")
+endif()
+
+# The on-chip int8 conv2 kernel produced a deterministic garbage activation max (M2 ~= INT32_MAX),
+# poisoning calibration. Use the FLOAT model instead (the pipeline the Spike reference validates,
+# which never touches the int8 conv2 path). Slower per inference but should predict correctly.
+# Turn OFF to go back to the int8 pipeline once the conv2 kernel is fixed.
+option(KWS_BEARLY_ROLLING_USE_FLOAT_PIPELINE "Use float model instead of int8 (bypass broken int8 conv2)" ON)
+if (KWS_BEARLY_ROLLING_USE_FLOAT_PIPELINE)
+  set(KWS_BEARLY_ROLLING_INT8_PIPELINE_VALUE 0)
+  message(STATUS "bearly-kws-rolling: TINYSPEECH_INT8_PIPELINE=0 (float pipeline)")
+else()
+  set(KWS_BEARLY_ROLLING_INT8_PIPELINE_VALUE 1)
+endif()
+
 add_executable(bearly-kws-rolling
   src/main.c
   ${CMAKE_SOURCE_DIR}/c2c-demos/common/c2c_shm.c
@@ -178,7 +201,7 @@ target_compile_definitions(bearly-kws-rolling PRIVATE
   TINYSPEECH_TENSOR_ARENA_SIZE=524288
   TINYSPEECH_FP16_MIXED=${KWS_BEARLY_ROLLING_FP16_MIXED_VALUE}
   TINYSPEECH_FP16_FC_ACCEL=0
-  TINYSPEECH_INT8_PIPELINE=1
+  TINYSPEECH_INT8_PIPELINE=${KWS_BEARLY_ROLLING_INT8_PIPELINE_VALUE}
   TINYSPEECH_INT8_USE_VSSE8_STORE=${KWS_BEARLY_ROLLING_INT8_USE_VSSE8_STORE_VALUE}
   TINYSPEECH_INT8_USE_VSE8_PACK_STORE=${KWS_BEARLY_ROLLING_INT8_USE_VSE8_PACK_STORE_VALUE}
   TINYSPEECH_RVV_NCLIP_API=${KWS_BEARLY_ROLLING_RVV_NCLIP_API_VALUE}

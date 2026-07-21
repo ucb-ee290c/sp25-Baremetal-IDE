@@ -70,6 +70,29 @@
 #define KWS_BEARLY_ROLLING_INFER_LOG_EVERY 1u
 #endif
 
+/* --- Debug: compare the received input against the Spike/reference feature map ------------------
+ * The reference (tinyspeech_inputs.h) stores the exact int8 MFCC 12x94 map Spike ran on. DSP,
+ * instead, computes MFCC on-chip. Set COMPARE=1 to print, once, DSP's received g_case vs the
+ * reference input for REF_CASE_INDEX (mismatch count + previews) — tells us if the on-chip MFCC
+ * front-end matches the reference. Set USE_GOLDEN_INPUT=1 to infer on the reference bytes INSTEAD
+ * of the received case, isolating the model/inference from the MFCC front-end and the link. */
+#ifndef KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE
+#define KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE 1
+#endif
+#ifndef KWS_BEARLY_ROLLING_REF_CASE_INDEX
+#define KWS_BEARLY_ROLLING_REF_CASE_INDEX 5u /* yes_test_005 = ./yes/0cb74144_nohash_2.wav */
+#endif
+#ifndef KWS_BEARLY_ROLLING_USE_GOLDEN_INPUT
+#define KWS_BEARLY_ROLLING_USE_GOLDEN_INPUT 0
+#endif
+
+/* Calibrate int8 over the FULL reference set at boot (like the validated standalone benchmark),
+ * then freeze — instead of calibrating on a single received case (degenerate scales -> mispredicts).
+ * Requires tinyspeech_inputs.h. Set 0 to revert to the old single-sample inline calibration. */
+#ifndef KWS_BEARLY_ROLLING_CALIBRATE_FULL
+#define KWS_BEARLY_ROLLING_CALIBRATE_FULL 1
+#endif
+
 #ifndef KWS_BEARLY_ROLLING_PRINT_LAYER_CYCLES
 #define KWS_BEARLY_ROLLING_PRINT_LAYER_CYCLES 1u
 #endif

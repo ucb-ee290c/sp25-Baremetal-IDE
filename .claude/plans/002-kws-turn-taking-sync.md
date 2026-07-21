@@ -1,7 +1,8 @@
 # 002 — Port the KWS demos to the proven turn-taking C2C sync
 
-**Status:** planned (next task). The sync mechanism itself is proven on silicon (2026-07-12) in
-`c2c-demos/hello-wfi` / `dsp-hello-wfi` / `bearly-hello-wfi`; this plan applies it to KWS.
+**Status:** IMPLEMENTED (2026-07-17), builds clean, pending silicon test. The sync mechanism itself
+is proven on silicon (2026-07-12) in `c2c-demos/hello-wfi` / `dsp-hello-wfi` / `bearly-hello-wfi`;
+this plan applied it to KWS. Shared layer factored into `c2c-demos/common/c2c_turnsync.h`.
 **Targets:** `c2c-demos/dsp-kws-rolling` (producer) and `c2c-demos/bearly-kws-rolling` (consumer).
 **Reference implementation to copy from:** `c2c-demos/common/hello_wfi_link.h`.
 

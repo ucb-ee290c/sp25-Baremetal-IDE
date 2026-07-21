@@ -2,6 +2,7 @@
 #include "yes_test_005_signal.h"
 
 #include "c2c_shm.h"
+#include "c2c_turnsync.h"
 #include "kws_stream_proto.h"
 
 #if KWS_DSP_ROLLING_USE_THREADLIB
@@ -17,18 +18,20 @@ _Static_assert(KWS_DSP_YES005_NUM_SAMPLES >= ((((uint32_t)KWS_DSP_ROLLING_FRAMES
 _Static_assert((KWS_DSP_ROLLING_FRAMES_PER_CASE * KWS_MFCC_DIM) == KWS_CASE_PAYLOAD_BYTES,
                "Frames*dim must equal the case payload size.");
 
-/* BML-adjacent spad (0xD): DSP remote-writes here.  DSP-adjacent spad (0xC): DSP local-reads. */
-static kws_stream_bml_spad_t *const g_bml =
-    (kws_stream_bml_spad_t *)(uintptr_t)KWS_STREAM_BML_SPAD_BASE;
+/* Turn-taking sync (see c2c_turnsync.h / /CLAUDE.md). DSP produces cases; roles: DSP's turn =
+ * publish the next case + hand off to BML; BML's turn = read+verify+infer + hand back.
+ *   - own spad (0xC): DSP local-reads acks and local-writes its OWN turn register.
+ *   - peer spad (BML, reached at 0x1_D000_0000): DSP remote-writes payload + BML's turn register. */
 static kws_stream_dsp_spad_t *const g_dsp =
-    (kws_stream_dsp_spad_t *)(uintptr_t)KWS_STREAM_DSP_SPAD_BASE;
+    (kws_stream_dsp_spad_t *)(uintptr_t)KWS_STREAM_DSP_SPAD_BASE;   /* own, local reads */
+static kws_stream_bml_spad_t *const g_bml =
+    (kws_stream_bml_spad_t *)(uintptr_t)KWS_STREAM_BML_SPAD_PEER;   /* peer, cross-link writes */
 
 static mfcc_driver_t g_mfcc;
 static float32_t g_input_window[MFCC_DRIVER_FFT_LEN];
 static int8_t g_case[KWS_CASE_PAYLOAD_BYTES];
 static uint32_t g_mfcc_fail_local;
 static uint32_t g_case_index;
-static uint32_t g_epoch;
 static uint32_t g_case_checksum;
 
 uint64_t target_frequency = KWS_DSP_ROLLING_TARGET_FREQUENCY_HZ;
@@ -105,8 +108,11 @@ static void compute_full_case(void) {
     uint64_t mfcc_cycles = 0u;
     (void)compute_one_mfcc_frame(frame_idx, mfcc_q, &mfcc_cycles);
 
+    /* Coefficient-major layout to match the model input {1,1,H=12,W=94}: element (coeff k, frame f)
+     * lives at index k*FRAMES + f. (DSP previously wrote frame-major [f*DIM + k], which the model
+     * read transposed -> scrambled features. See the INPUT-CMP diagnostic.) */
     for (uint32_t k = 0; k < KWS_MFCC_DIM; ++k) {
-      g_case[((uint32_t)frame_idx * KWS_MFCC_DIM) + k] = mfcc_q[k];
+      g_case[(k * (uint32_t)KWS_DSP_ROLLING_FRAMES_PER_CASE) + (uint32_t)frame_idx] = mfcc_q[k];
     }
     total_mfcc_cycles += mfcc_cycles;
   }
@@ -120,43 +126,50 @@ static void compute_full_case(void) {
                       (unsigned)g_mfcc_fail_local);
 }
 
-/* First cross-link write: identity + epoch into BML's spad. Called from app_main (after boot),
- * NEVER from app_init — a cross-link write to an absent/wedged peer hangs the core. */
+/* Identity (magic/version/payload_bytes) into BML's spad. Cross-link write -> app_main only. */
 static void publish_identity(void) {
   c2c_remote_write_u32(&g_bml->magic, KWS_STREAM_MAGIC_BML);
   c2c_remote_write_u32(&g_bml->version, KWS_STREAM_PROTO_VERSION);
   c2c_remote_write_u32(&g_bml->payload_bytes, (uint32_t)KWS_CASE_PAYLOAD_BYTES);
-  c2c_remote_write_u32(&g_bml->case_index, 0u);
-  c2c_remote_write_u32(&g_bml->epoch, g_epoch); /* epoch announces the producer */
 }
 
-/* Full remote-commit: write the whole payload + checksum, then case_index (the commit) LAST. */
+/* Full publish: whole payload + checksum + tx_cycle, then case_index (written before the turn). */
 static void publish_case_full(uint32_t idx) {
   uint64_t tx_cycle = rdcycle64();
 
   c2c_remote_write_block(g_bml->case_payload, g_case, KWS_CASE_PAYLOAD_BYTES);
   c2c_remote_write_u32(&g_bml->payload_checksum, g_case_checksum);
   c2c_remote_write_block(&g_bml->dsp_tx_cycle, &tx_cycle, sizeof(tx_cycle));
-  c2c_remote_write_u32(&g_bml->case_index, idx); /* commit */
+  c2c_remote_write_u32(&g_bml->case_index, idx);
 }
 
-/* Static-payload fast path: the payload + checksum are already in BML's spad from the first full
- * publish and never change, so only bump the commit word to make BML re-infer. This is ~1 word vs
- * ~4500 for a full publish — the difference between a link-quiet steady state and a flood that
- * eventually collides with BML's polling and wedges the link. */
+/* Static-payload fast path: payload+checksum already resident in BML's spad; just bump case_index
+ * to re-trigger inference on the same data. Turn-taking serializes access, so even a full publish
+ * every round is now safe — this is purely a throughput optimization. */
 static void publish_case_recommit(uint32_t idx) {
-  c2c_remote_write_u32(&g_bml->case_index, idx); /* commit only */
+  c2c_remote_write_u32(&g_bml->case_index, idx);
 }
 
-/* Block (polling our LOCAL 0xC only — no cross-link writes) until BML announces it has booted.
- * We must not write BML's spad before this, or the write lands during BML's boot and kills it. */
+/* Hand the turn to BML: publish the case data, then flip the turn register (peer spad = commit,
+ * so data is resident before BML sees its turn; then our own spad = "not ours"), then wake BML. */
+static void handoff_to_bml(uint32_t idx, int full) {
+  if (full) {
+    publish_case_full(idx);
+  } else {
+    publish_case_recommit(idx);
+  }
+  c2c_remote_write_u32(&g_bml->turn, C2C_TURN_BML); /* commit: BML's turn, in BML's spad */
+  c2c_local_write_u32(&g_dsp->turn, C2C_TURN_BML);  /* our own spad: no longer our turn */
+  c2c_wake_peer();
+  g_case_index = idx;
+}
+
+/* Boot barrier: poll our LOCAL 0xC for bml_ready. No cross-link writes until we see it (a write
+ * into a still-booting BML kills it). */
 static void wait_for_bml_ready(void) {
   uint32_t loops = 0u;
 
-  /* Wipe any stale bml_ready left in OUR OWN 0xC spad from a previous run. Scratchpad SRAM
-   * survives a chip-only reset, so leftover magic would satisfy the barrier at 0 polls and make
-   * us write 0xD while BML is still booting — which kills BML (see boot-kill quirk in /CLAUDE.md).
-   * This is a LOCAL write into our own spad (safe); only a genuinely fresh BML boot can now set it. */
+  /* Wipe stale bml_ready from a previous run (spad SRAM survives a chip-only reset) — local write. */
   c2c_local_write_u32(&g_dsp->bml_ready, 0u);
   KWS_DSP_ROLLING_LOG("[dsp-kws-stream] cleared stale bml_ready in 0xC before barrier\n");
 
@@ -174,44 +187,12 @@ static void wait_for_bml_ready(void) {
   }
 }
 
-/* Turn-taking gate. Block (polling our LOCAL 0xC only — safe, no link writes) until BML has ARMED:
- * rx_ready == KWS_STREAM_RX_READY_MAGIC means BML is about to PARK (go quiet on 0xD), so it is now
- * safe for us to write 0xD. We local-clear rx_ready as we consume the arm, so the next arm (BML
- * re-setting the magic) is distinguishable. Returns rx_seq = the case number BML wants. */
-static uint32_t wait_for_rx_arm(void) {
-  uint32_t loops = 0u;
-
-  while (1) {
-    c2c_full_flush();
-    uint32_t ready = g_dsp->rx_ready;
-    uint32_t seq = g_dsp->rx_seq;
-    if (ready == KWS_STREAM_RX_READY_MAGIC) {
-      /* Consume this arm locally so we don't re-fire on it; BML re-sets the magic to arm again. */
-      c2c_local_write_u32(&g_dsp->rx_ready, 0u);
-      return seq;
-    }
-    if ((KWS_DSP_ROLLING_RX_WAIT_LOG_EVERY != 0u) &&
-        ((loops % KWS_DSP_ROLLING_RX_WAIT_LOG_EVERY) == 0u)) {
-      KWS_DSP_ROLLING_LOG("[dsp-kws-stream] waiting for rx arm (0xC.rx_ready=0x%08lx seq=%u) polls=%u\n",
-                          (unsigned long)ready, (unsigned)seq, (unsigned)loops);
-    }
-    loops++;
-  }
-}
-
 void app_init(void) {
   init_test(target_frequency);
   g_mfcc_fail_local = 0u;
   g_case_index = 0u;
 
-  /* Per-boot epoch nonce (nonzero) so BML rebaselines and ignores any prior-run state. */
-  g_epoch = (uint32_t)rdcycle64();
-  if (g_epoch == 0u) {
-    g_epoch = 1u;
-  }
-
-  /* NOTE: app_init does NO cross-link (spad) writes. Touching the peer's spad before the peer is
-   * up hangs the core. All 0xD writes happen in app_main, after we have fully booted. */
+  /* NOTE: app_init does NO cross-link (spad) writes. All peer writes happen in app_main. */
 
 #if KWS_DSP_ROLLING_USE_THREADLIB
   hthread_init();
@@ -226,62 +207,79 @@ void app_init(void) {
     }
   }
 
-  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] init bml_spad=0x%08lx dsp_spad=0x%08lx epoch=0x%08lx payload_bytes=%u signal=%s\n",
-                      (unsigned long)KWS_STREAM_BML_SPAD_BASE,
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] init own_spad=0x%08lx peer_spad=0x%09llx payload_bytes=%u signal=%s\n",
                       (unsigned long)KWS_STREAM_DSP_SPAD_BASE,
-                      (unsigned long)g_epoch,
+                      (unsigned long long)KWS_STREAM_BML_SPAD_PEER,
                       (unsigned)KWS_CASE_PAYLOAD_BYTES,
                       KWS_DSP_YES005_MEMBER);
 }
 
 void app_main(void) {
-  /* Milestone 3+: compute one case, then stream it with a turn-taking handshake. Each 0xD write
-   * burst happens only while BML is PARKED (it armed rx_ready, then went quiet), so the payload
-   * never races BML's polling. BML drives the cadence by arming for the next case it wants. */
   compute_full_case();
 
+  /* Local boot-clear of our OWN 0xC control block: turn = BML (not ours until we grant it after
+   * the first publish), and clear the stale barrier flag. Local writes — safe. */
+  c2c_local_write_u32(&g_dsp->turn, C2C_TURN_BML);
+
   /* Boot barrier: do NOT write BML's spad until BML says it has booted. */
-  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] waiting for BML boot barrier before touching 0xD\n");
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] waiting for BML boot barrier before touching peer spad\n");
   wait_for_bml_ready();
 
-  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] streaming epoch=0x%08lx (turn-taking; waiting for first rx arm)\n",
-                      (unsigned long)g_epoch);
+  /* Arm MSIP + timer wake (turn-taking safety net) before any wfi. */
+  c2c_arm_wake();
 
-  uint32_t last_seq = 0u;   /* the rx_seq we most recently served */
-  int identity_sent = 0;
+  /* DSP is the initiator: publish case 1 and hand the first turn to BML (no await — nobody grants
+   * DSP the first turn). Identity is folded into this first quiet window. */
+  publish_identity();
+  handoff_to_bml(1u, /*full=*/1);
+  KWS_DSP_ROLLING_LOG("[dsp-kws-stream] published case_index=1 -> BML; entering turn-taking loop\n");
+
+  uint32_t n = 1u; /* the case currently granted to BML (== g_case_index) */
 
   while (1) {
-    /* Wait for BML to arm + park. Only now is it safe to write 0xD. rx_seq = the case BML wants. */
-    uint32_t seq = wait_for_rx_arm();
-    if (seq == 0u) {
-      seq = 1u; /* defensive: treat an armed-but-zero seq as "wants case 1" */
+    /* Wait until BML has acked case n. On any idle TIMER tick with no ack, RE-GRANT n: this
+     * self-heals a dropped grant, a dropped return-ack, or a dropped wake in either direction.
+     * Re-grants are idempotent — BML ignores a duplicate (case_index <= its last_consumed), so
+     * there is never a double inference. Steady state (ack arrives via MSIP before the ~50ms tick)
+     * fires no re-grant, so link traffic is unchanged. */
+    for (;;) {
+      if (c2c_local_read_u32(&g_dsp->ack_index) >= n) {
+        break;
+      }
+      c2c_sleep_until_tick(); /* wake on BML's ack MSIP or the periodic timer */
+      if (c2c_local_read_u32(&g_dsp->ack_index) >= n) {
+        break;
+      }
+      KWS_DSP_ROLLING_LOG("[dsp-kws-stream] re-grant case_index=%u (ack_index=%u) [self-heal]\n",
+                          (unsigned)n, (unsigned)g_dsp->ack_index);
+      handoff_to_bml(n, (KWS_DSP_ROLLING_STATIC_PAYLOAD == 0));
     }
 
-    /* Identity (epoch/magic into 0xD) is itself a 0xD write, so it must also land inside a park.
-     * Do it on the first arm, folded into the same quiet window as case 1. */
-    if (!identity_sent) {
-      publish_identity();
-      identity_sent = 1;
-    }
+    /* Acked -> read result telemetry. */
+    c2c_full_flush();
+    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] case_index=%u acked; pred=%u score_q=%u -> next\n",
+                        (unsigned)n, (unsigned)g_dsp->bml_pred_class,
+                        (unsigned)g_dsp->bml_pred_score_q);
 
-    /* Full payload for case 1, when the payload changed (non-static), or when BML re-requested the
-     * same case (seq == last_seq -> its previous read was torn/late, so resend the whole thing).
-     * Otherwise a one-word recommit is enough (payload already resident in BML's spad). */
-    int full = (KWS_DSP_ROLLING_STATIC_PAYLOAD == 0) || (seq == 1u) || (seq == last_seq);
-    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] rx arm seq=%u -> publish %s into 0xD (park window)\n",
-                        (unsigned)seq, full ? "full payload" : "recommit only");
-    if (full) {
-      publish_case_full(seq);
-    } else {
-      publish_case_recommit(seq);
+#if KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES
+    {
+      uint64_t q0 = rdcycle64();
+      while ((rdcycle64() - q0) < (uint64_t)KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES) {
+        __asm__ volatile("nop");
+      }
     }
-    g_case_index = seq;
-    last_seq = seq;
-    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] published case_index=%u; awaiting next rx arm\n",
-                        (unsigned)seq);
+#endif
+
+    /* Produce + publish the next case. Static payload -> recommit only (payload already resident);
+     * otherwise a full re-publish (e.g. once VAD makes each case distinct). */
+    uint32_t idx = n + 1u;
+    int full = (KWS_DSP_ROLLING_STATIC_PAYLOAD == 0);
+    KWS_DSP_ROLLING_LOG("[dsp-kws-stream] handing case_index=%u to BML (%s)\n",
+                        (unsigned)idx, full ? "full payload" : "recommit");
+    handoff_to_bml(idx, full);
+    n = idx;
 
 #if KWS_DSP_ROLLING_PUBLISH_ONCE
-    /* Diagnostic: after the first published case, stop touching the link entirely. */
     KWS_DSP_ROLLING_LOG("[dsp-kws-stream] PUBLISH_ONCE: done; entering wfi (link idle)\n");
     while (1) {
       __asm__ volatile("wfi");

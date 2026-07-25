@@ -2174,6 +2174,18 @@ int tinyspeech_int8_fixed_qparams_ready(void) {
     return g_fixed_qparams_valid;
 }
 
+void tinyspeech_int8_calib_get_max(int32_t *m1, int32_t *m2, int32_t *m3) {
+    if (m1 != NULL) { *m1 = g_calib_max1; }
+    if (m2 != NULL) { *m2 = g_calib_max2; }
+    if (m3 != NULL) { *m3 = g_calib_max3; }
+}
+
+void tinyspeech_int8_calib_set_max(int32_t m1, int32_t m2, int32_t m3) {
+    g_calib_max1 = m1;
+    g_calib_max2 = m2;
+    g_calib_max3 = m3;
+}
+
 static void fc_logits_i8(const int8_t *act, float out_scale, float *dst) {
     for (int32_t oc = 0; oc < TS_FC_OUT; oc++) {
         const int8_t *wrow = g_wfc_active + oc * TS_FC_IN;

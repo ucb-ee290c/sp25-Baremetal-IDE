@@ -70,6 +70,24 @@
 #define KWS_BEARLY_ROLLING_INFER_LOG_EVERY 1u
 #endif
 
+/* Confidence gate. The model runs with softmax OFF (TINYSPEECH_OUTPUT_SOFTMAX=0), so the prediction
+ * "score" is the top raw LOGIT (not a 0..1 probability). A weak/uncertain window has a low top
+ * logit. When the winning score is NOT greater than this threshold, the RESULT line reports
+ * "(no word)" instead of announcing a keyword — filtering low-confidence noise (e.g. non-speech that
+ * still tripped the mic VAD gate). Raise for stricter gating, lower to announce more. Only affects
+ * the printed verdict; the raw pred/score are still logged on the infer line and sent to DSP. */
+#ifndef KWS_BEARLY_ROLLING_MIN_SCORE
+#define KWS_BEARLY_ROLLING_MIN_SCORE 3.0f
+#endif
+
+/* Score the prediction against the ground-truth expected_label DSP tags each case with (multi-
+ * testcase mode, plan 003). When 1, BML logs a per-case PASS/FAIL and a running correct/total tally.
+ * Cases arriving with expected_label < 0 (unknown) are logged but excluded from the tally. Harmless
+ * with the single-signal DSP (every case is yes -> expected_label 0). */
+#ifndef KWS_BEARLY_ROLLING_CHECK_EXPECTED
+#define KWS_BEARLY_ROLLING_CHECK_EXPECTED 1
+#endif
+
 /* --- Debug: compare the received input against the Spike/reference feature map ------------------
  * The reference (tinyspeech_inputs.h) stores the exact int8 MFCC 12x94 map Spike ran on. DSP,
  * instead, computes MFCC on-chip. Set COMPARE=1 to print, once, DSP's received g_case vs the

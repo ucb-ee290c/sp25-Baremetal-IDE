@@ -1,8 +1,12 @@
 # 002 — Port the KWS demos to the proven turn-taking C2C sync
 
-**Status:** IMPLEMENTED (2026-07-17), builds clean, pending silicon test. The sync mechanism itself
-is proven on silicon (2026-07-12) in `c2c-demos/hello-wfi` / `dsp-hello-wfi` / `bearly-hello-wfi`;
-this plan applied it to KWS. Shared layer factored into `c2c-demos/common/c2c_turnsync.h`.
+**Status:** DONE — validated on silicon 2026-07-22. Sync ported via `c2c-demos/common/c2c_turnsync.h`
+and the full demo (DSP MFCC → C2C → BML TinySpeech → correct `yes`) works end-to-end. Beyond the
+plain hello-wfi sync, KWS added **self-heal retransmit** keyed on `ack_index`/`case_index` (producer
+re-grants case N on idle timer ticks until acked; consumer re-acks duplicate grants without
+re-inferring) — streams indefinitely, recovering mid-stream dropped writes. Two accuracy fixes were
+also required (NOT sync): MFCC coeff-major transpose in DSP, and running the float pipeline to dodge
+a broken int8 conv2 kernel. See CLAUDE.md "KWS accuracy / TinySpeech" and plan 003 for follow-ups.
 **Targets:** `c2c-demos/dsp-kws-rolling` (producer) and `c2c-demos/bearly-kws-rolling` (consumer).
 **Reference implementation to copy from:** `c2c-demos/common/hello_wfi_link.h`.
 

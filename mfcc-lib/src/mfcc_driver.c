@@ -49,11 +49,21 @@ static float32_t mel_to_hz(float32_t mel) {
   return 700.0f * (powf(10.0f, mel / 2595.0f) - 1.0f);
 }
 
+/* torchaudio MelSpectrogram default: a Hann window of win_length samples, placed centered inside the
+ * n_fft frame and zero-padded elsewhere (win_length < n_fft, center=False). win_length = 30 ms @ 16
+ * kHz = 480. torch.hann_window is periodic by default: w[m] = 0.5*(1 - cos(2*pi*m/win_length)). The
+ * previous window here was a Hamming spanning the full 1024-sample frame, which analyzed a 64 ms
+ * window instead of torchaudio's 30 ms -> a systematic feature mismatch. See /CLAUDE.md KWS notes. */
+#define MFCC_DRIVER_WIN_LEN 480U
 static void generate_window(mfcc_driver_t *ctx) {
   const float32_t kPi = 3.14159265358979323846f;
+  const uint32_t pad_left = (MFCC_DRIVER_FFT_LEN - MFCC_DRIVER_WIN_LEN) / 2U; /* center the window */
   for (uint32_t n = 0; n < MFCC_DRIVER_FFT_LEN; n++) {
-    const float32_t w =
-        0.54f - (0.46f * cosf((2.0f * kPi * (float32_t)n) / (float32_t)(MFCC_DRIVER_FFT_LEN - 1U)));
+    float32_t w = 0.0f;
+    if ((n >= pad_left) && (n < (pad_left + MFCC_DRIVER_WIN_LEN))) {
+      const uint32_t m = n - pad_left;
+      w = 0.5f - (0.5f * cosf((2.0f * kPi * (float32_t)m) / (float32_t)MFCC_DRIVER_WIN_LEN));
+    }
     ctx->window_f32[n] = w;
     ctx->window_q31[n] = to_q31(w);
     ctx->window_q15[n] = to_q15(w);
@@ -82,69 +92,52 @@ static void generate_dct(mfcc_driver_t *ctx) {
   }
 }
 
+/* torchaudio-matching mel filterbank: htk mel scale over f_min=0 .. f_max=sr/2 (=8000 Hz), with
+ * continuous triangular weights evaluated at each FFT bin's centre frequency (norm=None, so peak-1
+ * triangles — no Slaney area normalization). Matches torch's melscale_fbanks(). The previous version
+ * spanned only 20..4000 Hz and quantized filter edges to integer bins, placing the 23 filters on the
+ * wrong frequencies entirely -> the dominant on-chip-vs-reference feature divergence. */
 static mfcc_driver_status_t generate_mel_filterbank(mfcc_driver_t *ctx) {
-  const float32_t f_min_hz = 20.0f;
-  const float32_t f_max_hz = 4000.0f;
+  const float32_t f_min_hz = 0.0f;
+  const float32_t f_max_hz = MFCC_DRIVER_SAMPLE_RATE_HZ / 2.0f; /* 8000 */
+  const uint32_t n_freqs = MFCC_DRIVER_NUM_FFT_BINS;            /* 513 unique RFFT bins */
+  const float32_t bin_hz = f_max_hz / (float32_t)(n_freqs - 1U);
   const float32_t mel_min = hz_to_mel(f_min_hz);
   const float32_t mel_max = hz_to_mel(f_max_hz);
 
-  float32_t mel_points[MFCC_DRIVER_NUM_MEL + 2U];
-  uint32_t bins[MFCC_DRIVER_NUM_MEL + 2U];
-
+  /* NUM_MEL+2 band edges (in Hz), equally spaced on the mel scale. */
+  float32_t f_pts[MFCC_DRIVER_NUM_MEL + 2U];
   for (uint32_t i = 0; i < (MFCC_DRIVER_NUM_MEL + 2U); i++) {
     const float32_t frac = ((float32_t)i) / ((float32_t)(MFCC_DRIVER_NUM_MEL + 1U));
-    mel_points[i] = mel_min + frac * (mel_max - mel_min);
-
-    float32_t hz = mel_to_hz(mel_points[i]);
-    float32_t bin_f = ((float32_t)MFCC_DRIVER_FFT_LEN + 1.0f) * hz / MFCC_DRIVER_SAMPLE_RATE_HZ;
-
-    if (bin_f < 0.0f) {
-      bin_f = 0.0f;
-    }
-    if (bin_f > (float32_t)(MFCC_DRIVER_NUM_FFT_BINS - 1U)) {
-      bin_f = (float32_t)(MFCC_DRIVER_NUM_FFT_BINS - 1U);
-    }
-    bins[i] = (uint32_t)bin_f;
+    f_pts[i] = mel_to_hz(mel_min + frac * (mel_max - mel_min));
   }
 
   ctx->filter_coef_count = 0U;
   for (uint32_t m = 0; m < MFCC_DRIVER_NUM_MEL; m++) {
-    uint32_t left = bins[m];
-    uint32_t center = bins[m + 1U];
-    uint32_t right = bins[m + 2U];
-
-    if (center <= left) {
-      center = left + 1U;
-    }
-    if (right <= center) {
-      right = center + 1U;
-    }
-    if (right >= MFCC_DRIVER_NUM_FFT_BINS) {
-      right = MFCC_DRIVER_NUM_FFT_BINS - 1U;
-    }
-
+    const float32_t f_left = f_pts[m];
+    const float32_t f_center = f_pts[m + 1U];
+    const float32_t f_right = f_pts[m + 2U];
     uint32_t start = 0U;
     uint32_t count = 0U;
+    int started = 0;
 
-    for (uint32_t k = left; k <= right; k++) {
-      float32_t v = 0.0f;
-
-      if (k < center) {
-        v = ((float32_t)k - (float32_t)left) / ((float32_t)center - (float32_t)left);
-      } else if (k > center) {
-        v = ((float32_t)right - (float32_t)k) / ((float32_t)right - (float32_t)center);
-      } else {
-        v = 1.0f;
+    for (uint32_t k = 0; k < n_freqs; k++) {
+      const float32_t f = (float32_t)k * bin_hz;
+      const float32_t up = (f - f_left) / (f_center - f_left);      /* rising edge */
+      const float32_t down = (f_right - f) / (f_right - f_center);  /* falling edge */
+      float32_t v = (up < down) ? up : down;
+      if (v < 0.0f) {
+        v = 0.0f;
       }
 
       if (v > 0.0f) {
-        if (count == 0U) {
+        if (!started) {
           start = k;
+          started = 1;
         }
         if (ctx->filter_coef_count >= MFCC_DRIVER_MAX_FILTER_COEFS) {
           return MFCC_DRIVER_ERR_INIT;
         }
-
         ctx->filter_f32[ctx->filter_coef_count] = v;
         ctx->filter_q31[ctx->filter_coef_count] = to_q31(v);
         ctx->filter_q15[ctx->filter_coef_count] = to_q15(v);
@@ -153,6 +146,8 @@ static mfcc_driver_status_t generate_mel_filterbank(mfcc_driver_t *ctx) {
 #endif
         ctx->filter_coef_count++;
         count++;
+      } else if (started) {
+        break; /* triangular support is contiguous in k -> done with this filter */
       }
     }
 

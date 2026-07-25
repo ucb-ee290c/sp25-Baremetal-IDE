@@ -75,7 +75,9 @@ typedef struct __attribute__((packed)) {
   volatile uint32_t reserved0;        /* 0x14  pad (align dsp_tx_cycle) */
   volatile uint64_t dsp_tx_cycle;     /* 0x18  rdcycle at publish */
   volatile uint32_t turn;             /* 0x20  C2C_TURN_*: whose turn it is (the commit) */
-  volatile uint32_t reserved1[7];     /* 0x24..0x3F */
+  volatile int32_t  expected_label;   /* 0x24  ground-truth class for this case (-1 = unknown) */
+  volatile int32_t  ref_case_index;   /* 0x28  matching tinyspeech_inputs.h index (-1 = none) */
+  volatile uint32_t reserved1[5];     /* 0x2C..0x3F */
   volatile int8_t   case_payload[KWS_CASE_PAYLOAD_BYTES]; /* 0x40 */
 } kws_stream_bml_spad_t;
 
@@ -100,6 +102,10 @@ _Static_assert(offsetof(kws_stream_bml_spad_t, case_index) == 0x10u,
                "case_index must sit at offset 0x10.");
 _Static_assert(offsetof(kws_stream_bml_spad_t, turn) == 0x20u,
                "bml turn register must sit at offset 0x20.");
+_Static_assert(offsetof(kws_stream_bml_spad_t, expected_label) == 0x24u,
+               "expected_label must sit at offset 0x24.");
+_Static_assert(offsetof(kws_stream_bml_spad_t, ref_case_index) == 0x28u,
+               "ref_case_index must sit at offset 0x28.");
 _Static_assert(offsetof(kws_stream_dsp_spad_t, ack_index) == 0x04u,
                "ack_index must sit at offset 0x04.");
 _Static_assert(offsetof(kws_stream_dsp_spad_t, bml_ready) == 0x10u,

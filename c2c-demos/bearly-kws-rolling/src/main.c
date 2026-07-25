@@ -54,7 +54,12 @@ static uint8_t g_input_compared; /* print the DSP-vs-reference input diff only o
 static uint32_t g_last_consumed;
 static uint32_t g_last_pred_class;
 static uint32_t g_last_pred_score_q;
+static float    g_last_pred_score;   /* winning raw logit (softmax off) — used by the confidence gate */
 static uint64_t g_infer_count;
+#if KWS_BEARLY_ROLLING_CHECK_EXPECTED
+static uint32_t g_score_correct; /* cases with a valid expected_label that matched the prediction */
+static uint32_t g_score_total;   /* cases with a valid (>=0) expected_label */
+#endif
 
 uint64_t target_frequency = KWS_BEARLY_ROLLING_TARGET_FREQUENCY_HZ;
 
@@ -125,6 +130,7 @@ static void run_inference(uint32_t case_index) {
 
   g_infer_count++;
   g_last_pred_class = (uint32_t)pred;
+  g_last_pred_score = max_prob;
   g_last_pred_score_q = (uint32_t)(int32_t)(max_prob * 10000.0f);
 
   if ((KWS_BEARLY_ROLLING_INFER_LOG_EVERY != 0u) &&
@@ -188,6 +194,10 @@ void app_init(void) {
   g_last_pred_class = 0u;
   g_last_pred_score_q = 0u;
   g_infer_count = 0u;
+#if KWS_BEARLY_ROLLING_CHECK_EXPECTED
+  g_score_correct = 0u;
+  g_score_total = 0u;
+#endif
   KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] DEBUG state initialized; own_spad=0x%08lx peer_spad=0x%09llx\n",
                          (unsigned long)KWS_STREAM_BML_SPAD_BASE,
                          (unsigned long long)KWS_STREAM_DSP_SPAD_PEER);
@@ -276,14 +286,20 @@ void app_main(void) {
     }
 
 #if KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE
-    /* Once: compare the received (DSP-computed) MFCC map against the Spike reference feature map.
-     * The link is already checksum-verified, so any mismatch here is the on-chip MFCC front-end
-     * (window/hop, mel bank, log, DCT, or the quant scale/zero) diverging from the reference. */
-    if (!g_input_compared) {
-      const tinyspeech_test_input_case_t *ref =
-          &g_tinyspeech_test_inputs[KWS_BEARLY_ROLLING_REF_CASE_INDEX];
+    /* Per case: compare the received (DSP-computed) MFCC map against its MATCHING reference feature
+     * map. DSP tags each case with ref_case_index (the tinyspeech_inputs.h entry that is the SAME
+     * recording), so this is a like-for-like diff — the residual is purely the on-chip MFCC front-end
+     * (window/hop, mel bank, log, DCT, quant recipe) diverging from the reference extractor. Falls
+     * back to REF_CASE_INDEX if DSP sent no valid index (e.g. an older producer). */
+    {
+      int32_t rci = (int32_t)g_bml->ref_case_index;
+      if ((rci < 0) || (rci >= (int32_t)TINYSPEECH_TEST_NUM_CASES)) {
+        rci = (int32_t)KWS_BEARLY_ROLLING_REF_CASE_INDEX;
+      }
+      const tinyspeech_test_input_case_t *ref = &g_tinyspeech_test_inputs[rci];
       uint32_t mism = 0u;
       int32_t maxabs = 0;
+      int64_t sumabs = 0;
       for (uint32_t i = 0; i < KWS_CASE_PAYLOAD_BYTES; ++i) {
         int32_t d = (int32_t)g_case[i] - (int32_t)ref->data[i];
         if (d != 0) {
@@ -292,25 +308,27 @@ void app_main(void) {
         if (d < 0) {
           d = -d;
         }
+        sumabs += d;
         if (d > maxabs) {
           maxabs = d;
         }
       }
-      KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] INPUT-CMP ref=%s exp=%ld recv_cksum=0x%08lx ref_cksum=0x%08lx mism=%u/%u max_abs_diff=%ld\n",
-                             ref->name, (long)ref->expected_label,
-                             (unsigned long)c2c_checksum(g_case, KWS_CASE_PAYLOAD_BYTES),
-                             (unsigned long)c2c_checksum(ref->data, KWS_CASE_PAYLOAD_BYTES),
-                             (unsigned)mism, (unsigned)KWS_CASE_PAYLOAD_BYTES, (long)maxabs);
-      KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] INPUT-CMP recv[0:16]=");
-      for (uint32_t i = 0; i < 16u; ++i) {
-        KWS_BEARLY_ROLLING_LOG(" %d", (int)g_case[i]);
+      KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] INPUT-CMP case_index=%u ref=%s(%ld) mism=%u/%u max_abs_diff=%ld mean_abs_diff=%ld/100\n",
+                             (unsigned)idx, ref->name, (long)rci,
+                             (unsigned)mism, (unsigned)KWS_CASE_PAYLOAD_BYTES, (long)maxabs,
+                             (long)((sumabs * 100) / (int64_t)KWS_CASE_PAYLOAD_BYTES));
+      if (!g_input_compared) {
+        KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] INPUT-CMP recv[0:16]=");
+        for (uint32_t i = 0; i < 16u; ++i) {
+          KWS_BEARLY_ROLLING_LOG(" %d", (int)g_case[i]);
+        }
+        KWS_BEARLY_ROLLING_LOG("\n[bearly-kws-stream] INPUT-CMP  ref[0:16]=");
+        for (uint32_t i = 0; i < 16u; ++i) {
+          KWS_BEARLY_ROLLING_LOG(" %d", (int)ref->data[i]);
+        }
+        KWS_BEARLY_ROLLING_LOG("\n");
+        g_input_compared = 1u;
       }
-      KWS_BEARLY_ROLLING_LOG("\n[bearly-kws-stream] INPUT-CMP  ref[0:16]=");
-      for (uint32_t i = 0; i < 16u; ++i) {
-        KWS_BEARLY_ROLLING_LOG(" %d", (int)ref->data[i]);
-      }
-      KWS_BEARLY_ROLLING_LOG("\n");
-      g_input_compared = 1u;
     }
 #endif
 
@@ -333,6 +351,44 @@ void app_main(void) {
 
     run_inference(idx);
     g_last_consumed = idx;
+
+#if KWS_BEARLY_ROLLING_CHECK_EXPECTED
+    /* Score pred vs the ground-truth label DSP tagged this case with (resident in our spad, written
+     * before the turn commit). expected_label < 0 = unknown -> logged but not counted. */
+    {
+      int32_t expected = (int32_t)g_bml->expected_label;
+      int32_t pred = (int32_t)g_last_pred_class;
+      /* Confidence gate: with softmax off the score is the top raw logit; a low value means the
+       * window didn't look like any keyword (noise/non-speech). Below the floor we announce "(no
+       * word)" instead of a class, so low-confidence junk isn't reported as a keyword. */
+      int confident = (g_last_pred_score > (float)KWS_BEARLY_ROLLING_MIN_SCORE);
+      const char *exp_name = ((expected >= 0) && (expected < TINYSPEECH_NUM_CLASSES))
+                                 ? g_labels[expected] : "unknown";
+      const char *pred_name = !confident ? "no word"
+                              : (((pred >= 0) && (pred < TINYSPEECH_NUM_CLASSES))
+                                  ? g_labels[pred] : "out-of-range");
+      if (expected >= 0) {
+        /* Only a confident prediction counts toward the accuracy tally. */
+        int hit = confident && (pred == expected);
+        g_score_total++;
+        if (hit) {
+          g_score_correct++;
+        }
+        KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] RESULT%s case_index=%u pred=%s score=%.4f expected=%ld(%s) %s  tally=%u/%u (%lu%%)\n",
+                               KWS_BEARLY_SRC_TAG, (unsigned)idx,
+                               pred_name, g_last_pred_score, (long)expected, exp_name,
+                               hit ? "PASS" : "FAIL",
+                               (unsigned)g_score_correct, (unsigned)g_score_total,
+                               (unsigned long)((g_score_correct * 100u) / g_score_total));
+      } else {
+        KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] RESULT%s case_index=%u pred=%s score=%.4f (min=%.1f)%s\n",
+                               KWS_BEARLY_SRC_TAG, (unsigned)idx, pred_name, g_last_pred_score,
+                               (double)KWS_BEARLY_ROLLING_MIN_SCORE,
+                               confident ? "" : " -> below threshold, ignored");
+      }
+    }
+#endif
+
     handoff_to_dsp(idx);
   }
 }

@@ -9,21 +9,46 @@ the living record of hardware behavior we've discovered on silicon. Respect it.
 
 ### Current focus
 
-- **Reliable C2C turn-taking sync — PROVEN on silicon (2026-07-12).** A robust bidirectional
-  handshake now works end-to-end in `c2c-demos/hello-wfi` (single-chip wfi/MSIP sanity) and
-  `c2c-demos/dsp-hello-wfi` + `c2c-demos/bearly-hello-wfi` (two-chip interrupt ping-pong). Shared
-  implementation: `c2c-demos/common/hello_wfi_link.h`. **This is the template for all future C2C
-  sync.** See the "Reliable C2C turn-taking synchronization" section below for the recipe.
-- **NEXT PLAN: port the KWS demos to this exact sync strategy.** Migrate
-  `c2c-demos/dsp-kws-rolling` (producer) and `c2c-demos/bearly-kws-rolling` (consumer) to the
-  turn-register + CLINT-MSIP-wake + timer-safety-net handshake. Plan:
-  `.claude/plans/002-kws-turn-taking-sync.md`. Producer/consumer roles do NOT change (DSP
-  produces MFCC cases, Bearly runs TinySpeech inference); only the synchronization is replaced.
-- **Rolling KWS demo** — `c2c-demos/dsp-kws-rolling` streams quantized MFCC cases through the
-  shared region; Bearly maintains a rolling window / runs TinySpeech. Its old turn-taking + park
-  handshake had a first-case wake race; the proven hello-wfi strategy supersedes it.
-- **The shared region / two scratchpads are non-negotiable** — they stay the transport. The
-  internal layout/protocol within them is open (the turn register + baton layout is the new one).
+- **FULL C2C KWS DEMO WORKS END-TO-END ON SILICON (2026-07-22).** `dsp-kws-rolling` computes MFCC on
+  DSP → streams the case over the C2C link → `bearly-kws-rolling` runs TinySpeech and correctly
+  predicts `yes` on the embedded `yes_test_005` sample. This is the payoff of plans 001+002.
+- **Sync = the proven turn-taking pattern (plan 002 DONE).** Reused from `hello-wfi` via
+  `c2c-demos/common/c2c_turnsync.h`: turn register (spad `0x20`, 0=DSP/1=BML) + CLINT-MSIP wake +
+  CLINT-timer safety net + `ack_index`/`case_index`-keyed **self-heal retransmit**. Streams
+  indefinitely; a dropped cross-link write self-heals (see "Reliable C2C turn-taking synchronization"
+  and the bug log). This is the template for all C2C sync.
+- **Two accuracy fixes were needed on top of sync** (see "KWS accuracy / TinySpeech" section):
+  1. **MFCC layout transpose** — DSP now writes the case **coeff-major** (`idx = coeff*94 + frame`)
+     to match the model input `{1,1,12,94}`; it was frame-major (scrambled features). FIXED.
+  2. **int8 conv2 kernel is broken on silicon** (garbage activation max `M2 ≈ INT32_MAX` poisons
+     calibration → wrong + non-deterministic). **Workaround: run the FLOAT pipeline**
+     (`TINYSPEECH_INT8_PIPELINE=0`, CMake option `KWS_BEARLY_ROLLING_USE_FLOAT_PIPELINE=ON`). int8
+     root-cause is deferred (suspect the RVV conv2 microkernel).
+- **NEXT: validate other sample recordings** (plan `.claude/plans/003-kws-multi-testcase.md`) — the
+  demo is proven on one `yes` clip; add more test inputs / cross-check against the 100-case
+  reference labels. Then optionally: match the MFCC quant scale exactly, and fix the int8 conv2 bug.
+- **The shared region / two scratchpads are non-negotiable** — they stay the transport.
+- **LIVE I2S MIC AUDIO SOURCE WIRED (plan 001 P1, 2026-07-25) — built, pending on-silicon
+  validation.** `dsp-kws-rolling` gained a `KWS_DSP_ROLLING_USE_MIC` CMake option: instead of
+  embedded waveforms it captures ~1 s of live audio from the DSP I2S mic (proven in `dsp-i2s-test`),
+  then runs the *same* MFCC → quantize → C2C-stream pipeline unchanged. Mic is clocked at **16 kHz
+  directly** via `set_I2S_sample_freq(ch, target_freq, 16000, 32)` (matches the MFCC front-end — no
+  resampling). Capture is **VAD-gated** (short-frame AC energy onset + pre-roll; knobs
+  `KWS_DSP_ROLLING_VAD_THRESHOLD`/`_FRAME_SAMPLES`/`_PREROLL_SAMPLES`/`_ENABLE` in the config header).
+  Live cases carry `expected_label = -1` → BML reports the prediction as `expected=unknown (not
+  scored)`. **CONFIRMED WORKING ON SILICON (2026-07-25)** — speak at the mic, BML prints the keyword.
+  Build DSP:
+  `make build CHIP=dsp25 PLATFORM=CHIP TARGET=dsp-kws-rolling
+  EXTRA_CMAKE_ARGS="-DBUILD_MFCC_LIB=ON -DKWS_DSP_ROLLING_USE_MIC=ON -DKWS_DSP_ROLLING_MULTI_SIGNAL=OFF"`;
+  BML: `... CHIP=bearly25 TARGET=bearly-kws-rolling EXTRA_CMAKE_ARGS="-DKWS_BEARLY_ROLLING_USE_FLOAT_PIPELINE=ON -DKWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE=0"`
+  (INPUT-CMP is meaningless for live audio). Two quality knobs added after first-light:
+  - **VAD energy threshold** `KWS_DSP_ROLLING_VAD_THRESHOLD` (DSP), default now **5e-4** (was 1e-4) —
+    rejects quiet room noise; tune from the logged per-frame `energy` lines (each capture also prints
+    an `absmean`/min/max stats line).
+  - **Confidence gate** `KWS_BEARLY_ROLLING_MIN_SCORE` (BML, default **3.0**) — softmax is OFF so the
+    score is the top raw **logit**; when it's not `> 3.0` the RESULT line prints `pred=no word` and
+    the case doesn't count toward the tally. Filters low-confidence non-speech that trips the VAD gate.
+  Mutually exclusive with `KWS_DSP_ROLLING_MULTI_SIGNAL`.
 
 ---
 
@@ -117,8 +142,10 @@ The robust bidirectional sync we converged on after several failed attempts. Pro
 `c2c-demos/hello-wfi` (single-chip `wfi`/MSIP sanity) and `c2c-demos/dsp-hello-wfi` +
 `c2c-demos/bearly-hello-wfi` (two-chip interrupt ping-pong that counts a shared "baton" back and
 forth forever). Shared implementation: **`c2c-demos/common/hello_wfi_link.h`**. **Reuse this
-template for all future C2C sync** — next up is porting the KWS demos to it
-(`.claude/plans/002-kws-turn-taking-sync.md`).
+template for all future C2C sync.** It has been ported to the KWS demos (plan 002, DONE) via a
+factored header **`c2c-demos/common/c2c_turnsync.h`** (same three layers, built on `c2c_shm` so it
+shares one flush + write-repeat implementation). KWS uses turn-register offset **`0x20`** (not
+`0x00`) because the KWS spad control block already uses `0x00`.
 
 Why the earlier attempts failed: a one-shot MSIP edge into a core asleep in `wfi` is
 **unrecoverable** if that single cross-link write drops — and cross-link writes drop
@@ -154,12 +181,76 @@ PEER's id, so it stays asleep until explicitly handed to (also defeats stale spa
 chip-only reset).
 
 **Residual / operational notes:**
-- The one thing that must land is the **turn-register write** (hardened by repeats); the timer
-  recovers a dropped MSIP but not a dropped turn write. If that shows up, raise
-  `HELLO_WFI_WRITE_REPEATS` or add periodic retransmit.
-- **Start DSP first (or together).** There is no retransmit; boot-init sets the turn to "peer", so
-  a chip that boots AFTER the peer's first handoff already landed would overwrite the incoming
-  turn and stall.
+- In plain `hello-wfi`, the one thing that must land is the **turn-register write** (hardened by
+  repeats); the timer recovers a dropped MSIP but not a dropped turn write.
+- **KWS added self-heal retransmit** (closes that residual, keyed on the monotonic counters):
+  after granting case `N`, the producer waits for `ack_index >= N` and, on each idle timer tick with
+  no ack, **re-grants `N`** (re-writes payload/`case_index` + turn + wake). The consumer only infers
+  when `case_index > last_consumed`; a **duplicate** grant (its ack was lost) → it **re-acks without
+  re-inferring**. A dropped grant, dropped ack, OR dropped wake all self-heal, and the monotonic
+  guard prevents double-inference. On silicon this recovered mid-stream drops (you see occasional
+  `re-grant`/`dup grant` log lines and it keeps going). **This is the recommended shape for any
+  payload-carrying C2C sync.**
+- **Start DSP first (or together).** boot-init sets the turn to "peer"; the boot barrier (`bml_ready`)
+  ensures BML clears its spad before DSP's first write lands, removing the boot-order stale hazard.
+
+---
+
+## KWS accuracy / TinySpeech (findings 2026-07-22)
+
+Getting correct predictions (not just a working link) took three separate discoveries. Once sync
+worked, the model still mispredicted; debugging split cleanly into **link → MFCC front-end → inference**.
+
+**The TinySpeech runtime lives in `bearly25-bmarks/tinyspeech-mc/`.** Classes (index order):
+`0=yes, 1=no, 2=on, 3=off, 4=stop, 5=go`. Two golden references shipped in that lib:
+- `include/tinyspeech_inputs.h` — 100 cases, each an **int8 MFCC map (12×94=1128 B) + expected_label**.
+  This is the *exact* input Spike ran on (BML now includes it for debug/compare/calibration).
+- `include/tinyspeech_reference.h` — per-case expected/predicted labels, probs, logits, and 12
+  per-layer **stage sums** (great for localizing which layer diverges on-chip).
+
+**1. MFCC layout was transposed (FIXED).** The model input is `{1,1,H=12,W=94}` → it reads
+`g_case[coeff*94 + frame]` (**coefficient-major**). DSP originally wrote **frame-major**
+(`g_case[frame*12 + coeff]`) → scrambled features. `compute_full_case()` in `dsp-kws-rolling` now
+writes coeff-major. Confirmed via the `INPUT-CMP` diagnostic: the received coeff-0 row now ramps
+like the reference.
+
+**2. MFCC values still differ by scale/recipe (OPEN, but model is robust enough).** DSP computes
+MFCC on-chip (`mfcc_driver`, FFT/mel/DCT + `quantize_mfcc` with `KWS_DSP_ROLLING_MFCC_QUANT_SCALE=4.0`,
+`_ZERO=0.0`), which does NOT match the reference extractor bit-for-bit (window/mel/log/DCT + a
+different int8 scale). After the transpose, `INPUT-CMP max_abs_diff ≈ 72` (coeff-0 spans ≈[-89,+40]
+vs ref ≈[-127,+17]) — but the **float model still predicts `yes` correctly** on DSP's features. If a
+future sample mispredicts, tune `QUANT_SCALE`/`_ZERO` to minimize `INPUT-CMP` `max_abs_diff`.
+
+**3. The int8 pipeline is broken on silicon (WORKAROUND: float).** Calibration reduces to **three
+integers** — the per-conv activation maxima `g_calib_max1/2/3` (everything else — requant
+multipliers `mulN_q31`, scales `sN_fixed`, biases — is derived). On BML, `M2` (conv2) came back as
+**deterministic garbage ≈ `INT32_MAX`** while `M1`/`M3` were sane, poisoning calibration → wrong +
+non-deterministic predictions. It is **not** multicore-specific (identical single-core), so the
+suspect is the **RVV conv2 microkernel** (a vector tail/reduction or accumulation-overflow bug the
+Spike reference never exercises). **Workaround in use: the FLOAT model** (`TINYSPEECH_INT8_PIPELINE=0`),
+which the reference validates and which bypasses the int8 conv2 path. Float is slower
+(~16M cycles/inference vs ~7.7M int8) but correct.
+- Also learned: our demo originally calibrated int8 on a **single** sample (degenerate scales); the
+  standalone benchmark calibrates over all 100 cases then freezes. Added `tinyspeech_int8_calib_get_max`
+  / `set_max` to `tinyspeech_int8.{h,c}` so a computed calibration (just the 3 maxima) can be **baked
+  in** and loaded with no on-chip pass — relevant once the int8 conv2 bug is fixed.
+
+**Debug harness (in `bearly-kws-rolling`, all `#ifndef`-guarded config flags):**
+- `KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE` (=1): prints `INPUT-CMP` once — received `g_case` vs
+  `g_tinyspeech_test_inputs[REF_CASE_INDEX]` (mismatch count, max_abs_diff, both `[0:16]` previews).
+- `KWS_BEARLY_ROLLING_USE_GOLDEN_INPUT` (=0 normally): infer on the reference bytes instead of the
+  received case — isolates model/inference from the MFCC front-end + link. Infer log tags `[GOLDEN]`
+  vs `[dsp]` so you always know which input was used.
+- `KWS_BEARLY_ROLLING_REF_CASE_INDEX` (=5): which reference case (`yes_test_005`) to compare/use.
+- `KWS_BEARLY_ROLLING_CALIBRATE_FULL` (int8 only): calibrate over all 100 ref cases at boot + print
+  `CALIB_MAX M1/M2/M3`.
+- CMake options in `c2c-demos/bearly-kws-rolling/CMakeLists.txt`:
+  `KWS_BEARLY_ROLLING_USE_FLOAT_PIPELINE` (ON → `TINYSPEECH_INT8_PIPELINE=0`) and
+  `KWS_BEARLY_ROLLING_FORCE_SINGLECORE_INT8` (int8 debug). New CMake options need a clean reconfigure.
+
+**Current known-good config for the working demo:** float pipeline ON, golden OFF, transpose in
+place, DSP pacing `KWS_DSP_ROLLING_INTER_CASE_QUIET_CYCLES=500M` (~1 s between predictions). Start
+DSP first, then BML.
 
 ---
 
@@ -223,8 +314,9 @@ handshakes for multi-word payloads, and structured single-line log records
 
 - Longer design/planning docs for C2C work go in `.claude/plans/` (e.g. one file per feature
   or investigation). Keep CLAUDE.md itself lean; link out to plans. Current plans:
-  `001-full-c2c-kws-stream.md` (KWS streaming design), `002-kws-turn-taking-sync.md` (port the
-  KWS demos to the proven turn-taking sync — the active next task).
+  `001-full-c2c-kws-stream.md` (KWS streaming design), `002-kws-turn-taking-sync.md` (DONE — sync
+  ported + demo works end-to-end), `003-kws-multi-testcase.md` (active next: validate more sample
+  recordings, then MFCC-scale match / int8 conv2 fix).
 - If a repeatable workflow emerges (e.g. "bring up a new C2C demo", "parse a transfer log"),
   capture it as a skill rather than re-explaining each time.
 
@@ -234,16 +326,24 @@ handshakes for multi-word payloads, and structured single-line log records
 
 Software defects to fix later (distinct from the hardware quirks below).
 
-### Consumer read path may not honor the "write-then-flush" rule
-- **Where:** `c2c-demos/bearly-kws-rolling/src/main.c` — `refresh_shared()` / `poll_next_frame()`
-  (and the analogous read paths in other consumer demos).
-- **Issue:** per the hardware rule (see "full cache flush" quirk), every shared-region access
-  must **write to the address, then flush the entire cache**. The read path currently does the
-  full-cache-evict buffer walk and *then reads*, without a dummy write to the target address
-  first. It may be relying on the evict walk alone and not fully honoring the rule.
-- **Action:** confirm on silicon whether a dummy write before the read is required; if so, fix
-  all consumer read paths. Track in the bidirectional-link redesign.
-- **Status:** to fix.
+### int8 TinySpeech conv2 kernel produces garbage on silicon (use the float pipeline)
+- **Where:** `bearly25-bmarks/tinyspeech-mc/src/tinyspeech_int8.c` — conv2 path (suspect the RVV
+  microkernel `conv3x3_pool2x2_acc_c_rvv` / accumulation).
+- **Issue:** the conv2 activation maximum `M2` comes back as **deterministic garbage ≈ `INT32_MAX`**
+  (`M1`/`M3` sane), poisoning int8 calibration → wrong + non-deterministic predictions. Not
+  multicore-specific (identical single-core). The Spike reference (host, no RVV) never exercises it.
+- **Workaround:** run the **float pipeline** (`TINYSPEECH_INT8_PIPELINE=0`, CMake option
+  `KWS_BEARLY_ROLLING_USE_FLOAT_PIPELINE=ON`). Correct, ~2× slower.
+- **Action:** root-cause the RVV conv2 kernel (dump per-stage sums vs `tinyspeech_reference.h`
+  `ref_stage_sums` to find the diverging layer). See "KWS accuracy / TinySpeech".
+- **Status:** worked-around (float); int8 fix deferred.
+
+### (RESOLVED) Consumer read path write-then-flush
+- The turn-taking rewrite (plan 002) replaced the old `refresh_shared`/`poll_next_frame` path. BML
+  now reads its own spad via `c2c_local_read_block_verify` (full flush, then read, then FNV checksum,
+  bounded retries) only when the turn register grants it the turn — proven correct on silicon
+  (checksum passes every case). No dummy-write-before-read was needed. Historical note kept for
+  context; the "full cache flush every access" quirk below still governs all reads.
 
 ## Known Chip Bugs & Quirks
 

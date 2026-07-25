@@ -46,6 +46,15 @@
 #define KWS_DSP_ROLLING_STEADY_FRAME_IDX (KWS_DSP_ROLLING_FRAMES_PER_CASE - 1u)
 #endif
 
+/* MFCC int8 quantization. The reference feature extractor (tinyspeech_inputs.h) does NOT use a
+ * fixed scale — it normalizes each 12x94 case by its own peak magnitude: q = clip(round(x *
+ * 127/max|x|)). With KWS_DSP_ROLLING_MFCC_NORMALIZE=1 (default) DSP matches that recipe (compute
+ * the whole float MFCC map, take its max abs, then scale to full int8 range), which is the single
+ * biggest front-end alignment with the reference. Set 0 to use the legacy fixed SCALE/ZERO below. */
+#ifndef KWS_DSP_ROLLING_MFCC_NORMALIZE
+#define KWS_DSP_ROLLING_MFCC_NORMALIZE 1
+#endif
+
 #ifndef KWS_DSP_ROLLING_MFCC_QUANT_SCALE
 #define KWS_DSP_ROLLING_MFCC_QUANT_SCALE 4.0f
 #endif
@@ -60,6 +69,16 @@
 
 #ifndef KWS_DSP_ROLLING_USE_THREADLIB
 #define KWS_DSP_ROLLING_USE_THREADLIB 0
+#endif
+
+/* Multi-testcase mode (plan 003 axis B). 0 (default) = the original single embedded yes_test_005
+ * waveform, streamed repeatedly (static payload). 1 = round-robin over the generated waveform set
+ * in kws_dsp_signals.h (a few recordings per keyword), computing a fresh MFCC case per recording
+ * and tagging each with its ground-truth expected_label so BML can score pred-vs-expected. Multi
+ * mode forces a full payload re-publish every case (the payload changes) regardless of
+ * KWS_DSP_ROLLING_STATIC_PAYLOAD. Generate kws_dsp_signals.h first via scripts/gen_dsp_signals.py. */
+#ifndef KWS_DSP_ROLLING_MULTI_SIGNAL
+#define KWS_DSP_ROLLING_MULTI_SIGNAL 0
 #endif
 
 #ifndef KWS_DSP_ROLLING_SEND_INTERVAL_CYCLES
@@ -130,6 +149,81 @@
 
 #ifndef KWS_DSP_ROLLING_CACHE_EVICT_BYTES
 #define KWS_DSP_ROLLING_CACHE_EVICT_BYTES (256u * 1024u)
+#endif
+
+/* ------------------------------------------------------------------------------------------------
+ * Live I2S microphone audio source (plan 001 P1). When KWS_DSP_ROLLING_USE_MIC=1 the demo drops the
+ * embedded waveform table and instead captures ~1 s of live audio from the DSP I2S mic (channel 0,
+ * proven in dsp-i2s-test / see the I2S validation note), then runs the SAME MFCC -> quantize ->
+ * stream pipeline on it and reports BML's prediction. Ground truth is unknown for live audio, so
+ * each case is tagged expected_label = -1 (BML's PASS/FAIL tally is meaningless in this mode). Set
+ * via the CMake option KWS_DSP_ROLLING_USE_MIC (needs a clean reconfigure). Mutually exclusive with
+ * KWS_DSP_ROLLING_MULTI_SIGNAL. ---------------------------------------------------------------- */
+#ifndef KWS_DSP_ROLLING_USE_MIC
+#define KWS_DSP_ROLLING_USE_MIC 0
+#endif
+
+#if KWS_DSP_ROLLING_USE_MIC && KWS_DSP_ROLLING_MULTI_SIGNAL
+#error "KWS_DSP_ROLLING_USE_MIC and KWS_DSP_ROLLING_MULTI_SIGNAL are mutually exclusive."
+#endif
+
+/* I2S mic channel (0 = mic per the validated pinout: BCLK0/LRCLK0/SDIN0). */
+#ifndef KWS_DSP_ROLLING_MIC_CHANNEL
+#define KWS_DSP_ROLLING_MIC_CHANNEL 0
+#endif
+
+/* Target mic sample rate. The MFCC front-end assumes 16 kHz (hop 160 = 10 ms, 1024-pt FFT), so the
+ * mic is clocked at 16 kHz directly via set_I2S_sample_freq() using the demo's operating frequency
+ * (KWS_DSP_ROLLING_TARGET_FREQUENCY_HZ) — no software resampling. */
+#ifndef KWS_DSP_ROLLING_MIC_SAMPLE_RATE_HZ
+#define KWS_DSP_ROLLING_MIC_SAMPLE_RATE_HZ 16000u
+#endif
+#ifndef KWS_DSP_ROLLING_MIC_BITDEPTH
+#define KWS_DSP_ROLLING_MIC_BITDEPTH 32u
+#endif
+
+/* Samples per captured case. Must cover all MFCC frames: (FRAMES-1)*HOP + FFT_LEN. 16000 (= 1 s @
+ * 16 kHz) matches the embedded Speech Commands clips. */
+#ifndef KWS_DSP_ROLLING_MIC_NUM_SAMPLES
+#define KWS_DSP_ROLLING_MIC_NUM_SAMPLES 16000u
+#endif
+
+/* Mic delivers a 24-bit sample in the TOP of each 32-bit slot (low byte idle 0xFF). Recover the
+ * signed 24-bit value with an arithmetic >>8, then scale to float ~[-1,1] by 1/2^23 to match the
+ * range of the embedded float waveforms. A large near-constant DC offset is removed per capture. */
+#ifndef KWS_DSP_ROLLING_MIC_SAMPLE_SHIFT
+#define KWS_DSP_ROLLING_MIC_SAMPLE_SHIFT 8
+#endif
+#ifndef KWS_DSP_ROLLING_MIC_FULLSCALE
+#define KWS_DSP_ROLLING_MIC_FULLSCALE 8388608.0f /* 2^23 */
+#endif
+
+/* --- Voice-activity gate (plan 001 §7). Monitor short-frame AC energy; when it crosses
+ * KWS_DSP_ROLLING_VAD_THRESHOLD, capture the case starting from a short pre-roll before the onset so
+ * the word's attack isn't clipped, then fill a full 1 s window. Set KWS_DSP_ROLLING_VAD_ENABLE=0 to
+ * free-run (capture a window immediately, no gating). --------------------------------------------- */
+#ifndef KWS_DSP_ROLLING_VAD_ENABLE
+#define KWS_DSP_ROLLING_VAD_ENABLE 1
+#endif
+/* Monitoring frame length in samples (must be even; 320 = 20 ms @ 16 kHz). AC energy = mean of
+ * (x - frame_mean)^2 over the frame (frame-mean removal = crude DC high-pass for the gate). */
+#ifndef KWS_DSP_ROLLING_VAD_FRAME_SAMPLES
+#define KWS_DSP_ROLLING_VAD_FRAME_SAMPLES 320u
+#endif
+/* Pre-roll captured ahead of the onset (must be even and a multiple of VAD_FRAME_SAMPLES; 3200 =
+ * 200 ms). Ensures the onset frame + a little lead-in land inside the window. */
+#ifndef KWS_DSP_ROLLING_VAD_PREROLL_SAMPLES
+#define KWS_DSP_ROLLING_VAD_PREROLL_SAMPLES 3200u
+#endif
+/* Onset threshold on the frame AC energy (scaled-float variance units; samples are /2^23). The
+ * noise floor vs speech level is mic/room dependent — monitoring-frame energy is logged (throttled)
+ * so this can be tuned from a run. */
+#ifndef KWS_DSP_ROLLING_VAD_THRESHOLD
+#define KWS_DSP_ROLLING_VAD_THRESHOLD 5.0e-4f
+#endif
+/* Throttle: log one VAD monitoring energy line every N frames while listening (0 = never). */
+#ifndef KWS_DSP_ROLLING_VAD_LOG_EVERY
+#define KWS_DSP_ROLLING_VAD_LOG_EVERY 25u
 #endif
 
 #endif /* C2C_DSP_KWS_ROLLING_CONFIG_H */

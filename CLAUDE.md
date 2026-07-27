@@ -49,6 +49,20 @@ the living record of hardware behavior we've discovered on silicon. Respect it.
     score is the top raw **logit**; when it's not `> 3.0` the RESULT line prints `pred=no word` and
     the case doesn't count toward the tally. Filters low-confidence non-speech that trips the VAD gate.
   Mutually exclusive with `KWS_DSP_ROLLING_MULTI_SIGNAL`.
+- **DUAL-CORE KWS + LLAMA VOICE CONTROL (plan `.claude/plans/004-kws-llama-dualcore.md`, 2026-07-26)
+  — built clean, pending on-silicon validation.** New combined BML target
+  **`c2c-demos/bearly-kws-llama`**: hart 0 runs the C2C KWS receiver + a keyword *controller*, hart 1
+  runs TinyLlama (borai int8). A confident keyword (top-logit > `KWS_BEARLY_ROLLING_MIN_SCORE`) —
+  `yes`/`go`/`on` → **START** Llama generation on hart 1; `no`/`off`/`stop` → **STOP** (abort
+  mid-stream + park hart 1). It reuses, unmodified in behavior, `bearly-kws-rolling/src/main.c`
+  (`-DKWS_BEARLY_LLAMA`) and `bearly25-demos/borai/int8/src/main.c` (`-DKWS_LLAMA_COMBINED`) — both
+  guarded so their standalone builds (`bearly-kws-rolling`, `boraiq`) are unchanged. hart-1 dispatch
+  = a strong `__main` spin-waiting on cached-DRAM control flags (NOT the C2C spad; intra-die is
+  coherent, fences order it); SMP-safe malloc via newlib `__malloc_lock`. Build:
+  `make build CHIP=bearly25 PLATFORM=CHIP TARGET=bearly-kws-llama EXTRA_CMAKE_ARGS="-DBUILD_VECNN=ON"`
+  (DSP side unchanged: the mic `dsp-kws-rolling`). Verify-on-silicon: UART interleave (add a print
+  lock if it corrupts), shared-vs-per-hart RVV unit. See the plan for the full collision-resolution
+  writeup.
 
 ---
 
@@ -266,7 +280,8 @@ make build CHIP=bearly25 TARGET=c2c-transfer-bearly
 ```
 
 C2C demo targets (`c2c-demos/CMakeLists.txt`): `dsp-kws`, `bearly-kws`, `dsp-kws-rolling`,
-`bearly-kws-rolling`, `dsp-simpletest`, `bearly-simpletest`, `c2c-measure`,
+`bearly-kws-rolling`, `bearly-kws-llama` (dual-core KWS + TinyLlama voice control; bearly25 +
+`-DBUILD_VECNN=ON`), `dsp-i2s-test`, `dsp-simpletest`, `bearly-simpletest`, `c2c-measure`,
 `c2c-transfer-dsp`, `c2c-transfer-bearly`, `hello-wfi` (single-chip `wfi`/MSIP sanity — build
 with either `CHIP`), `dsp-hello-wfi`, `bearly-hello-wfi` (two-chip turn-taking ping-pong; the
 reference sync implementation). Each `<chip>-*` target must be built with the matching `CHIP=`.
@@ -316,7 +331,8 @@ handshakes for multi-word payloads, and structured single-line log records
   or investigation). Keep CLAUDE.md itself lean; link out to plans. Current plans:
   `001-full-c2c-kws-stream.md` (KWS streaming design), `002-kws-turn-taking-sync.md` (DONE — sync
   ported + demo works end-to-end), `003-kws-multi-testcase.md` (active next: validate more sample
-  recordings, then MFCC-scale match / int8 conv2 fix).
+  recordings, then MFCC-scale match / int8 conv2 fix), `004-kws-llama-dualcore.md` (dual-core KWS +
+  TinyLlama voice control — built, pending silicon).
 - If a repeatable workflow emerges (e.g. "bring up a new C2C demo", "parse a transfer log"),
   capture it as a skill rather than re-explaining each time.
 

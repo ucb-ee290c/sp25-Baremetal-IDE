@@ -31,10 +31,29 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#ifdef KWS_LLAMA_COMBINED
+/* In the combined KWS+Llama binary the KWS consumer TU also has a header literally named "main.h"
+ * on the include path; include ours via a uniquely-named wrapper so the two never clash. */
+#include "borai_main.h"
+#else
 #include "main.h"
+#endif
 
 #if defined(TRANSPOSED_WEIGHTS) || defined(VEC_SOFTMAX)
 #include "layers.h"
+#endif
+
+#ifdef KWS_LLAMA_COMBINED
+/* --- Combined KWS + Llama dual-core demo (c2c-demos/bearly-kws-llama) integration shims. ---------
+ * This TU is compiled into the combined binary alongside the TinySpeech KWS runtime, which ALSO
+ * exports a non-static softmax(); rename ours to avoid a link-time collision. The single operating
+ * frequency and the program entry points (main / __main / app_main) are owned by the combined
+ * demo's main.c and by bmark-lib/hthread.c, so those definitions below are #ifdef'd out. The
+ * exposed llama_build()/llama_run_forever() entry points are added at the end of this file.
+ * None of this affects the standalone `boraiq` build (macro undefined there). */
+#define softmax llama_softmax
+extern uint64_t target_frequency;      /* owned by the combined demo's main.c */
+extern volatile int g_llama_stop;      /* set by the control hart; abort generation between tokens */
 #endif
 
 /* Private includes ----------------------------------------------------------*/
@@ -64,7 +83,9 @@ const unsigned char *ASCII_BEL = (const unsigned char *) "\a";
 
 // int32_t GS = 64; // group size global for quantization of the weights
 
+#ifndef KWS_LLAMA_COMBINED
 uint64_t target_frequency = 1000000000l;
+#endif
 
 // #ifdef ENABLE_DMA_MATVEC
 // int32_t GS_MATVEC_BOUND = 0;
@@ -1448,6 +1469,12 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int pos = 0;     // position in the sequence
     while (pos < steps) {
 
+#ifdef KWS_LLAMA_COMBINED
+        /* Combined demo: abort mid-generation when the control hart raises the STOP flag (a
+         * no/off/stop keyword was recognized). Checked once per token. */
+        if (g_llama_stop) { break; }
+#endif
+
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
 
@@ -1644,6 +1671,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 }
 
 
+#ifndef KWS_LLAMA_COMBINED
 void app_main() {
   uint64_t mhartid = READ_CSR("mhartid");
   printf("Started BorAIq (Int8 Quantized) Inference Engine on hart ID %lu\r\n", mhartid);
@@ -1707,11 +1735,13 @@ void app_main() {
     //msleep(1000);
   }
 }
+#endif /* !KWS_LLAMA_COMBINED (app_main) */
 
 /**
   * @brief  The application entry point.
   * @retval int
   */
+#ifndef KWS_LLAMA_COMBINED
 int main(int argc, char **argv) {
   /* MCU Configuration--------------------------------------------------------*/
   
@@ -1734,9 +1764,11 @@ int main(int argc, char **argv) {
   app_main();
   /* USER CODE END WHILE */
 }
+#endif /* !KWS_LLAMA_COMBINED (main) */
 
 
 // Alternative HART runner. Multithreading, anyone?
+#ifndef KWS_LLAMA_COMBINED
 void __attribute__((noreturn)) __main(void) {
 #ifdef PREFILL_MULTICORE
   unsigned long long hartid;
@@ -1765,3 +1797,52 @@ void __attribute__((noreturn)) __main(void) {
     asm volatile ("wfi");
   }
 }
+#endif /* !KWS_LLAMA_COMBINED (__main) */
+
+#ifdef KWS_LLAMA_COMBINED
+/* ================================================================================================
+ * Combined KWS + Llama demo entry points (see c2c-demos/bearly-kws-llama). The control hart (hart 0)
+ * builds the model once via llama_build(), then dispatches llama_run_forever() onto hart 1 with
+ * hthread_issue(); hart 1 streams tokens until the control hart raises g_llama_stop.
+ * ============================================================================================== */
+
+/* Persistent model state (built once; reused across every START). Lives in shared DRAM so it does
+ * not matter which hart builds vs. runs it. */
+static Transformer g_llama_tfm;
+static Tokenizer   g_llama_tok;
+static Sampler     g_llama_sampler;
+static int         g_llama_built = 0;
+
+/* STOP flag: raised by the control hart between utterances, polled by generate() between tokens. */
+volatile int g_llama_stop = 0;
+
+/* Build the transformer/tokenizer/sampler once. Call from a single hart before any generation
+ * (the combined demo calls it at init on hart 0, before the KWS loop starts — no malloc race). */
+void llama_build(void) {
+  if (g_llama_built) { return; }
+  build_transformer(&g_llama_tfm);
+  build_tokenizer_from_header(&g_llama_tok, g_llama_tfm.config.vocab_size);
+  /* temperature 0.8, top-p 0.9 — borai's app_main defaults; seed re-rolled per round below. */
+  build_sampler(&g_llama_sampler, g_llama_tfm.config.vocab_size, 0.8f, 0.9f,
+                (unsigned long long)CLINT->MTIME);
+  g_llama_built = 1;
+  printf("[kws-llama] Llama model built (dim=%d layers=%d vocab=%d seq_len=%d)\r\n",
+         g_llama_tfm.config.dim, g_llama_tfm.config.n_layers,
+         g_llama_tfm.config.vocab_size, g_llama_tfm.config.seq_len);
+}
+
+/* Stream tokens continuously until g_llama_stop is raised. generate() aborts mid-story on the flag
+ * (checked per token); this loop re-arms a fresh story after each completes, so a single START
+ * keeps talking until STOP. */
+void llama_run_forever(void) {
+  int steps = g_llama_tfm.config.seq_len;
+  printf("[kws-llama] === Llama START (generating until STOP) ===\r\n");
+  while (!g_llama_stop) {
+    g_llama_sampler.rng_state = (unsigned long long)CLINT->MTIME;
+    generate(&g_llama_tfm, &g_llama_tok, &g_llama_sampler, NULL, steps);
+    if (g_llama_stop) { break; }
+    printf("========================================\r\n");
+  }
+  printf("[kws-llama] === Llama STOP (halting inference core) ===\r\n");
+}
+#endif /* KWS_LLAMA_COMBINED */

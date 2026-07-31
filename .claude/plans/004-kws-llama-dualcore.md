@@ -5,14 +5,17 @@
 ## Goal
 
 On the Bearly chip, run TinyLlama (borai int8) inference on **hart 1** while the C2C **KWS receiver
-runs on hart 0**. A confidently-recognized keyword controls the Llama core:
+runs on hart 0**.
 
-- **START** (`yes`, `go`, `on`) → begin/continue Llama generation on hart 1.
-- **STOP** (`no`, `off`, `stop`) → abort generation mid-stream and park (halt) hart 1.
+**Dynamic story mode (current, 2026-07-27):** Llama runs **continuously** on hart 1. hart 0 collects
+the next `KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY` (=3) confidently-recognized keywords (top-logit >
+`KWS_BEARLY_ROLLING_MIN_SCORE`, now **2.0**). On the 3rd, it builds a story prompt from the three
+words (`"Once upon a time, there was a <w0>, a <w1> and a <w2>."`), publishes it via a seqlock
+(`g_llama_prompt` / `g_llama_prompt_ver`), and raises `g_llama_stop` so hart 1 aborts the in-flight
+story and immediately starts a new one about those words. Then hart 0 collects the next 3, forever.
 
-Continuous generation: one START keeps streaming tokens (re-arming a new story each time one
-finishes) until a STOP. Only predictions above the confidence gate
-(`KWS_BEARLY_ROLLING_MIN_SCORE`, top-logit > 3.0) act.
+*(Superseded original design: START (`yes/go/on`) / STOP (`no/off/stop`) by keyword polarity — replaced
+because the 8-word retrain has no start/stop semantics and the dynamic story loop is what's wanted.)*
 
 ## Core assignment (decided)
 

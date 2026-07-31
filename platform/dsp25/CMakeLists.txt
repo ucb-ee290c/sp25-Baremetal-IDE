@@ -8,9 +8,17 @@ file(GLOB_RECURSE PLATFORM_FILES
 )
 add_library(chip-config STATIC chip.c ${PLATFORM_FILES})
 
-# set terminal device (printf, scanf, etc.) to HTIF
-set(TERMINAL_DEVICE_UART0    ON    PARENT_SCOPE)
-target_compile_definitions(chip-config PUBLIC -D TERMINAL_DEVICE_UART0)
+# Terminal device for printf/scanf. On real silicon (PLATFORM=CHIP) it's the UART. Under simulation
+# (PLATFORM=SIMS, e.g. Spike) the UART MMIO isn't modeled, so route the console through HTIF (the
+# fesvr tohost/fromhost proxy) instead — that's what makes printf show up under `spike`.
+string(TOUPPER "${PLATFORM}" _DSP25_PLATFORM_UPPER)
+if (_DSP25_PLATFORM_UPPER STREQUAL "SIMS")
+  target_compile_definitions(chip-config PUBLIC -D TERMINAL_DEVICE_HTIF)
+  message(STATUS "dsp25: TERMINAL_DEVICE_HTIF (SIMS/Spike console)")
+else()
+  set(TERMINAL_DEVICE_UART0    ON    PARENT_SCOPE)
+  target_compile_definitions(chip-config PUBLIC -D TERMINAL_DEVICE_UART0)
+endif()
 
 set(PLATFORM_INCLUDE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)

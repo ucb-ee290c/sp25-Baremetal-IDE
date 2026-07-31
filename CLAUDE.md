@@ -45,20 +45,24 @@ the living record of hardware behavior we've discovered on silicon. Respect it.
   - **VAD energy threshold** `KWS_DSP_ROLLING_VAD_THRESHOLD` (DSP), default now **5e-4** (was 1e-4) —
     rejects quiet room noise; tune from the logged per-frame `energy` lines (each capture also prints
     an `absmean`/min/max stats line).
-  - **Confidence gate** `KWS_BEARLY_ROLLING_MIN_SCORE` (BML, default **3.0**) — softmax is OFF so the
-    score is the top raw **logit**; when it's not `> 3.0` the RESULT line prints `pred=no word` and
-    the case doesn't count toward the tally. Filters low-confidence non-speech that trips the VAD gate.
+  - **Confidence gate** `KWS_BEARLY_ROLLING_MIN_SCORE` (BML, default **2.0**, was 3.0) — softmax is OFF
+    so the score is the top raw **logit**; when it's not `> MIN_SCORE` the RESULT line prints
+    `pred=no word` (and it's not captured as a keyword). Filters low-confidence non-speech.
   Mutually exclusive with `KWS_DSP_ROLLING_MULTI_SIGNAL`.
-- **DUAL-CORE KWS + LLAMA VOICE CONTROL (plan `.claude/plans/004-kws-llama-dualcore.md`, 2026-07-26)
-  — built clean, pending on-silicon validation.** New combined BML target
-  **`c2c-demos/bearly-kws-llama`**: hart 0 runs the C2C KWS receiver + a keyword *controller*, hart 1
-  runs TinyLlama (borai int8). A confident keyword (top-logit > `KWS_BEARLY_ROLLING_MIN_SCORE`) —
-  `yes`/`go`/`on` → **START** Llama generation on hart 1; `no`/`off`/`stop` → **STOP** (abort
-  mid-stream + park hart 1). It reuses, unmodified in behavior, `bearly-kws-rolling/src/main.c`
+- **DUAL-CORE KWS + LLAMA — DYNAMIC STORY MODE (plan `.claude/plans/004-kws-llama-dualcore.md`,
+  updated 2026-07-27).** Combined BML target **`c2c-demos/bearly-kws-llama`**: hart 0 runs the C2C KWS
+  receiver + controller, hart 1 runs TinyLlama (borai int8) **continuously**. hart 0 collects the next
+  `KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY` (=3) confident keywords (top-logit > `KWS_BEARLY_ROLLING_MIN_SCORE`,
+  now **2.0**); on the 3rd it builds a story prompt (`"Once upon a time, there was a <w0>, a <w1> and a
+  <w2>."`), publishes it via a seqlock (`g_llama_prompt`/`g_llama_prompt_ver`), and raises `g_llama_stop`
+  so hart 1 cuts off the current story and starts a new one about those words; then it collects the next
+  3. (Earlier START/STOP-by-keyword-polarity design is superseded.) It reuses, unmodified in behavior,
+  `bearly-kws-rolling/src/main.c`
   (`-DKWS_BEARLY_LLAMA`) and `bearly25-demos/borai/int8/src/main.c` (`-DKWS_LLAMA_COMBINED`) — both
   guarded so their standalone builds (`bearly-kws-rolling`, `boraiq`) are unchanged. hart-1 dispatch
-  = a strong `__main` spin-waiting on cached-DRAM control flags (NOT the C2C spad; intra-die is
-  coherent, fences order it); SMP-safe malloc via newlib `__malloc_lock`. Build:
+  = a strong `__main` that (after `g_llama_ready`) enters `llama_run_forever()` and generates
+  continuously; the prompt is swapped live via a seqlock (NOT the C2C spad; intra-die is coherent,
+  fences order it); SMP-safe malloc via newlib `__malloc_lock`. Build:
   `make build CHIP=bearly25 PLATFORM=CHIP TARGET=bearly-kws-llama EXTRA_CMAKE_ARGS="-DBUILD_VECNN=ON"`
   (DSP side unchanged: the mic `dsp-kws-rolling`). Verify-on-silicon: UART interleave (add a print
   lock if it corrupts), shared-vs-per-hart RVV unit. See the plan for the full collision-resolution
@@ -215,8 +219,20 @@ chip-only reset).
 Getting correct predictions (not just a working link) took three separate discoveries. Once sync
 worked, the model still mispredicted; debugging split cleanly into **link → MFCC front-end → inference**.
 
-**The TinySpeech runtime lives in `bearly25-bmarks/tinyspeech-mc/`.** Classes (index order):
-`0=yes, 1=no, 2=on, 3=off, 4=stop, 5=go`. Two golden references shipped in that lib:
+**The TinySpeech runtime lives in `bearly25-bmarks/tinyspeech-mc/`.** Classes (index order, since the
+2026-07-27 **6-word REAL-AUDIO retrain** — `TINYSPEECH_NUM_CLASSES=6`): `0=go, 1=bird, 2=cat, 3=dog,
+4=happy, 5=tree`. Trained on **real Google Speech Commands audio** (not TTS) via
+`dsp25-tests/tinyspeech-test/scripts/rebuild_weights_simplecnn.py` (edit `CLASS_NAMES`), CPU, 25 epochs
+→ **val 96% / test 93%**. Front-end = **torchaudio Hann-480** (win 480/30 ms, n_fft 1024, hop 160,
+23 mel, 12 MFCC) with **per-case peak int8 quant** (`127/max|x|`); the DSP must match =
+Hann-480 `mfcc_driver` + `KWS_DSP_ROLLING_MFCC_NORMALIZE=1` (both restored). Integrated by copying the
+generated `weights.h` into the shared lib, `NUM_CLASSES=6`, and updating the label arrays. Consumed by
+both `bearly-kws-rolling` and `bearly-kws-llama`. *(This replaced the 2026-07-25 8-word Piper-**TTS**
+model hot/cold/chip/dale/apple/pear/messi/ronaldo, which classified everything as `messi` on the real
+mic — a synthetic-vs-real-voice domain gap. Real-audio training fixed that.)* The `tinyspeech_inputs.h`
+/ `tinyspeech_reference.h` goldens in the lib are **stale** (still 8-word) and now unused by the demos
+(`KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE` default is 0); regenerate them only if you need the
+standalone benchmark/INPUT-CMP. Two golden references shipped in that lib:
 - `include/tinyspeech_inputs.h` — 100 cases, each an **int8 MFCC map (12×94=1128 B) + expected_label**.
   This is the *exact* input Spike ran on (BML now includes it for debug/compare/calibration).
 - `include/tinyspeech_reference.h` — per-case expected/predicted labels, probs, logits, and 12

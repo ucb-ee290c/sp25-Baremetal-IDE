@@ -43,6 +43,8 @@
 #include "layers.h"
 #endif
 
+#include "simple_setup.h"   /* init_test(): portable PLL + UART bring-up (bearly25 & dsp25) */
+
 #ifdef KWS_LLAMA_COMBINED
 /* --- Combined KWS + Llama dual-core demo (c2c-demos/bearly-kws-llama) integration shims. ---------
  * This TU is compiled into the combined binary alongside the TinySpeech KWS runtime, which ALSO
@@ -1743,26 +1745,12 @@ void app_main() {
   */
 #ifndef KWS_LLAMA_COMBINED
 int main(int argc, char **argv) {
-  /* MCU Configuration--------------------------------------------------------*/
-  
-  configure_pll(PLL, target_frequency/50000000, 0);
-  set_all_clocks(CLOCK_SELECTOR, 1);
-
-  /* USER CODE BEGIN SysInit */
-  // Initialize UART0 for Serial Monitor
-  UART_InitType UART0_init_config;
-  UART0_init_config.baudrate = 115200;
-  UART0_init_config.mode = UART_MODE_TX_RX;
-  UART0_init_config.stopbits = UART_STOPBITS_2;
-  uart_init(UART0, &UART0_init_config);
-  UART0->DIV = (target_frequency / 115200) - 1;
-
-  /* USER CODE END SysInit */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+  /* MCU Configuration: PLL + clocks + UART0. Use the portable init_test() (bmark-lib/simple_setup)
+   * so this builds on both bearly25 and dsp25 — the raw configure_pll/set_all_clocks(CLOCK_SELECTOR)
+   * path was bearly-specific (dsp25 names it RCC_CLOCK_SELECTOR). init_test does the same PLL ratio
+   * (target/SYS_CLK_FREQ) + 115200 UART setup. */
+  init_test(target_frequency);
   app_main();
-  /* USER CODE END WHILE */
 }
 #endif /* !KWS_LLAMA_COMBINED (main) */
 
@@ -1801,28 +1789,36 @@ void __attribute__((noreturn)) __main(void) {
 
 #ifdef KWS_LLAMA_COMBINED
 /* ================================================================================================
- * Combined KWS + Llama demo entry points (see c2c-demos/bearly-kws-llama). The control hart (hart 0)
- * builds the model once via llama_build(), then dispatches llama_run_forever() onto hart 1 with
- * hthread_issue(); hart 1 streams tokens until the control hart raises g_llama_stop.
+ * Combined KWS + Llama demo entry points (see c2c-demos/bearly-kws-llama). hart 1 runs Llama
+ * CONTINUOUSLY via llama_run_forever(); the control hart (hart 0) collects 3 recognized keywords,
+ * writes a story prompt built from them into g_llama_prompt (seqlock-guarded by g_llama_prompt_ver),
+ * and raises g_llama_stop to abort the in-flight story so hart 1 immediately picks up the new prompt.
  * ============================================================================================== */
 
-/* Persistent model state (built once; reused across every START). Lives in shared DRAM so it does
- * not matter which hart builds vs. runs it. */
+#define KWS_LLAMA_PROMPT_MAX 256
+
+/* Persistent model state (built once). Lives in shared DRAM so build-vs-run hart doesn't matter. */
 static Transformer g_llama_tfm;
 static Tokenizer   g_llama_tok;
 static Sampler     g_llama_sampler;
 static int         g_llama_built = 0;
 
-/* STOP flag: raised by the control hart between utterances, polled by generate() between tokens. */
+/* STOP/abort flag: raised by the control hart when a new prompt is ready; polled per token. */
 volatile int g_llama_stop = 0;
 
-/* Build the transformer/tokenizer/sampler once. Call from a single hart before any generation
- * (the combined demo calls it at init on hart 0, before the KWS loop starts — no malloc race). */
+/* Current story prompt (hart0 writes, hart1 reads). Seqlock: g_llama_prompt_ver is odd while hart0
+ * is mid-write, even when stable; hart1 re-copies if it changed during the read. Starts empty ->
+ * the model free-runs a default story until the first 3 keywords arrive. */
+char g_llama_prompt[KWS_LLAMA_PROMPT_MAX] = "";
+volatile uint32_t g_llama_prompt_ver = 0;
+
+/* Build the transformer/tokenizer/sampler once. Call from a single hart before generation starts
+ * (the combined demo calls it at init on hart 0, before the KWS loop / hart 1 run — no malloc race). */
 void llama_build(void) {
   if (g_llama_built) { return; }
   build_transformer(&g_llama_tfm);
   build_tokenizer_from_header(&g_llama_tok, g_llama_tfm.config.vocab_size);
-  /* temperature 0.8, top-p 0.9 — borai's app_main defaults; seed re-rolled per round below. */
+  /* temperature 0.8, top-p 0.9 — borai's app_main defaults; seed re-rolled per story below. */
   build_sampler(&g_llama_sampler, g_llama_tfm.config.vocab_size, 0.8f, 0.9f,
                 (unsigned long long)CLINT->MTIME);
   g_llama_built = 1;
@@ -1831,18 +1827,36 @@ void llama_build(void) {
          g_llama_tfm.config.vocab_size, g_llama_tfm.config.seq_len);
 }
 
-/* Stream tokens continuously until g_llama_stop is raised. generate() aborts mid-story on the flag
- * (checked per token); this loop re-arms a fresh story after each completes, so a single START
- * keeps talking until STOP. */
+/* Snapshot the shared prompt into a local buffer via the seqlock (retries on a concurrent write). */
+static void llama_snapshot_prompt(char *dst, uint32_t n) {
+  uint32_t v0;
+  do {
+    v0 = g_llama_prompt_ver;
+    while (v0 & 1u) { v0 = g_llama_prompt_ver; }   /* hart0 mid-write -> wait for even */
+    __sync_synchronize();
+    uint32_t i = 0;
+    for (; i < n - 1u && g_llama_prompt[i] != '\0'; ++i) { dst[i] = g_llama_prompt[i]; }
+    dst[i] = '\0';
+    __sync_synchronize();
+  } while (g_llama_prompt_ver != v0);              /* changed during copy -> retry */
+}
+
+/* Run Llama forever. Each round: snapshot the current prompt, generate a story from it (aborting
+ * early if the control hart raised g_llama_stop with a new prompt), then loop. So Llama is always
+ * talking; when 3 new keywords land, the current story cuts off and the next one is about them. */
 void llama_run_forever(void) {
   int steps = g_llama_tfm.config.seq_len;
-  printf("[kws-llama] === Llama START (generating until STOP) ===\r\n");
-  while (!g_llama_stop) {
+  char local_prompt[KWS_LLAMA_PROMPT_MAX];
+  printf("[kws-llama] === Llama running continuously (prompt updates every 3 keywords) ===\r\n");
+  while (1) {
+    llama_snapshot_prompt(local_prompt, sizeof(local_prompt));
+    g_llama_stop = 0;
+    __sync_synchronize();
     g_llama_sampler.rng_state = (unsigned long long)CLINT->MTIME;
-    generate(&g_llama_tfm, &g_llama_tok, &g_llama_sampler, NULL, steps);
-    if (g_llama_stop) { break; }
-    printf("========================================\r\n");
+    char *p = (local_prompt[0] != '\0') ? local_prompt : NULL;
+    printf("[kws-llama] --- new story (prompt=\"%s\") ---\r\n", p ? local_prompt : "(default)");
+    generate(&g_llama_tfm, &g_llama_tok, &g_llama_sampler, p, steps);
+    printf("\r\n========================================\r\n");
   }
-  printf("[kws-llama] === Llama STOP (halting inference core) ===\r\n");
 }
 #endif /* KWS_LLAMA_COMBINED */

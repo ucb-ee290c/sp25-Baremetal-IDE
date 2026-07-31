@@ -82,6 +82,10 @@ target_link_libraries(bearly-kws-llama PRIVATE
 # Heap: Llama runstate/kv-cache + transposed weights (~2 MB) plus TinySpeech per-case tensors.
 target_link_options(bearly-kws-llama PRIVATE -Wl,--defsym,__heap_size=8388608)
 
+# Serialize UART output across harts: route _write through __wrap__write (a spinlock around the real
+# writer) so hart0's KWS logs and hart1's Llama token stream can't corrupt each other. See main.c.
+target_link_options(bearly-kws-llama PRIVATE -Wl,--wrap=_write)
+
 if(PROF_COV)
   target_link_libraries(bearly-kws-llama PRIVATE gcov)
 endif()

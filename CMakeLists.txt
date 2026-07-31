@@ -125,6 +125,12 @@ if (NOT CHIP)
   set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/glossy/glossy.ld")
 else()
   set(LINKER_SCRIPT       "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}.ld")
+  # Honor a linker variant when the file exists: LINKER=<v> -> platform/<chip>/<chip>-<v>.ld
+  # (e.g. LINKER=llm -> dsp25-llm.ld for the TinyLlama demo, LINKER=maxheap -> bearly25-maxheap.ld).
+  # Falls back to the default <chip>.ld otherwise, so existing builds are unchanged.
+  if (EXISTS "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}-${LINKER}.ld")
+    set(LINKER_SCRIPT     "${CMAKE_SOURCE_DIR}/platform/${CHIP}/${CHIP}-${LINKER}.ld")
+  endif()
 endif()
 
 add_compile_options(-O1)

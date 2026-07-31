@@ -28,7 +28,7 @@ except Exception as exc:  # pragma: no cover
     ) from exc
 
 
-CLASS_NAMES = ("yes", "no", "on", "off", "stop", "go")
+CLASS_NAMES = ("go", "bird", "cat", "dog", "happy", "tree")
 LABEL_TO_ID = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 
 SR = 16000

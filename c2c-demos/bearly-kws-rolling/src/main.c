@@ -27,6 +27,117 @@ static void mc_nop_worker(void *arg) { (void)arg; }
 _Static_assert((KWS_FRAMES_PER_CASE * KWS_MFCC_DIM) == KWS_CASE_PAYLOAD_BYTES,
                "Frames*dim must equal the case payload size.");
 
+#ifdef KWS_BEARLY_LLAMA
+/* ================================================================================================
+ * Dual-core KWS + Llama control (combined demo c2c-demos/bearly-kws-llama).
+ *
+ * hart 0 (this file): C2C receiver + TinySpeech KWS + keyword controller.
+ * hart 1            : Llama (borai int8) inference — runs CONTINUOUSLY.
+ *
+ * Dynamic loop: Llama streams a story constantly. hart 0 collects the next
+ * KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY (3) confidently-recognized keywords; once it has 3 it builds a
+ * story prompt from them, publishes it (seqlock g_llama_prompt/_ver), and raises g_llama_stop to cut
+ * off the in-flight story so hart 1 immediately starts a new one about those words. Then it collects
+ * the next 3, and so on. Control flows through plain cached-DRAM flags + fences (intra-die is
+ * coherent), NOT the C2C spad — this is on-chip.
+ *
+ * Entry point: a STRONG __main() (overrides the weak stub below) sends hart 1 into llama_run_forever
+ * (spin/compute like boraiq's proven PREFILL_MULTICORE hart-1 loop; no wfi/MSIP wake needed). */
+
+/* Exposed by the borai int8 unit (int8/src/main.c, compiled with -DKWS_LLAMA_COMBINED). */
+#define KWS_LLAMA_PROMPT_MAX 256
+void llama_build(void);
+void llama_run_forever(void);            /* never returns: generates continuously from g_llama_prompt */
+extern volatile int g_llama_stop;        /* hart0 -> generate(): abort current story between tokens */
+extern char g_llama_prompt[KWS_LLAMA_PROMPT_MAX];   /* hart0 writes the next story prompt */
+extern volatile uint32_t g_llama_prompt_ver;        /* seqlock: odd while hart0 writes, even = stable */
+
+static volatile int g_llama_ready = 0;   /* hart0 sets after llama_build() so hart1 never runs early */
+
+/* Number of recognized keywords to accumulate before restarting Llama with a story about them. */
+#ifndef KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY
+#define KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY 3
+#endif
+_Static_assert(KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY == 3,
+               "prompt builder (llama_set_prompt_from_keywords + capture log) assumes exactly 3 keywords");
+
+static inline uint64_t kws_mhartid(void) {
+  uint64_t x;
+  __asm__ volatile("csrr %0, mhartid" : "=r"(x));
+  return x;
+}
+
+/* ---- SMP-safe malloc. newlib calls these around every malloc/free; the default weak versions are
+ * no-ops. TinySpeech (hart0, per case) and Llama (hart1, per generate) both allocate, so without
+ * this the shared heap corrupts. Recursion-safe by owner-hart so a nested alloc can't self-deadlock. */
+static volatile uint32_t g_mlock = 0;   /* 0 = free, else owner (hartid+1) */
+static volatile int      g_mlock_depth = 0;
+struct _reent;
+void __malloc_lock(struct _reent *r) {
+  (void)r;
+  uint32_t self = (uint32_t)kws_mhartid() + 1u;
+  if (g_mlock == self) { g_mlock_depth++; return; }
+  while (__sync_val_compare_and_swap(&g_mlock, 0u, self) != 0u) { /* spin */ }
+  g_mlock_depth = 1;
+}
+void __malloc_unlock(struct _reent *r) {
+  (void)r;
+  if (--g_mlock_depth == 0) { __sync_synchronize(); g_mlock = 0u; }
+}
+
+/* ---- UART print lock. hart0 (KWS logs) and hart1 (Llama token stream) both printf to the same
+ * UART; without serialization their concurrent _write() calls interleave and can corrupt output.
+ * We wrap _write via the linker (-Wl,--wrap=_write in the target) and take a spinlock around the
+ * real writer, so each _write is atomic (lines from the two harts may still interleave at _write
+ * boundaries — cosmetic — but bytes never corrupt). Separate from the malloc lock; _write does no
+ * allocation, so there is no cross-lock nesting/deadlock. Owner-hart recursive, like the malloc lock. */
+extern long __real__write(int fd, const void *ptr, unsigned long len);
+static volatile uint32_t g_uart_lock = 0;   /* 0 = free, else owner (hartid+1) */
+static volatile int      g_uart_depth = 0;
+long __wrap__write(int fd, const void *ptr, unsigned long len) {
+  uint32_t self = (uint32_t)kws_mhartid() + 1u;
+  int reentrant = (g_uart_lock == self);
+  if (!reentrant) {
+    while (__sync_val_compare_and_swap(&g_uart_lock, 0u, self) != 0u) { /* spin */ }
+    g_uart_depth = 1;
+  } else {
+    g_uart_depth++;
+  }
+  long r = __real__write(fd, ptr, len);
+  if (--g_uart_depth == 0) { __sync_synchronize(); g_uart_lock = 0u; }
+  return r;
+}
+
+/* Publish a new story prompt built from the captured keywords, then abort the in-flight story so
+ * hart 1 picks it up. Seqlock write: bump to odd, fill, bump to even, then raise stop. */
+static void llama_set_prompt_from_keywords(const char *w0, const char *w1, const char *w2) {
+  g_llama_prompt_ver++;                  /* odd: write in progress */
+  __sync_synchronize();
+  /* Frame the keywords as story topics ("about w0, w1 and w2") instead of "a <w>": the latter forces
+   * every word to be a count noun, which reads wrong for the verb/adjective keywords (a go, a happy).
+   * "about ..." works for any part of speech. */
+  snprintf(g_llama_prompt, KWS_LLAMA_PROMPT_MAX,
+           "Once upon a time, there was a little story about %s, %s and %s. ", w0, w1, w2);
+  __sync_synchronize();
+  g_llama_prompt_ver++;                  /* even: stable */
+  __sync_synchronize();
+  g_llama_stop = 1;                      /* cut off the current story; hart1 re-reads the prompt */
+  __sync_synchronize();
+}
+
+/* Strong __main: hart 1 enters here at boot (overrides the weak stub below). Waits for the model to
+ * be built, then generates forever (llama_run_forever never returns). */
+void __attribute__((noreturn)) __main(void) {
+  if (kws_mhartid() == 1u) {
+    while (!g_llama_ready) { __asm__ volatile("fence" ::: "memory"); }
+    llama_run_forever();
+  }
+  while (1) {
+    __asm__ volatile("wfi");
+  }
+}
+#endif /* KWS_BEARLY_LLAMA */
+
 /* Turn-taking sync (see c2c_turnsync.h / /CLAUDE.md). BML consumes cases; roles: BML's turn =
  * read+verify+infer + hand back; DSP's turn = publish the next case.
  *   - own spad (0xD): BML local-reads the payload and local-writes its OWN turn register.
@@ -37,7 +148,7 @@ static kws_stream_dsp_spad_t *const g_dsp =
     (kws_stream_dsp_spad_t *)(uintptr_t)KWS_STREAM_DSP_SPAD_PEER;   /* peer, cross-link writes */
 
 static const char *g_labels[TINYSPEECH_NUM_CLASSES] = {
-    "yes", "no", "on", "off", "stop", "go"
+    "go", "bird", "cat", "dog", "happy", "tree"
 };
 
 static int8_t g_case[KWS_CASE_PAYLOAD_BYTES];
@@ -216,6 +327,18 @@ void app_init(void) {
   tinyspeech_prepare_runtime();
   KWS_BEARLY_ROLLING_LOG("[bearly-kws-stream] TinySpeech runtime ready\n");
 
+#ifdef KWS_BEARLY_LLAMA
+  /* Build the Llama model once here on hart 0, before the KWS loop or any hart-1 run request, so
+   * hart 1 never touches a half-built transformer and the (single-hart) build allocations don't
+   * race TinySpeech. Then release hart 1 to its spin-wait. */
+  KWS_BEARLY_ROLLING_LOG("[kws-llama] building Llama model (hart0)...\n");
+  llama_build();
+  __sync_synchronize();
+  g_llama_ready = 1;
+  __sync_synchronize();
+  KWS_BEARLY_ROLLING_LOG("[kws-llama] Llama ready; hart1 idle until a start keyword (yes/go/on)\n");
+#endif
+
 #if KWS_BEARLY_ROLLING_CALIBRATE_FULL && TINYSPEECH_INT8_PIPELINE
   calibrate_int8_over_reference();
 #endif
@@ -389,6 +512,30 @@ void app_main(void) {
     }
 #endif
 
+#ifdef KWS_BEARLY_LLAMA
+    /* Dynamic story control: Llama runs continuously on hart 1. Collect the next N confidently
+     * recognized keywords (same top-logit gate, KWS_BEARLY_ROLLING_MIN_SCORE); once N are captured,
+     * build a story prompt from them and hand it to hart 1 (which cuts off its current story and
+     * starts a new one about those words), then start collecting the next N. */
+    if (g_last_pred_score > (float)KWS_BEARLY_ROLLING_MIN_SCORE) {
+      static const char *kw[KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY];
+      static int kw_count = 0;
+      uint32_t pc = g_last_pred_class;
+      if (pc < (uint32_t)TINYSPEECH_NUM_CLASSES) {
+        kw[kw_count++] = g_labels[pc];
+        KWS_BEARLY_ROLLING_LOG("[kws-llama] captured keyword %d/%d: '%s' (score=%.2f)\n",
+                               kw_count, KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY,
+                               g_labels[pc], g_last_pred_score);
+        if (kw_count >= KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY) {
+          KWS_BEARLY_ROLLING_LOG("[kws-llama] %d keywords captured [%s, %s, %s] -> new Llama story\n",
+                                 KWS_BEARLY_LLAMA_KEYWORDS_PER_STORY, kw[0], kw[1], kw[2]);
+          llama_set_prompt_from_keywords(kw[0], kw[1], kw[2]);
+          kw_count = 0;
+        }
+      }
+    }
+#endif
+
     handoff_to_dsp(idx);
   }
 }
@@ -399,8 +546,10 @@ int main(void) {
   return 0;
 }
 
+#ifndef KWS_BEARLY_LLAMA
 void __attribute__((weak, noreturn)) __main(void) {
   while (1) {
     __asm__ volatile("wfi");
   }
 }
+#endif

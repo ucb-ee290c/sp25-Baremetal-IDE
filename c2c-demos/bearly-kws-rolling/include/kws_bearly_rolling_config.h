@@ -77,7 +77,7 @@
  * still tripped the mic VAD gate). Raise for stricter gating, lower to announce more. Only affects
  * the printed verdict; the raw pred/score are still logged on the infer line and sent to DSP. */
 #ifndef KWS_BEARLY_ROLLING_MIN_SCORE
-#define KWS_BEARLY_ROLLING_MIN_SCORE 3.0f
+#define KWS_BEARLY_ROLLING_MIN_SCORE 2.0f
 #endif
 
 /* Score the prediction against the ground-truth expected_label DSP tags each case with (multi-
@@ -94,8 +94,11 @@
  * reference input for REF_CASE_INDEX (mismatch count + previews) — tells us if the on-chip MFCC
  * front-end matches the reference. Set USE_GOLDEN_INPUT=1 to infer on the reference bytes INSTEAD
  * of the received case, isolating the model/inference from the MFCC front-end and the link. */
+/* Default OFF since the 6-word retrain (2026-07-27): the shipped goldens (tinyspeech_inputs.h) are
+ * still the old 8-word maps and are meaningless for live mic audio, so INPUT-CMP is just noise.
+ * Set to 1 only if you regenerate the goldens for the current word set and want the diagnostic. */
 #ifndef KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE
-#define KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE 1
+#define KWS_BEARLY_ROLLING_DEBUG_INPUT_COMPARE 0
 #endif
 #ifndef KWS_BEARLY_ROLLING_REF_CASE_INDEX
 #define KWS_BEARLY_ROLLING_REF_CASE_INDEX 5u /* yes_test_005 = ./yes/0cb74144_nohash_2.wav */

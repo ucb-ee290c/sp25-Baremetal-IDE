@@ -13,6 +13,7 @@ option(BORAIQ_TRANSPOSED_WEIGHTS
 
 add_executable(boraiq
   int8/src/main.c
+  ${CMAKE_SOURCE_DIR}/bmark-lib/simple_setup.c   # init_test(): portable PLL/UART (bearly25 & dsp25)
 )
 
 target_include_directories(boraiq PUBLIC int8/include)

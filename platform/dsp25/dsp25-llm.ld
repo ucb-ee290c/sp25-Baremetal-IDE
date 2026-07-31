@@ -1,5 +1,5 @@
 /**
-  * @file dsp25-scratch.ld
+  * @file linker.ld
   * @brief Linker script to place sections and symbol values. Should be used together
   * with other linker script that defines memory regions FLASH and RAM.
   * It references following symbols, which must be defined in code:
@@ -49,19 +49,19 @@ ENTRY(_start)
 MEMORY {
   SCRATCH  (rwx): ORIGIN = 0x08000000, LENGTH = 64K
   FLASH    (rwx): ORIGIN = 0x20000000, LENGTH = 16M
-  DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 2048M
+  DRAM     (rwx): ORIGIN = 0x80000000, LENGTH = 2048M   /* LLM variant: 2 GiB region (max for medany PC-rel ±2 GiB): .incbin'd model in .rodata (~1.1 GiB) + heap fills the rest (~0.9 GiB) */
 }
 
 SECTIONS {
   /* Default boot hart */
   PROVIDE(__boot_hart = 0);
   
-  /* Default stack size (4K) */
+  /* Default stack size */
   __stack_size = DEFINED(__stack_size) ? __stack_size : 4K;
   PROVIDE(__stack_size = __stack_size);
 
-  /* Default heap size (4K) */
-  __heap_size = DEFINED(__heap_size) ? __heap_size : 4K;
+  /* Default heap size */
+  __heap_size = DEFINED(__heap_size) ? __heap_size : 1M;
   PROVIDE(__heap_size = __heap_size);
   
   /*
@@ -82,22 +82,27 @@ SECTIONS {
     *(.text.unlikely .text.unlikely.*)
     *(.text.startup .text.startup.*)
     *(.text .text.*)
+    
+    KEEP(*(.init))
+    KEEP(*(.fini))
 
     /* .ctors - Section for constructors */
     KEEP(*crtbegin.o(.ctors))
     KEEP(*crtbegin?.o(.ctors))
     KEEP(*(EXCLUDE_FILE(*crtend.o *crtend?.o) .ctors))
     KEEP(*(SORT(.ctors.*)))
+    KEEP(*(.ctors))
 
     /* .dtors - Section for destructors */
     KEEP(*crtbegin.o(.dtors))
     KEEP(*crtbegin?.o(.dtors))
     KEEP(*(EXCLUDE_FILE(*crtend.o *crtend?.o) .dtors))
     KEEP(*(SORT(.dtors.*)))
+    KEEP(*(.dtors))
     
     *(.gnu.linkonce.t.*)
     PROVIDE(__text_end = .);
-  }> SCRATCH
+  }> DRAM
   PROVIDE(__text_load_start = LOADADDR(.text));
 
   /* Section containing read-only data */
@@ -111,7 +116,7 @@ SECTIONS {
     *(.srodata.cst4)
     *(.srodata.cst2)
     *(.srodata .srodata.*)
-  }> SCRATCH
+  }> DRAM
 
   /* Section for initialized data */
   .data : ALIGN(8) {
@@ -138,7 +143,7 @@ SECTIONS {
     KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
     KEEP(*(.fini_array EXCLUDE_FILE(*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o ) .dtors))
     PROVIDE_HIDDEN(__fini_array_end = .);
-  }> SCRATCH
+  }> DRAM
   
   PROVIDE(__data_load_start = LOADADDR(.data));
 
@@ -147,7 +152,7 @@ SECTIONS {
     PROVIDE(__global_pointer$ = . + 0x800);
     *(.sdata .sdata.*)
     *(.gnu.linkonce.s.*)
-  }> SCRATCH
+  }> DRAM
 
   /* Section for initialized thread-local small data */
   .tdata : {
@@ -156,7 +161,7 @@ SECTIONS {
     *(.gnu.linkonce.td.*)
     PROVIDE_HIDDEN(__tdata_end = .);
     PROVIDE(__data_end = .);
-  }> SCRATCH
+  }> DRAM
 
   PROVIDE(__tdata_size = SIZEOF(.tdata));
 
@@ -168,7 +173,7 @@ SECTIONS {
     *(.gnu.linkonce.tb.*)
     *(.tcommon)
     PROVIDE_HIDDEN(__tbss_end = .);
-  }> SCRATCH
+  }> DRAM
   
   PROVIDE(__tbss_size = SIZEOF(.tbss));
 
@@ -177,7 +182,7 @@ SECTIONS {
     PROVIDE_HIDDEN(__bss_start = .);
     *(.sbss .sbss.*)
     *(.gnu.linkonce.sb.*)
-  }> SCRATCH
+  }> DRAM
   
   /* Section for uninitialized data */
   .bss (NOLOAD) : ALIGN(8) {
@@ -185,26 +190,23 @@ SECTIONS {
     *(.gnu.linkonce.b.*)
     *(COMMON)
     PROVIDE_HIDDEN(__bss_end = .);
-  }> SCRATCH
+  }> DRAM
 
   . = ALIGN(8);
   PROVIDE(__end = .);
 
-  /* Reserve heap space */
-  .heap (NOLOAD) : ALIGN(8) {
-    PROVIDE_HIDDEN(__heap_start = .);
-    . += __heap_size;
-    . = ALIGN(4K);
-    PROVIDE_HIDDEN(__heap_end = .);
-  }> SCRATCH
-  
-  /* Reserve stack space */
-  .stack (NOLOAD) : ALIGN(16) {
-    PROVIDE_HIDDEN(__stack_start = .);
-    . += __stack_size; /* Hart 0 */
-    PROVIDE(_sp = .);
-    PROVIDE_HIDDEN(__stack_end = .);
-  }> SCRATCH
+  /* Heap + stack as SYMBOL RANGES, not output sections. LLM variant: the heap fills the rest of the
+   * 2 GiB region (for the dequantized embedding + KV cache), but it must NOT be an allocated section:
+   * a `.heap (NOLOAD)` section extends the PT_LOAD segment's memsz to the region end, and fesvr/
+   * uart_tsi zero-fills [filesz, memsz] over UART — 2 GiB of zeros = "loads forever". As bare symbols
+   * the segment memsz stops at .bss (only the real .data/.rodata are loaded); sbrk grows into
+   * [__heap_start, __heap_end) at runtime. */
+  . = ALIGN(16);
+  PROVIDE(__heap_start  = .);
+  PROVIDE(__heap_end    = ORIGIN(DRAM) + LENGTH(DRAM) - __stack_size * 5);
+  PROVIDE(__stack_start = ORIGIN(DRAM) + LENGTH(DRAM) - __stack_size * 5);
+  PROVIDE(_sp           = ORIGIN(DRAM) + LENGTH(DRAM));
+  PROVIDE(__stack_end   = ORIGIN(DRAM) + LENGTH(DRAM));
 
   PROVIDE(__stack_shift = LOG2CEIL(__stack_size));
 
@@ -217,3 +219,4 @@ SECTIONS {
     *(.eh_frame .eh_frame.*)
   }
 }
+

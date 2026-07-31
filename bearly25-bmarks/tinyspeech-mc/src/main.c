@@ -28,7 +28,7 @@
 #endif
 
 static const char *k_labels[TINYSPEECH_NUM_CLASSES] = {
-    "yes", "no", "on", "off", "stop", "go"
+    "go", "bird", "cat", "dog", "happy", "tree"
 };
 
 uint64_t target_frequency = TINYSPEECH_MC_TARGET_FREQUENCY_HZ;
@@ -345,7 +345,7 @@ static int run_suite_for_frequency(uint64_t frequency_hz) {
     printf("  int8 path: disabled\n");
 #endif
     printf("  input shape: [1,1,%d,%d]\n", TINYSPEECH_TEST_INPUT_H, TINYSPEECH_TEST_INPUT_W);
-    printf("  classes: %d (yes/no/on/off/stop/go)\n", TINYSPEECH_NUM_CLASSES);
+    printf("  classes: %d (go/bird/cat/dog/happy/tree)\n", TINYSPEECH_NUM_CLASSES);
     printf("  cases: %d\n", TINYSPEECH_TEST_NUM_CASES);
     printf("  preproc  : MFCC, win=%dms hop=%dms, bandpass=%d..%d Hz\n",
            TINYSPEECH_TEST_WINDOW_MS,

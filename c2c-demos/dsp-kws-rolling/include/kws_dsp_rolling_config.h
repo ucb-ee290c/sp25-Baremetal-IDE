@@ -46,11 +46,15 @@
 #define KWS_DSP_ROLLING_STEADY_FRAME_IDX (KWS_DSP_ROLLING_FRAMES_PER_CASE - 1u)
 #endif
 
-/* MFCC int8 quantization. The reference feature extractor (tinyspeech_inputs.h) does NOT use a
- * fixed scale — it normalizes each 12x94 case by its own peak magnitude: q = clip(round(x *
- * 127/max|x|)). With KWS_DSP_ROLLING_MFCC_NORMALIZE=1 (default) DSP matches that recipe (compute
- * the whole float MFCC map, take its max abs, then scale to full int8 range), which is the single
- * biggest front-end alignment with the reference. Set 0 to use the legacy fixed SCALE/ZERO below. */
+/* MFCC int8 quantization recipe — MUST match how the deployed model's features were quantized.
+ *  - NORMALIZE=1: per-case peak normalization q = clip(round(x * 127/max|x|)). This matched the
+ *    ORIGINAL 6-word Speech-Commands reference set (tinyspeech_inputs.h generated that way).
+ *  - NORMALIZE=0: fixed scale q = clip(round(x * QUANT_SCALE + QUANT_ZERO)) with SCALE/ZERO below.
+ * The 2026-07-27 **6-word retrain** (go/bird/cat/dog/happy/tree, real Speech-Commands audio via
+ * dsp25-tests/tinyspeech-test/scripts/rebuild_weights_simplecnn.py) quantizes each case with per-case
+ * PEAK normalization (`q = clip(round(x * 127/max|x|))`, see `_quantize_mfcc_to_int8_like_runtime`),
+ * so the matching DSP recipe is NORMALIZE=1. (The earlier 8-word TTS model used fixed scale 4.0 ->
+ * NORMALIZE=0.) A mismatch here feeds the model a different int8 distribution than training. */
 #ifndef KWS_DSP_ROLLING_MFCC_NORMALIZE
 #define KWS_DSP_ROLLING_MFCC_NORMALIZE 1
 #endif
